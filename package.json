@@ -1,0 +1,33 @@
+{
+  "name": "providencex",
+  "version": "1.0.0",
+  "description": "God-aligned, risk-first wealth automation platform",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "services/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter './services/*' --parallel dev",
+    "build": "pnpm --recursive build",
+    "test": "pnpm --recursive test",
+    "lint": "pnpm --recursive lint",
+    "test-db": "tsx scripts/test-db-connection.ts"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.15.0",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@providencex/shared-config": "workspace:*",
+    "@providencex/shared-utils": "workspace:*",
+    "@providencex/shared-types": "workspace:*",
+    "pg": "^8.11.3"
+  }
+}

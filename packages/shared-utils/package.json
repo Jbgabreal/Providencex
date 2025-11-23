@@ -1,0 +1,20 @@
+{
+  "name": "@providencex/shared-utils",
+  "version": "1.0.0",
+  "description": "Shared utility functions for ProvidenceX",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "luxon": "^3.4.4",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.3.5",
+    "typescript": "^5.3.3"
+  }
+}
+

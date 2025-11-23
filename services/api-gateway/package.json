@@ -1,0 +1,26 @@
+{
+  "name": "@providencex/api-gateway",
+  "version": "1.0.0",
+  "description": "API Gateway service for ProvidenceX",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@providencex/shared-types": "workspace:*",
+    "@providencex/shared-utils": "workspace:*",
+    "@providencex/shared-config": "workspace:*",
+    "express": "^4.18.2",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
+

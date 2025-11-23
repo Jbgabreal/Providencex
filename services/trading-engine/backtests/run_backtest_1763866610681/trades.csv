@@ -1,0 +1,2 @@
+ticket,symbol,direction,strategy,entryPrice,exitPrice,entryTime,exitTime,sl,tp,volume,profit,durationMinutes,pips,riskReward
+1,XAUUSD,buy,low,3773.56000,3780.23000,2025-09-23T15:40:00.000Z,2025-09-23T15:50:00.000Z,3713.66000,3780.23000,0.08,53.36,10,66.70,0.11

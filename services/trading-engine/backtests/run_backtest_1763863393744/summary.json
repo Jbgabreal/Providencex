@@ -1,0 +1,93 @@
+{
+  "runId": "backtest_1763863393744",
+  "config": {
+    "symbol": "XAUUSD",
+    "strategies": [
+      "low"
+    ],
+    "startDate": "2024-03-21",
+    "endDate": "2024-07-21",
+    "timeframe": "M5",
+    "initialBalance": 10000,
+    "dataSource": "mt5"
+  },
+  "startTime": "2025-11-23T02:03:13.744Z",
+  "endTime": "2025-11-23T02:06:36.635Z",
+  "runtimeMs": 202891,
+  "stats": {
+    "totalTrades": 0,
+    "winningTrades": 0,
+    "losingTrades": 0,
+    "winRate": 0,
+    "totalPnL": 0,
+    "grossProfit": 0,
+    "grossLoss": 0,
+    "profitFactor": 0,
+    "maxDrawdown": 0,
+    "maxDrawdownPercent": 0,
+    "maxConsecutiveLosses": 0,
+    "maxConsecutiveWins": 0,
+    "averageWin": 0,
+    "averageLoss": 0,
+    "averageRr": 0,
+    "expectancy": 0,
+    "averageTradeDurationMinutes": 0,
+    "perSymbolStats": {},
+    "perStrategyStats": {},
+    "smcStats": {
+      "htf": {
+        "totalSwings": 14754,
+        "swingHighs": 9019,
+        "swingLows": 5735,
+        "averageSwingsPerEvaluation": 6.02204081632653,
+        "totalBOS": 13531,
+        "bullishBOS": 8116,
+        "bearishBOS": 5415,
+        "totalCHoCH": 0,
+        "bullishCHoCH": 0,
+        "bearishCHoCH": 0,
+        "trendBullish": 1155,
+        "trendBearish": 409,
+        "trendSideways": 886,
+        "evaluations": 2450
+      },
+      "itf": {
+        "totalSwings": 15010,
+        "swingHighs": 7927,
+        "swingLows": 7083,
+        "averageSwingsPerEvaluation": 6.116544417277914,
+        "totalBOS": 20548,
+        "bullishBOS": 10236,
+        "bearishBOS": 10312,
+        "totalCHoCH": 0,
+        "bullishCHoCH": 0,
+        "bearishCHoCH": 0,
+        "trendBullish": 0,
+        "trendBearish": 0,
+        "trendSideways": 2454,
+        "evaluations": 2454
+      },
+      "ltf": {
+        "totalSwings": 14289,
+        "swingHighs": 7312,
+        "swingLows": 6977,
+        "averageSwingsPerEvaluation": 5.822738386308068,
+        "totalBOS": 13278,
+        "bullishBOS": 6823,
+        "bearishBOS": 6455,
+        "totalCHoCH": 0,
+        "bullishCHoCH": 0,
+        "bearishCHoCH": 0,
+        "trendBullish": 620,
+        "trendBearish": 568,
+        "trendSideways": 1266,
+        "evaluations": 2454
+      },
+      "totalEvaluations": 2454
+    }
+  },
+  "initialBalance": 10000,
+  "finalBalance": 10000,
+  "totalReturn": 0,
+  "totalReturnPercent": 0
+}

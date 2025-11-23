@@ -1,0 +1,31 @@
+{
+  "name": "@providencex/news-guardrail",
+  "version": "1.0.0",
+  "description": "News Guardrail service for ProvidenceX",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@providencex/shared-types": "workspace:*",
+    "@providencex/shared-utils": "workspace:*",
+    "@providencex/shared-config": "workspace:*",
+    "express": "^4.18.2",
+    "pg": "^8.11.3",
+    "openai": "^4.20.1",
+    "axios": "^1.6.2",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.10.9",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
+

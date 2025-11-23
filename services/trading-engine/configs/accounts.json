@@ -1,0 +1,34 @@
+[
+  {
+    "id": "acc1",
+    "name": "Main Account",
+    "mt5": {
+      "baseUrl": "http://localhost:3030",
+      "login": 1234567
+    },
+    "symbols": ["XAUUSD", "EURUSD", "GBPUSD", "US30"],
+    "risk": {
+      "riskPercent": 1.0,
+      "maxDailyLoss": 200,
+      "maxWeeklyLoss": 800,
+      "maxConcurrentTrades": 3,
+      "maxDailyRisk": 500
+    },
+    "killSwitch": {
+      "enabled": true,
+      "dailyDDLimit": 200,
+      "weeklyDDLimit": 800,
+      "maxConsecutiveLosses": 5,
+      "maxSpreadPips": 2.0,
+      "maxExposure": 1000
+    },
+    "executionFilter": {
+      "maxTradesPerDay": 5,
+      "cooldownMinutes": 30,
+      "minSpreadPips": 0.5,
+      "sessionWindows": ["london", "newyork"]
+    },
+    "enabled": true
+  }
+]
+

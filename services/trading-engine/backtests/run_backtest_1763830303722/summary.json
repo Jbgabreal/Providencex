@@ -1,0 +1,54 @@
+{
+  "runId": "backtest_1763830303722",
+  "config": {
+    "symbol": "XAUUSD",
+    "strategies": [
+      "low"
+    ],
+    "startDate": "2024-10-21",
+    "endDate": "2024-12-21",
+    "timeframe": "M5",
+    "initialBalance": 10000,
+    "dataSource": "mt5"
+  },
+  "startTime": "2025-11-22T16:51:43.722Z",
+  "endTime": "2025-11-22T16:53:15.280Z",
+  "runtimeMs": 91558,
+  "stats": {
+    "totalTrades": 139,
+    "winningTrades": 80,
+    "losingTrades": 59,
+    "winRate": 57.55395683453237,
+    "totalPnL": -3319.300000000655,
+    "grossProfit": 25530.249999999556,
+    "grossLoss": 28849.550000000196,
+    "profitFactor": 0.8849444792032938,
+    "maxDrawdown": 8115.249999999908,
+    "maxDrawdownPercent": 57.63532698784503,
+    "maxConsecutiveLosses": 12,
+    "maxConsecutiveWins": 12,
+    "averageWin": 319.12812499999444,
+    "averageLoss": 488.97542372881685,
+    "averageRr": 0.8104279893532986,
+    "expectancy": -23.879856115112545,
+    "averageTradeDurationMinutes": 88.05755395683454,
+    "perSymbolStats": {
+      "XAUUSD": {
+        "trades": 139,
+        "pnl": -3319.300000000655,
+        "winRate": 57.55395683453237
+      }
+    },
+    "perStrategyStats": {
+      "low": {
+        "trades": 139,
+        "pnl": -3319.300000000655,
+        "winRate": 57.55395683453237
+      }
+    }
+  },
+  "initialBalance": 10000,
+  "finalBalance": 6680.699999999341,
+  "totalReturn": -3319.3000000006587,
+  "totalReturnPercent": -33.193000000006585
+}

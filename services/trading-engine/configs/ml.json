@@ -1,0 +1,10 @@
+{
+  "enabled": false,
+  "modelType": "lightgbm",
+  "modelPath": "./ml_models/v13_model.txt",
+  "minWinProbability": 0.60,
+  "minConfidence": 0.40,
+  "minExpectedMove": 0.5,
+  "debug": false
+}
+

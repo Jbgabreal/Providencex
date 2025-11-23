@@ -1,0 +1,42 @@
+{
+  "runId": "backtest_1763788540573",
+  "config": {
+    "symbol": "XAUUSD",
+    "strategies": [
+      "low"
+    ],
+    "startDate": "2024-10-21",
+    "endDate": "2024-11-21",
+    "timeframe": "M5",
+    "initialBalance": 10000,
+    "dataSource": "mt5"
+  },
+  "startTime": "2025-11-22T05:15:40.573Z",
+  "endTime": "2025-11-22T05:16:16.168Z",
+  "runtimeMs": 35595,
+  "stats": {
+    "totalTrades": 0,
+    "winningTrades": 0,
+    "losingTrades": 0,
+    "winRate": 0,
+    "totalPnL": 0,
+    "grossProfit": 0,
+    "grossLoss": 0,
+    "profitFactor": 0,
+    "maxDrawdown": 0,
+    "maxDrawdownPercent": 0,
+    "maxConsecutiveLosses": 0,
+    "maxConsecutiveWins": 0,
+    "averageWin": 0,
+    "averageLoss": 0,
+    "averageRr": 0,
+    "expectancy": 0,
+    "averageTradeDurationMinutes": 0,
+    "perSymbolStats": {},
+    "perStrategyStats": {}
+  },
+  "initialBalance": 10000,
+  "finalBalance": 10000,
+  "totalReturn": 0,
+  "totalReturnPercent": 0
+}
