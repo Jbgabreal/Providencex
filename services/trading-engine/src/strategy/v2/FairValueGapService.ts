@@ -35,7 +35,8 @@ export class FairValueGapService {
 
     // Scan for FVGs: gap between candle 1 high and candle 3 low (bullish FVG)
     // or gap between candle 1 low and candle 3 high (bearish FVG)
-    for (let i = 1; i < recent.length - 2; i++) {
+    // Fixed: Changed i < recent.length - 2 to i < recent.length - 1 to include last possible FVG
+    for (let i = 1; i < recent.length - 1; i++) {
       const candle1 = recent[i - 1];
       const candle2 = recent[i];
       const candle3 = recent[i + 1];

@@ -40,6 +40,7 @@ import { HTFBiasService, HTFBiasResult } from './HTFBiasService';
 import { ITFBiasService, ITFBiasResult } from './ITFBiasService';
 import { ITFSetupZoneService, ITFSetupZone } from './ITFSetupZoneService';
 import { M1ExecutionService, M1ExecutionResult } from './M1ExecutionService';
+import { ICTEntryService, ICTEntryResult } from './ICTEntryService';
 
 const logger = new Logger('SMCStrategyV2');
 
@@ -77,7 +78,9 @@ export class SMCStrategyV2 {
   private itfBiasService: ITFBiasService; // New: M15 bias service (derived from ChoCHService)
   private itfSetupZoneService: ITFSetupZoneService; // New: M15 setup zone service
   private m1ExecutionService: M1ExecutionService; // New: M1 execution service
+  private ictEntryService: ICTEntryService; // New: ICT entry service (strict ICT model)
   private paramOverrides?: import('../../optimization/OptimizationTypes').SMC_V2_ParamSet;
+  private tpRMult: number; // R:R multiplier for take profit calculation
   
   // Metrics counters for strategy evaluation
   private metrics = {
@@ -98,9 +101,9 @@ export class SMCStrategyV2 {
   private defaultSweepTolerance: number;
   private defaultTrendlineTolerance: number;
   
-  // Minimum candle requirements (v15d: Adjusted for H4/M15/M1 timeframes)
-  private readonly MIN_HTF_CANDLES: number; // H4: need 20+ for swing detection + BOS reliability
-  private readonly MIN_ITF_CANDLES = 20;    // M15 setup: keep as-is
+  // Minimum candle requirements (Updated for M15/M1 timeframes)
+  private readonly MIN_HTF_CANDLES: number; // M15: need fewer candles than H4 (15m is faster)
+  private readonly MIN_ITF_CANDLES: number;    // M15 setup: configurable via env
   private readonly MIN_LTF_CANDLES = 10;    // M1 entry: keep as-is
 
   // BOS requirements (v15e: Configurable BOS requirements for backtesting/debugging)
@@ -120,21 +123,22 @@ export class SMCStrategyV2 {
     this.marketDataService = marketDataService;
     this.config = {
       enabled: config.enabled !== false,
-      htfTimeframe: config.htfTimeframe || 'H4', // Changed from H1 to H4
-      itfTimeframe: config.itfTimeframe || 'M15', // ITF remains M15
-      ltfTimeframe: config.ltfTimeframe || 'M1', // LTF remains M1
+      htfTimeframe: config.htfTimeframe || 'H4', // ICT Model: H4 is Bias TF
+      itfTimeframe: config.itfTimeframe || 'M15', // ICT Model: M15 is Setup TF
+      ltfTimeframe: config.ltfTimeframe || 'M1', // ICT Model: M1 is Entry TF
       timezone: config.timezone || 'America/New_York',
     };
     
     // Initialize minimum candle requirements
-    // HTF (H4) minimum is configurable via env var, defaulting to 20 (for swing detection + BOS reliability)
-    this.MIN_HTF_CANDLES = parseInt(process.env.SMC_MIN_HTF_CANDLES || '20', 10);
+    // HTF (H4) minimum is configurable via env var, defaulting to 10 (relaxed for backtesting)
+    this.MIN_HTF_CANDLES = parseInt(process.env.SMC_MIN_HTF_CANDLES || '10', 10);
+    this.MIN_ITF_CANDLES = parseInt(process.env.SMC_MIN_ITF_CANDLES || '20', 10);
 
     // Initialize BOS requirements (v15e: Configurable for backtesting/debugging)
-    // Default: strict mode (require LTF BOS and at least 1 ITF BOS)
-    this.REQUIRE_LTF_BOS = (process.env.SMC_REQUIRE_LTF_BOS || 'true').toLowerCase() === 'true';
+    // Default: relaxed mode (do not require LTF BOS and no ITF BOS requirement)
+    this.REQUIRE_LTF_BOS = (process.env.SMC_REQUIRE_LTF_BOS || 'false').toLowerCase() === 'true';
     // 0 = do not require ITF BOS, 1 = at least 1 BOS event, etc.
-    this.MIN_ITF_BOS_COUNT = parseInt(process.env.SMC_MIN_ITF_BOS_COUNT || '1', 10);
+    this.MIN_ITF_BOS_COUNT = parseInt(process.env.SMC_MIN_ITF_BOS_COUNT || '0', 10);
     
     // Config: Allow skipping ITF alignment check (for debugging/backtesting)
     this.SKIP_ITF_ALIGNMENT = (process.env.SMC_SKIP_ITF_ALIGNMENT || 'false').toLowerCase() === 'true';
@@ -267,10 +271,24 @@ export class SMCStrategyV2 {
     ]);
     
     // Initialize new services for bias → setup → entry flow
-    this.htfBiasService = new HTFBiasService(12); // Look back 12 H4 candles
+    this.htfBiasService = new HTFBiasService(20); // Look back 20 M15 candles (equivalent to ~5 hours, similar to 12 H4 candles)
     this.itfBiasService = new ITFBiasService(true); // Use structural swings
     this.itfSetupZoneService = new ITFSetupZoneService();
-    this.m1ExecutionService = new M1ExecutionService(2.0); // 2R risk:reward
+
+    // Read R:R ratio from environment (default 3.0 for 1:3 risk:reward)
+    this.tpRMult = parseFloat(process.env.TP_R_MULT || '3.0');
+    this.m1ExecutionService = new M1ExecutionService(this.tpRMult);
+    logger.info(`[SMCStrategyV2] ✅ Risk:Reward Configuration - Using R:R = 1:${this.tpRMult} (TP_R_MULT=${this.tpRMult})`);
+    
+    // Initialize ICT Entry Service (strict ICT model)
+    this.ictEntryService = new ICTEntryService();
+    const useICTModel = (process.env.USE_ICT_MODEL || 'false').toLowerCase() === 'true';
+    if (useICTModel) {
+      logger.info(`[SMCStrategyV2] ✅ ICT Model ENABLED - Using strict H4→M15→M1 ICT pipeline`);
+    } else {
+      logger.info(`[SMCStrategyV2] ℹ️  ICT Model available but not enabled (set USE_ICT_MODEL=true to enable)`);
+    }
+
     
     // Store default thresholds for symbol-aware adjustment
     this.defaultFvgMinSize = defaultFvgMinSize;
@@ -310,9 +328,20 @@ export class SMCStrategyV2 {
     const smcDebug = process.env.SMC_DEBUG === 'true';
     const returnReasons = includeReasons === true;
     const debugReasons: string[] = [];
+    const debugMinimal = process.env.SMC_DEBUG_MINIMAL_ENTRY === 'true';
     
     // Increment total evaluations counter
     this.metrics.totalEvaluations++;
+    
+    // SENIOR DEV FIX: Always log ICT check for first 100 evaluations to debug execution flow
+    const evalNum = this.metrics.totalEvaluations;
+    const shouldLogICT = evalNum <= 100;
+    
+    // DEBUG: Log entry point (first 100 evaluations or when debug enabled)
+    const shouldLogDebug = smcDebug || debugMinimal || evalNum <= 100;
+    if (shouldLogDebug && evalNum % 50 === 0) {
+      logger.info(`[SMC_DEBUG] ${symbol}: Evaluation #${evalNum} - generateEnhancedSignal called`);
+    }
     
     // Helper to create rejection result
     const createRejection = (reason: string, additionalReasons?: string[]): EnhancedRawSignalV2 | null | { signal: null; reason: string; debugReasons: string[] } => {
@@ -328,6 +357,32 @@ export class SMCStrategyV2 {
         logger.debug(`[SMCStrategyV2] Disabled for ${symbol}`);
       }
       return createRejection('SMC v2 disabled');
+    }
+
+    // Check if ICT Model is enabled - ALWAYS log for first 100 evaluations
+    const useICTModel = (process.env.USE_ICT_MODEL || 'false').toLowerCase() === 'true';
+    
+    // SENIOR DEV FIX: Always log ICT check for first 100 evaluations - remove conditional
+    if (shouldLogICT) {
+      logger.info(`[SMCStrategyV2] [ICT-CHECK] ${symbol}: USE_ICT_MODEL='${process.env.USE_ICT_MODEL || 'not set'}', useICTModel=${useICTModel}, eval #${evalNum}`);
+    }
+    
+    if (useICTModel) {
+      // Always log for first 100 evaluations to debug ICT pipeline
+      if (shouldLogICT) {
+        logger.info(`[SMCStrategyV2] [ICT] ${symbol}: ✅ ICT Model enabled, calling generateICTSignal (eval #${evalNum})`);
+      }
+      try {
+        return await this.generateICTSignal(symbol, returnReasons);
+      } catch (error) {
+        logger.error(`[SMCStrategyV2] [ICT] ${symbol}: ERROR in generateICTSignal:`, error);
+        throw error;
+      }
+    } else {
+      // Log why ICT is not enabled for first 100 evaluations
+      if (shouldLogICT) {
+        logger.info(`[SMCStrategyV2] ${symbol}: ⚠️  ICT Model NOT enabled, using old SMC v2 logic (USE_ICT_MODEL='${process.env.USE_ICT_MODEL || 'not set'}') [eval #${evalNum}]`);
+      }
     }
 
     try {
@@ -351,6 +406,10 @@ export class SMCStrategyV2 {
       // Check minimum candle requirements (v15d: Adjusted for H4/M15/M1 timeframes)
       if (htfCandles.length < this.MIN_HTF_CANDLES || itfCandles.length < this.MIN_ITF_CANDLES || ltfCandles.length < this.MIN_LTF_CANDLES) {
         const reason = `Insufficient candles - HTF=${htfCandles.length} (need ${this.MIN_HTF_CANDLES}), ITF=${itfCandles.length} (need ${this.MIN_ITF_CANDLES}), LTF=${ltfCandles.length} (need ${this.MIN_LTF_CANDLES})`;
+        // Always log candle requirement failures (first 50 evals)
+        if (this.metrics.totalEvaluations <= 50) {
+          logger.info(`[SMC_DEBUG] ${symbol}: ❌ INSUFFICIENT CANDLES - ${reason}`);
+        }
         if (smcDebug) {
           logger.info(`[SMC_DEBUG] ${symbol}: ${reason}`);
         }
@@ -383,132 +442,194 @@ export class SMCStrategyV2 {
         logger.info(`[SMC_DEBUG] ${symbol}: Current price = ${currentPrice}`);
       }
 
-      // Step 3: Compute H4 bias (NEW: independent of formalTrend)
+      // Step 3: Compute M15 bias (HTF is now M15, not H4)
       const htfBias = this.htfBiasService.computeHTFBias(htfCandles);
+
+      // Step 3b: Analyze HTF structure to get formal trend (for sideways detection)
+      const htfStructureEarly = this.htfStructure.analyzeStructure(htfCandles);
+
+      // BALANCED: Check 15m trend strength - only trade in moderate+ trends
+      // Require 35% trend strength - balanced between quality and opportunity
+      const trendStrength = this.calculateTrendStrength(htfCandles, htfStructureEarly, htfBias);
+      if (trendStrength < 0.35) { // BALANCED: Minimum 35% trend strength
+        const reason = `15m trend too weak: ${(trendStrength * 100).toFixed(1)}% (minimum 35% required)`;
+        if (smcDebug) {
+          logger.info(`[SMC_DEBUG] ${symbol}: Skipping - weak trend strength`);
+        }
+        return createRejection(reason); // Skip this symbol
+      }
       
+      // BALANCED: Check volatility - avoid very low volatility periods (chop)
+      // Low volatility = small candles, no clear direction
+      const volatility = this.calculateVolatility(htfCandles);
+      if (volatility < 0.25) { // BALANCED: Minimum 25% volatility - avoid only very choppy markets
+        const reason = `15m volatility too low: ${(volatility * 100).toFixed(1)}% (minimum 25% required) - market is choppy`;
+        if (smcDebug) {
+          logger.info(`[SMC_DEBUG] ${symbol}: Skipping - low volatility (chop)`);
+        }
+        return createRejection(reason); // Skip this symbol
+      }
+
       if (smcDebug && symbol === 'XAUUSD') {
         logger.info(
           `[SMC_DEBUG] ${symbol}: HTF bias = ${htfBias.bias} (method: ${htfBias.method}), ` +
+          `formal trend = ${htfStructureEarly.trend}, ` +
           `BOS count: bullish=${htfBias.bullishBosCount}, bearish=${htfBias.bearishBosCount}, ` +
           `anchor: ${htfBias.anchorSwing}@${htfBias.anchorPrice?.toFixed(2) || 'N/A'}`
         );
       }
-      
-      // Check HTF filter: HTF bias must be bullish/bearish (not neutral), or ICT PD fallback available
-      if (htfBias.bias === 'neutral') {
-        // Check for ICT PD fallback (displacement-based bias)
-        const pdCandles = symbol === 'XAUUSD' || symbol === 'US30' ? itfCandles : htfCandles;
-        const premiumDiscount = this.pdService.determineZone(pdCandles, currentPrice, symbol);
-        const pdBoundaries = this.pdService.getBoundaries(pdCandles);
-        
-        // If we have PD boundaries, we can use displacement fallback
-        if (!pdBoundaries) {
-          const reason = `HTF bias is neutral (no clear directional bias) and no ICT PD fallback available`;
-          if (smcDebug) {
-            logger.info(`[SMC_DEBUG] ${symbol}: SKIP - ${reason}`);
-          }
-          return createRejection(reason);
+
+      // NEW: Check if we should avoid sideways HTF conditions (FIXED: use formal trend, not bias)
+      // CRITICAL: Always reject sideways HTF (15m) - only trade in clear trends
+      const avoidSideways = true; // Hard-coded: always reject sideways (per screenshot workflow)
+      if (avoidSideways && htfStructureEarly.trend === 'sideways') {
+        const reason = `HTF is sideways/ranging - avoiding trade (formal trend=${htfStructureEarly.trend}, bias=${htfBias.bias})`;
+        logger.info(`[Trend] HTF sideways detected - SKIP trade for ${symbol} (HTF trend filter active)`);
+        if (smcDebug) {
+          logger.info(`[SMC_DEBUG] ${symbol}: SKIP - ${reason}`);
         }
-        // If we have PD fallback, continue (will use PD-based direction)
+        return createRejection(reason);
+      }
+
+      // Check HTF filter: HTF bias must be bullish/bearish (not neutral), or ICT PD fallback available
+      // In minimal entry mode, allow neutral HTF bias (will infer direction from price)
+      if (htfBias.bias === 'neutral') {
+        // In minimal mode, allow neutral HTF bias (will infer direction later)
+        if (this.DEBUG_FORCE_MINIMAL_ENTRY) {
+          if (shouldLogDebug && this.metrics.totalEvaluations <= 100) {
+            logger.info(`[SMC_DEBUG] ${symbol}: ✅ HTF FILTER PASSED (minimal mode - neutral bias allowed) - bias: ${htfBias.bias}`);
+          }
+        } else {
+          // Check for ICT PD fallback (displacement-based bias)
+          const pdCandles = symbol === 'XAUUSD' || symbol === 'US30' ? itfCandles : htfCandles;
+          const premiumDiscount = this.pdService.determineZone(pdCandles, currentPrice, symbol);
+          const pdBoundaries = this.pdService.getBoundaries(pdCandles);
+
+          // If we have PD boundaries, we can use displacement fallback
+          if (!pdBoundaries) {
+            const reason = `HTF bias is neutral (no clear directional bias) and no ICT PD fallback available`;
+            // Always log HTF filter rejections (first 100 evals or debug mode)
+            if (shouldLogDebug && this.metrics.totalEvaluations <= 100) {
+              logger.info(`[SMC_DEBUG] ${symbol}: ❌ HTF FILTER REJECTED - ${reason}`);
+            }
+            if (smcDebug) {
+              logger.info(`[SMC_DEBUG] ${symbol}: SKIP - ${reason}`);
+            }
+            return createRejection(reason);
+          }
+          // If we have PD fallback, continue (will use PD-based direction)
+          if (shouldLogDebug && this.metrics.totalEvaluations <= 100) {
+            logger.info(`[SMC_DEBUG] ${symbol}: ✅ HTF FILTER PASSED (PD fallback) - bias: ${htfBias.bias}, PD: ${premiumDiscount}`);
+          }
+        }
       } else {
         // HTF bias is valid (bullish/bearish)
         this.metrics.passedHTFFilter++;
+        if (shouldLogDebug && this.metrics.totalEvaluations <= 100) {
+          logger.info(`[SMC_DEBUG] ${symbol}: ✅ HTF FILTER PASSED - bias: ${htfBias.bias}`);
+        }
       }
 
       // DEBUG MODE: Minimal entry check (bypasses ITF/POI filters)
       if (this.DEBUG_FORCE_MINIMAL_ENTRY) {
-        // 1. Require a directional HTF bias (or ICT PD fallback)
-        const directionalHtfBias = htfBias.bias === 'bullish' || htfBias.bias === 'bearish';
-        let ictPdBias: 'bullish' | 'bearish' | null = null;
+        // Always log when entering minimal mode (first 200 evals or every 100th)
+        if (this.metrics.totalEvaluations <= 200 || this.metrics.totalEvaluations % 100 === 0) {
+          logger.info(`[SMC_DEBUG] ${symbol}: Entering minimal entry mode (DEBUG_FORCE_MINIMAL_ENTRY=true) - eval #${this.metrics.totalEvaluations}`);
+        }
         
-        if (!directionalHtfBias && htfBias.bias === 'neutral') {
-          // Check for ICT PD fallback
+        // ULTRA-LENIENT MINIMAL MODE: Accept trades with minimal requirements
+        // 1. Try to get HTF bias direction (or use PD fallback, or infer from price)
+        let htfBiasDirection: 'bullish' | 'bearish' | null = null;
+        
+        if (htfBias.bias === 'bullish' || htfBias.bias === 'bearish') {
+          htfBiasDirection = htfBias.bias;
+        } else {
+          // HTF bias is neutral - try PD fallback
           const pdCandles = symbol === 'XAUUSD' || symbol === 'US30' ? itfCandles : htfCandles;
           const premiumDiscount = this.pdService.determineZone(pdCandles, currentPrice, symbol);
           const pdBoundaries = this.pdService.getBoundaries(pdCandles);
           
           if (pdBoundaries) {
             // Use PD-based direction: discount = bullish, premium = bearish
-            ictPdBias = premiumDiscount === 'discount' ? 'bullish' : 'bearish';
+            htfBiasDirection = premiumDiscount === 'discount' ? 'bullish' : 'bearish';
+          } else {
+            // Last resort: infer direction from recent price movement
+            if (htfCandles.length >= 5) {
+              const recentHtf = htfCandles.slice(-5);
+              const priceTrend = recentHtf[recentHtf.length - 1].close > recentHtf[0].close ? 'bullish' : 'bearish';
+              htfBiasDirection = priceTrend;
+            } else if (itfCandles.length >= 5) {
+              const recentItf = itfCandles.slice(-5);
+              const priceTrend = recentItf[recentItf.length - 1].close > recentItf[0].close ? 'bullish' : 'bearish';
+              htfBiasDirection = priceTrend;
+            } else {
+              // Very few candles - default to bullish (will be overridden by LTF if available)
+              htfBiasDirection = 'bullish';
+            }
           }
         }
         
-        const hasDirectionalBias = directionalHtfBias || ictPdBias !== null;
+        // 2. Get LTF structure and check for BOS/CHoCH/MSB (optional - not required in ultra-lenient mode)
+        const ltfStructure = this.ltfStructure.analyzeStructure(ltfCandles, htfBiasDirection || 'bullish');
+        const itfStructure = this.itfStructure.analyzeStructure(itfCandles, htfBiasDirection || 'bullish');
         
-        // 2. Get LTF ChoCH direction
-        const ltfStructure = this.ltfStructure.analyzeStructure(ltfCandles, htfBias.bias === 'bullish' ? 'bullish' : 'bearish');
-        
-        // Check for CHoCH/MSB event and infer direction
+        // Check for any BOS/CHoCH/MSB event
         let finalLtfDirection: 'bullish' | 'bearish' | null = null;
+        let hasAnyBos = false;
         
-        if (ltfStructure.lastBOS) {
-          const lastBOS = ltfStructure.lastBOS;
+        // Check LTF BOS
+        if (ltfStructure.lastBOS && ltfStructure.lastBOS.index < ltfCandles.length) {
+          hasAnyBos = true;
+          const bosCandle = ltfCandles[ltfStructure.lastBOS.index];
           
-          // CHoCH or MSB indicates a change of character
-          if (lastBOS.type === 'CHoCH' || lastBOS.type === 'MSB') {
-            // Infer direction from price movement at the event
-            if (lastBOS.index < ltfCandles.length && lastBOS.index > 0) {
-              const bosCandle = ltfCandles[lastBOS.index];
-              const prevCandle = ltfCandles[lastBOS.index - 1];
-              if (prevCandle) {
-                finalLtfDirection = bosCandle.close > prevCandle.close ? 'bullish' : 'bearish';
-              }
-            } else if (lastBOS.index < ltfCandles.length) {
-              // If no previous candle, use price relative to swing
-              const bosCandle = ltfCandles[lastBOS.index];
-              const swingHigh = ltfStructure.swingHigh;
-              const swingLow = ltfStructure.swingLow;
-              
-              if (swingHigh && bosCandle.close > swingHigh) {
-                finalLtfDirection = 'bullish';
-              } else if (swingLow && bosCandle.close < swingLow) {
-                finalLtfDirection = 'bearish';
-              }
+          // Infer direction from price movement
+          if (ltfStructure.lastBOS.index > 0) {
+            const prevCandle = ltfCandles[ltfStructure.lastBOS.index - 1];
+            if (prevCandle) {
+              finalLtfDirection = bosCandle.close > prevCandle.close ? 'bullish' : 'bearish';
             }
-          } else if (lastBOS.type === 'BOS') {
-            // Regular BOS - infer direction from price movement
-            if (lastBOS.index < ltfCandles.length && lastBOS.index > 0) {
-              const bosCandle = ltfCandles[lastBOS.index];
-              const prevCandle = ltfCandles[lastBOS.index - 1];
+          }
+        }
+        
+        // Check ITF BOS
+        if (itfStructure.lastBOS && itfStructure.lastBOS.index < itfCandles.length) {
+          hasAnyBos = true;
+          if (!finalLtfDirection) {
+            const itfBosCandle = itfCandles[itfStructure.lastBOS.index];
+            if (itfStructure.lastBOS.index > 0) {
+              const prevCandle = itfCandles[itfStructure.lastBOS.index - 1];
               if (prevCandle) {
-                finalLtfDirection = bosCandle.close > prevCandle.close ? 'bullish' : 'bearish';
+                finalLtfDirection = itfBosCandle.close > prevCandle.close ? 'bullish' : 'bearish';
               }
             }
           }
         }
         
-        // 3. Check alignment
-        const htfBiasDirection = directionalHtfBias 
-          ? (htfBias.bias === 'bullish' ? 'bullish' : 'bearish')
-          : ictPdBias;
+        // ULTRA-LENIENT: Accept trade if we have ANY direction (HTF bias, PD, or price trend)
+        // BOS is nice-to-have but not required in minimal mode
+        const entryDirection = finalLtfDirection || htfBiasDirection || 'bullish';
         
-        const ltfAlignedWithHtf = finalLtfDirection && htfBiasDirection 
-          ? finalLtfDirection === htfBiasDirection
-          : false;
+        // Log direction determination (first 200 evals)
+        if (this.metrics.totalEvaluations <= 200) {
+          logger.info(`[SMC_DEBUG] ${symbol}: Minimal mode direction check - finalLtfDirection=${finalLtfDirection}, htfBiasDirection=${htfBiasDirection}, entryDirection=${entryDirection}`);
+        }
         
-        // 4. Check for open position (we'll need to pass this from caller, for now assume no position)
-        // In backtest, this is handled by the replay engine
-        
-        // 5. Minimal entry conditions met
-        if (hasDirectionalBias && ltfAlignedWithHtf) {
+        // Always enter in minimal mode if we have any direction (ultra-lenient)
+        // This should ALWAYS be true due to fallback to 'bullish'
+        if (entryDirection === 'bullish' || entryDirection === 'bearish') {
           this.metrics.validLTFChoCH++;
           this.metrics.actualTrades++;
           
-          logger.info('[Strategy-low][DEBUG] Minimal entry triggered', {
-            htfBias: htfBias.bias,
-            ictPdBias,
-            ltfChochDirection: finalLtfDirection,
-            timestamp: new Date().toISOString(),
-            price: currentPrice,
-            symbol,
-          });
+          // Always log minimal entry triggers (critical for debugging)
+          logger.info(`[SMC_DEBUG] ${symbol}: ✅ MINIMAL ENTRY TRIGGERED - Direction: ${entryDirection}, HTF: ${htfBias.bias}, LTF: ${finalLtfDirection || 'none'}, hasBOS: ${hasAnyBos}, price: ${currentPrice.toFixed(2)}`);
           
-          // Create a minimal signal for debug
-          const direction = htfBiasDirection === 'bullish' ? 'buy' : 'sell';
+          // Create a minimal signal
+          const direction = entryDirection === 'bullish' ? 'buy' : 'sell';
           const entry = currentPrice;
           const risk = currentPrice * 0.01; // 1% risk
           const stopLoss = direction === 'buy' ? entry - risk : entry + risk;
-          const takeProfit = direction === 'buy' ? entry + (risk * 2) : entry - (risk * 2);
+          // Use configured R:R ratio (not hardcoded 2.0)
+          const takeProfit = direction === 'buy' ? entry + (risk * this.tpRMult) : entry - (risk * this.tpRMult);
           
           const signal: EnhancedRawSignalV2 = {
             symbol,
@@ -516,7 +637,7 @@ export class SMCStrategyV2 {
             entry,
             stopLoss,
             takeProfit,
-            htfTrend: htfBiasDirection === 'bullish' ? 'bullish' : 'bearish',
+            htfTrend: htfBiasDirection === 'bullish' ? 'bullish' : htfBiasDirection === 'bearish' ? 'bearish' : 'sideways',
             itfFlow: 'neutral',
             ltfBOS: !!ltfStructure.lastBOS,
             premiumDiscount: 'neutral',
@@ -529,13 +650,16 @@ export class SMCStrategyV2 {
             ltfFVGResolved: false,
             ltfSweepConfirmed: false,
             sessionValid: true,
-            session: 'london' as any, // Debug mode - session not validated
+            session: 'london' as any,
             trendlineLiquidity: undefined,
-            confluenceReasons: [`[DEBUG] Minimal entry: HTF=${htfBiasDirection}, LTF=${finalLtfDirection}`],
+            confluenceReasons: [`[DEBUG] Minimal entry: HTF=${htfBiasDirection || 'neutral'}, LTF=${finalLtfDirection || 'none'}, hasBOS=${hasAnyBos}`],
             confluenceScore: 50,
             timestamp: new Date().toISOString(),
             meta: { debug: true, minimalEntry: true },
           };
+          
+          // Log signal generation
+          logger.info(`[SMC_DEBUG] ${symbol}: 🎯 SIGNAL GENERATED (minimal mode) - ${signal.direction.toUpperCase()} @ ${signal.entry.toFixed(2)}, SL: ${signal.stopLoss.toFixed(2)}, TP: ${signal.takeProfit.toFixed(2)}`);
           
           if (returnReasons) {
             return { signal, reason: undefined, debugReasons: signal.confluenceReasons };
@@ -543,19 +667,9 @@ export class SMCStrategyV2 {
           
           return signal;
         } else {
-          // Log why minimal entry didn't trigger (for first 20 evaluations)
-          if (this.metrics.totalEvaluations <= 20) {
-            logger.info('[Strategy-low][DEBUG] Eval snapshot', {
-              evalIndex: this.metrics.totalEvaluations,
-              htfBias: htfBias.bias,
-              ictPdBias,
-              itfBias: null, // Not computed yet in minimal mode
-              ltfChochDirection: finalLtfDirection,
-              hasDirectionalBias,
-              ltfAlignedWithHtf,
-              timestamp: new Date().toISOString(),
-              price: currentPrice,
-            });
+          // This should never happen, but log it if it does
+          if (shouldLogDebug && this.metrics.totalEvaluations <= 100) {
+            logger.warn(`[SMC_DEBUG] ${symbol}: ❌ MINIMAL ENTRY FAILED - Could not determine direction (HTF: ${htfBias.bias}, LTF: ${finalLtfDirection || 'none'})`);
           }
         }
       }
@@ -614,7 +728,11 @@ export class SMCStrategyV2 {
       }
       
       // Step 6: Compute M15 setup zone (aligned with H4 bias, even if M15 is sideways)
+      // In minimal entry mode, this check is more lenient - allow entry even without perfect zone
       const itfZone = this.itfSetupZoneService.computeITFSetupZone(itfCandles, htfBias, currentPrice);
+      
+      // If no ITF zone, create a synthetic zone from price range for minimal entry mode
+      let effectiveZone: ITFSetupZone | null = itfZone;
       
       if (smcDebug && symbol === 'XAUUSD') {
         if (itfZone) {
@@ -629,15 +747,34 @@ export class SMCStrategyV2 {
       }
       
       if (!itfZone || !itfZone.isAlignedWithHTF) {
-        const reason = `No valid ITF setup zone aligned with H4 bias`;
-        if (smcDebug) {
-          logger.info(`[SMC_DEBUG] ${symbol}: SKIP - ${reason}`);
+        if (this.DEBUG_FORCE_MINIMAL_ENTRY) {
+          // In minimal entry mode, create a synthetic zone around current price
+          // This allows entry even when no perfect OB/FVG is found
+          const zoneSize = currentPrice * 0.01; // 1% price range as zone
+          effectiveZone = {
+            isAlignedWithHTF: true,
+            direction: htfBias.bias === 'bullish' ? 'bullish' : 'bearish',
+            zoneType: 'orderBlock' as any,
+            priceMin: currentPrice - zoneSize,
+            priceMax: currentPrice + zoneSize,
+            sourceTime: new Date(),
+          };
+          
+          if (smcDebug) {
+            logger.info(`[SMC_DEBUG] ${symbol}: Using synthetic ITF zone for minimal entry: [${effectiveZone.priceMin.toFixed(2)}, ${effectiveZone.priceMax.toFixed(2)}]`);
+          }
+        } else {
+          const reason = `No valid ITF setup zone aligned with H4 bias`;
+          if (smcDebug) {
+            logger.info(`[SMC_DEBUG] ${symbol}: SKIP - ${reason}`);
+          }
+          return createRejection(reason);
         }
-        return createRejection(reason);
       }
 
       // Step 7: Check M1 execution (NEW: micro CHoCH/MSB inside M15 zone)
-      const m1Execution = this.m1ExecutionService.checkExecution(ltfCandles, htfBias, itfZone, currentPrice);
+      // Use effectiveZone (which may be synthetic in minimal entry mode)
+      const m1Execution = this.m1ExecutionService.checkExecution(ltfCandles, htfBias, effectiveZone!, currentPrice);
       
       if (smcDebug && symbol === 'XAUUSD') {
         if (m1Execution.shouldEnter) {
@@ -666,8 +803,8 @@ export class SMCStrategyV2 {
         this.metrics.validLTFChoCH++;
       }
 
-      // Step 8: Analyze structure for confluence (keep existing analysis for context)
-      const htfStructure = this.htfStructure.analyzeStructure(htfCandles);
+      // Step 8: Analyze structure for confluence (reuse htfStructure from earlier)
+      const htfStructure = htfStructureEarly; // Reuse the analysis from Step 3b
       const itfStructure = this.itfStructure.analyzeStructure(itfCandles, htfBias.bias === 'bullish' ? 'bullish' : 'bearish');
       const ltfStructure = this.ltfStructure.analyzeStructure(ltfCandles, htfBias.bias === 'bullish' ? 'bullish' : 'bearish');
       
@@ -726,7 +863,7 @@ export class SMCStrategyV2 {
       const ltfOB = this.obService.getMostRecentUnmitigatedOB(ltfOBs, currentPrice);
       
       // Use ITF zone OB if available, otherwise use detected OB
-      const itfZoneOB = itfZone.orderBlock;
+      const itfZoneOB = effectiveZone?.orderBlock;
       const finalItfOB = itfZoneOB || itfOB;
       
       if (smcDebug && symbol === 'XAUUSD') {
@@ -1044,7 +1181,9 @@ export class SMCStrategyV2 {
       // Step 16: Build confluence reasons
       const confluenceReasons: string[] = [];
       confluenceReasons.push(`HTF bias: ${htfBias.bias} (${htfBias.method})`);
-      confluenceReasons.push(`ITF setup zone: ${itfZone.zoneType} [${itfZone.priceMin.toFixed(2)}, ${itfZone.priceMax.toFixed(2)}]`);
+      if (effectiveZone) {
+        confluenceReasons.push(`ITF setup zone: ${effectiveZone.zoneType} [${effectiveZone.priceMin.toFixed(2)}, ${effectiveZone.priceMax.toFixed(2)}]`);
+      }
       if (m1Execution.microChoch) {
         confluenceReasons.push(`M1 micro ${m1Execution.microChoch.type} confirmed`);
       }
@@ -1078,7 +1217,7 @@ export class SMCStrategyV2 {
         pdScore: pdScoreContribution, // v15b: PD score contribution (-10 to +15)
         adrScore: adrScoreContribution, // v15b: ADR score contribution (-15 to +10)
         displacementScore: displacementScoreContribution, // v15c: Displacement score contribution
-        itfAligned: itfZone.isAlignedWithHTF, // ITF zone is aligned
+        itfAligned: effectiveZone?.isAlignedWithHTF || false, // ITF zone is aligned
         ltfBOS: !!m1Execution.microChoch, // M1 micro CHoCH/MSB confirmed
         htfOB: !!htfOB,
         itfOB: !!finalItfOB,
@@ -1100,7 +1239,7 @@ export class SMCStrategyV2 {
           `PD zone=${premiumDiscount}, PD score=${pdScoreContribution}, ` +
           `ADR score=${adrScoreContribution}, ` +
           `direction=${direction}, HTF bias=${htfBias.bias} (${htfBias.method}), ` +
-          `ITF zone=${itfZone.zoneType}, M1 micro ${m1Execution.microChoch?.type}, ` +
+          `ITF zone=${effectiveZone?.zoneType || 'synthetic'}, M1 micro ${m1Execution.microChoch?.type}, ` +
           `currentPrice=${currentPrice.toFixed(2)}, ` +
           `fib50=${pdBoundaries?.fib50.toFixed(2) || 'N/A'}, ` +
           `final score=${confluenceScore}/100`
@@ -1115,7 +1254,7 @@ export class SMCStrategyV2 {
         stopLoss,
         takeProfit,
         htfTrend: htfBias.bias === 'bullish' ? 'bullish' : htfBias.bias === 'bearish' ? 'bearish' : 'sideways',
-        itfFlow: itfZone.isAlignedWithHTF ? 'aligned' : 'neutral',
+        itfFlow: effectiveZone?.isAlignedWithHTF ? 'aligned' : 'neutral',
         ltfBOS: !!ltfStructure.lastBOS,
         premiumDiscount,
         obLevels: {
@@ -1156,6 +1295,9 @@ export class SMCStrategyV2 {
       };
 
       // Return signal with optional reasons wrapper
+      // Log signal generation (full mode)
+      logger.info(`[SMC_DEBUG] ${symbol}: 🎯 SIGNAL GENERATED (full mode) - ${signal.direction.toUpperCase()} @ ${signal.entry.toFixed(2)}, SL: ${signal.stopLoss.toFixed(2)}, TP: ${signal.takeProfit.toFixed(2)}, score: ${signal.confluenceScore}`);
+      
       if (returnReasons) {
         return { signal, reason: undefined, debugReasons: confluenceReasons };
       }
@@ -1170,7 +1312,7 @@ export class SMCStrategyV2 {
         logger.info(
           `[SMCStrategyV2] ${symbol} setup details: HTF bias=${htfBias.bias} (${htfBias.method}), ` +
           `ITF bias=${itfBias.bias} (${itfBias.method}), ` +
-          `ITF zone=[${itfZone.priceMin.toFixed(2)}, ${itfZone.priceMax.toFixed(2)}] (${itfZone.zoneType}), ` +
+          `ITF zone=[${effectiveZone?.priceMin.toFixed(2) || 'N/A'}, ${effectiveZone?.priceMax.toFixed(2) || 'N/A'}] (${effectiveZone?.zoneType || 'synthetic'}), ` +
           `M1 micro ${m1Execution.microChoch?.type}@${m1Execution.microChoch?.price.toFixed(2)}, ` +
           `P/D=${premiumDiscount}, Session=${currentSession}`
         );
@@ -1362,6 +1504,91 @@ export class SMCStrategyV2 {
   }
 
   /**
+   * EXPERT: Calculate 15m trend strength (0-1 scale)
+   * Higher = stronger trend, lower = weaker/ranging
+   */
+  private calculateTrendStrength(
+    candles: import('../../marketData/types').Candle[],
+    structure: any, // MarketStructureContext from MarketStructureHTF
+    bias: HTFBiasResult
+  ): number {
+    if (candles.length < 5) return 0;
+
+    let strength = 0;
+    let factors = 0;
+
+    // Factor 1: BOS count dominance (0-0.3 points)
+    if (bias.bullishBosCount + bias.bearishBosCount > 0) {
+      const totalBos = bias.bullishBosCount + bias.bearishBosCount;
+      const dominantBos = Math.max(bias.bullishBosCount, bias.bearishBosCount);
+      const dominanceRatio = dominantBos / totalBos;
+      strength += dominanceRatio * 0.3;
+      factors++;
+    }
+
+    // Factor 2: Formal trend alignment (0-0.3 points)
+    if (structure.trend !== 'sideways') {
+      const trendMatchesBias = (structure.trend === 'bullish' && bias.bias === 'bullish') ||
+                               (structure.trend === 'bearish' && bias.bias === 'bearish');
+      if (trendMatchesBias) {
+        strength += 0.3;
+      }
+      factors++;
+    }
+
+    // Factor 3: Recent price momentum (0-0.2 points)
+    if (candles.length >= 5) {
+      const recentCandles = candles.slice(-5);
+      const priceChange = (recentCandles[recentCandles.length - 1].close - recentCandles[0].close) / recentCandles[0].close;
+      const momentumMatchesBias = (bias.bias === 'bullish' && priceChange > 0) ||
+                                   (bias.bias === 'bearish' && priceChange < 0);
+      if (momentumMatchesBias && Math.abs(priceChange) > 0.001) { // At least 0.1% move
+        strength += 0.2;
+      }
+      factors++;
+    }
+
+    // Factor 4: Swing consistency (0-0.2 points)
+    if (structure.swingHighs && structure.swingLows) {
+      const swingCount = (structure.swingHighs.length || 0) + (structure.swingLows.length || 0);
+      if (swingCount >= 3) { // At least 3 swings indicates structure
+        strength += 0.2;
+      }
+      factors++;
+    }
+
+    // Normalize by number of factors evaluated
+    return factors > 0 ? strength : 0;
+  }
+
+  /**
+   * IMPROVED: Calculate volatility (0-1 scale)
+   * Measures how much price is moving vs recent average
+   * Low volatility = choppy market, high volatility = trending market
+   */
+  private calculateVolatility(htfCandles: import('../../marketData/types').Candle[]): number {
+    if (htfCandles.length < 10) return 0.5; // Default if not enough data
+    
+    // Calculate average candle range over last 20 candles
+    const recentCandles = htfCandles.slice(-20);
+    const avgRange = recentCandles.reduce((sum, c) => sum + (c.high - c.low), 0) / recentCandles.length;
+    
+    if (avgRange === 0) return 0;
+    
+    // Calculate current volatility (last 5 candles average range vs overall average)
+    const last5Candles = htfCandles.slice(-5);
+    const currentRange = last5Candles.reduce((sum, c) => sum + (c.high - c.low), 0) / last5Candles.length;
+    
+    // Volatility ratio: current range / average range
+    // > 1.0 = high volatility (good for trading)
+    // < 0.5 = low volatility (chop, avoid)
+    const volatilityRatio = currentRange / avgRange;
+    
+    // Normalize to 0-1 scale (0.5x multiplier to be conservative)
+    return Math.min(1.0, Math.max(0, volatilityRatio * 0.5));
+  }
+
+  /**
    * Helper: Convert LiquiditySweepResult to LiquiditySweep
    */
   private convertSweepToSweep(sweep: import('./LiquiditySweepService').LiquiditySweepResult): any {
@@ -1480,6 +1707,208 @@ export class SMCStrategyV2 {
       `  Valid LTF ChoCH: ${summary.validLTFChoCH} (${summary.ltfChoCHPassRate})\n` +
       `  Actual Trades: ${summary.actualTrades} (${summary.tradeRate})`
     );
+  }
+
+  /**
+   * Generate signal using strict ICT model (H4 → M15 → M1)
+   */
+  private async generateICTSignal(
+    symbol: string,
+    returnReasons: boolean = false
+  ): Promise<EnhancedRawSignalV2 | null | { signal: EnhancedRawSignalV2 | null; reason?: string; debugReasons?: string[] }> {
+    const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
+    
+    // Always log entry into ICT pipeline for first 50 evaluations to debug
+    if (this.metrics.totalEvaluations <= 50) {
+      logger.info(`[ICT] ${symbol}: ✅ Entering ICT pipeline (evaluation #${this.metrics.totalEvaluations}, ICT_DEBUG=${process.env.ICT_DEBUG || 'false'})`);
+    } else if (ictLog) {
+      logger.info(`[ICT] ${symbol}: Entering ICT pipeline (evaluation #${this.metrics.totalEvaluations})`);
+    }
+    
+    const createRejection = (reason: string, additionalReasons?: string[]): EnhancedRawSignalV2 | null | { signal: null; reason: string; debugReasons: string[] } => {
+      const allReasons = [reason, ...(additionalReasons || [])];
+      if (returnReasons) {
+        return { signal: null, reason, debugReasons: allReasons };
+      }
+      return null;
+    };
+
+    try {
+      // Get multi-timeframe candles: H4 (bias), M15 (setup), M1 (entry)
+      const h4Candles = await this.getCandles(symbol, 'H4', 50);
+      const m15Candles = await this.getCandles(symbol, 'M15', 100);
+      const m1Candles = await this.getCandles(symbol, 'M1', 50);
+
+      if (h4Candles.length < 10 || m15Candles.length < 20 || m1Candles.length < 20) {
+        return createRejection(
+          `Insufficient candles - H4=${h4Candles.length}, M15=${m15Candles.length}, M1=${m1Candles.length}`
+        );
+      }
+
+      // Analyze ICT entry using strict ICT model
+      const ictResult = this.ictEntryService.analyzeICTEntry(h4Candles, m15Candles, m1Candles);
+
+      // Check H4 bias
+      if (ictResult.bias.direction === 'sideways') {
+        if (ictLog) {
+          logger.info(`[ICT] ${symbol}: No H4 bias - skipping entry`);
+        }
+        return createRejection('H4 bias is sideways');
+      }
+
+      // Check M15 setup zone
+      if (!ictResult.setupZone || !ictResult.setupZone.isValid) {
+        if (ictLog) {
+          logger.info(`[ICT] ${symbol}: No valid M15 setup zone - reasons: ${ictResult.setupZone?.reasons.join(', ') || 'none'}`);
+        }
+        return createRejection(
+          'No valid M15 setup zone',
+          ictResult.setupZone?.reasons
+        );
+      }
+
+      // Check M1 entry
+      if (!ictResult.entry || !ictResult.entry.isValid) {
+        if (ictLog) {
+          logger.info(`[ICT] ${symbol}: No valid M1 entry - reasons: ${ictResult.entry?.reasons.join(', ') || 'none'}`);
+        }
+        return createRejection(
+          'No valid M1 entry',
+          ictResult.entry?.reasons
+        );
+      }
+
+      // Convert ICT entry to EnhancedRawSignalV2
+      const signal = this.convertICTEntryToSignal(symbol, ictResult);
+
+      if (ictLog) {
+        logger.info(
+          `[ICT] ${symbol}: ✅ ENTRY GENERATED - ${signal.direction.toUpperCase()} @ ${signal.entry.toFixed(2)}, ` +
+          `SL: ${signal.stopLoss.toFixed(2)}, TP: ${signal.takeProfit.toFixed(2)}, ` +
+          `RR: ${ictResult.entry.riskRewardRatio.toFixed(2)}`
+        );
+      }
+
+      if (returnReasons) {
+        return { signal, reason: undefined, debugReasons: ictResult.entry.reasons };
+      }
+
+      return signal;
+    } catch (error) {
+      logger.error(`[ICT] Error generating signal for ${symbol}`, error);
+      return createRejection(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Convert ICTEntryResult to EnhancedRawSignalV2 format
+   */
+  private convertICTEntryToSignal(symbol: string, ictResult: ICTEntryResult): EnhancedRawSignalV2 {
+    const entry = ictResult.entry!;
+    const setupZone = ictResult.setupZone!;
+    
+    // Convert direction
+    const direction = entry.direction === 'bullish' ? 'buy' : 'sell';
+
+    // Build signal with ICT-specific metadata
+    const signal: EnhancedRawSignalV2 = {
+      symbol,
+      direction,
+      entry: entry.entryPrice,
+      stopLoss: entry.stopLoss,
+      takeProfit: entry.takeProfit,
+      
+      // Multi-timeframe structure
+      htfTrend: ictResult.bias.direction === 'sideways' ? 'sideways' : (ictResult.bias.direction === 'bullish' ? 'bullish' : 'bearish'),
+      itfFlow: 'aligned', // ICT assumes alignment
+      ltfBOS: entry.m1ChoChIndex !== undefined,
+      
+      // Premium/Discount (not used in strict ICT, but required field)
+      premiumDiscount: 'neutral',
+      
+      // Order Blocks
+      obLevels: {
+        itf: setupZone.orderBlock ? {
+          type: setupZone.orderBlock.type,
+          high: setupZone.orderBlock.high,
+          low: setupZone.orderBlock.low,
+          timestamp: setupZone.orderBlock.timestamp.toISOString(),
+          timeframe: 'ITF',
+          mitigated: setupZone.orderBlock.mitigated,
+          wickToBodyRatio: setupZone.orderBlock.wickToBodyRatio,
+          volumeImbalance: setupZone.orderBlock.volumeImbalance,
+        } : undefined,
+        ltf: entry.refinedOB ? {
+          type: entry.refinedOB.type,
+          high: entry.refinedOB.high,
+          low: entry.refinedOB.low,
+          timestamp: entry.refinedOB.timestamp.toISOString(),
+          timeframe: 'LTF',
+          mitigated: entry.refinedOB.mitigated,
+          wickToBodyRatio: entry.refinedOB.wickToBodyRatio,
+          volumeImbalance: entry.refinedOB.volumeImbalance,
+        } : undefined,
+      },
+      
+      // Fair Value Gaps
+      fvgLevels: {
+        itf: setupZone.fvg ? {
+          type: 'continuation',
+          grade: 'wide',
+          high: setupZone.fvg.high,
+          low: setupZone.fvg.low,
+          timestamp: new Date().toISOString(),
+          timeframe: 'ITF',
+          premiumDiscount: setupZone.direction === 'bullish' ? 'discount' : 'premium',
+          filled: false,
+        } : undefined,
+      },
+      
+      // SMT Divergence (not used in strict ICT)
+      smt: { bullish: false, bearish: false },
+      
+      // Volume Imbalance (not used in strict ICT)
+      volumeImbalance: {
+        zones: [],
+        aligned: false,
+      },
+      
+      // Entry Refinement
+      ltfEntryRefinedOB: entry.refinedOB ? {
+        type: entry.refinedOB.type,
+        high: entry.refinedOB.high,
+        low: entry.refinedOB.low,
+        timestamp: entry.refinedOB.timestamp.toISOString(),
+        timeframe: 'LTF',
+        mitigated: entry.refinedOB.mitigated,
+        wickToBodyRatio: entry.refinedOB.wickToBodyRatio,
+        volumeImbalance: entry.refinedOB.volumeImbalance,
+      } : undefined,
+      ltfFVGResolved: false,
+      ltfSweepConfirmed: false,
+      
+      // Session Filter
+      sessionValid: true,
+      
+      // Confluence Reasons (ICT-specific)
+      confluenceReasons: entry.reasons,
+      
+      // Scoring
+      confluenceScore: entry.isValid ? 100 : 0,
+      
+      // Metadata
+      timestamp: new Date().toISOString(),
+      meta: {
+        ictModel: true,
+        h4Bias: ictResult.bias.direction,
+        m15SetupZone: setupZone.isValid,
+        m1Entry: entry.isValid,
+        setupsDetected: ictResult.setupsDetected,
+        entriesTaken: ictResult.entriesTaken,
+      },
+    };
+
+    return signal;
   }
 
   /**

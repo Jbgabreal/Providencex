@@ -123,8 +123,9 @@ export async function evaluateExecution(
   // Step 8.5: v10 SMC v2 specific checks (when available)
   // Note: smcMeta is already defined above (Step 4) for session check
   
-  // Premium/Discount check (v2)
-  if (smcMeta?.premiumDiscount) {
+  // Premium/Discount check (v2) - can be disabled for backtesting
+  const requirePremiumDiscount = process.env.EXEC_FILTER_REQUIRE_PREMIUM_DISCOUNT !== 'false'; // Default: true
+  if (requirePremiumDiscount && smcMeta?.premiumDiscount) {
     const pd = smcMeta.premiumDiscount;
     // Buy in discount, sell in premium
     if (signal.direction === 'buy' && pd !== 'discount') {
@@ -147,8 +148,9 @@ export async function evaluateExecution(
     reasons.push(`Session not valid for ${symbol}`);
   }
 
-  // FVG validity check (v2) - require at least one FVG level
-  if (smcMeta?.fvgLevels) {
+  // FVG validity check (v2) - require at least one FVG level (can be disabled for backtesting)
+  const requireFVG = process.env.EXEC_FILTER_REQUIRE_FVG !== 'false'; // Default: true
+  if (requireFVG && smcMeta?.fvgLevels) {
     const hasFVG = smcMeta.fvgLevels.htf || smcMeta.fvgLevels.itf || smcMeta.fvgLevels.ltf;
     if (!hasFVG) {
       reasons.push('No Fair Value Gap detected');
@@ -189,7 +191,7 @@ export async function evaluateExecution(
 
   // Confluence score check (v2) - require minimum score (per-symbol threshold)
   if (smcMeta?.confluenceScore !== undefined) {
-    const minConfluenceScore = rules.minConfluenceScore || 65; // Default: 65, XAUUSD: 65 (v15b: relaxed from 70)
+    const minConfluenceScore = rules.minConfluenceScore ?? 65; // Default: 65, XAUUSD: 65 (v15b: relaxed from 70) - use ?? to allow 0
     if (smcMeta.confluenceScore < minConfluenceScore) {
       reasons.push(`Confluence score too low: ${smcMeta.confluenceScore} < ${minConfluenceScore} (required)`);
       logger.info(

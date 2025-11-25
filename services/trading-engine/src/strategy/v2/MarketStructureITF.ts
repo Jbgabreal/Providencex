@@ -52,8 +52,11 @@ export class MarketStructureITF {
       strictClose: true, // ICT-style strict close (closing price breaks)
     });
     
+    // CRITICAL FIX: Reduce minSwingPairs from 2 to 1 for ITF to allow trend detection with limited candles
+    // ITF timeframe has fewer swings than HTF, so we need more lenient requirements
+    const itfMinSwingPairs = parseInt(process.env.SMC_ITF_MIN_SWING_PAIRS || '1', 10);
     this.trendService = new TrendService({
-      minSwingPairs: 2,
+      minSwingPairs: itfMinSwingPairs, // Reduced from 2 to 1 (configurable)
       discountMax: 0.5,
       premiumMin: 0.5,
     });
@@ -103,11 +106,47 @@ export class MarketStructureITF {
       ? this.chochService.detectMSB(chochEvents, structuralSwings)
       : [];
 
-    // Get latest trend from snapshots
+    // CRITICAL FIX: Improve ITF trend classification
+    // First try TrendService snapshots, then fallback to BOS/CHoCH-based logic
     const latestSnapshot = trendSnapshots.length > 0 
       ? trendSnapshots[trendSnapshots.length - 1]
       : null;
-    const itfTrend = latestSnapshot?.trend || 'sideways';
+    let itfTrend = latestSnapshot?.trend || 'sideways';
+    
+    // FALLBACK: If TrendService returns sideways but we have clear BOS/CHoCH signals, use them
+    if (itfTrend === 'sideways' && (bosEvents.length > 0 || chochEvents.length > 0)) {
+      // Check last CHoCH direction
+      if (chochEvents.length > 0) {
+        const lastChoCh = chochEvents[chochEvents.length - 1];
+        itfTrend = lastChoCh.toTrend; // CHoCH shows the new trend direction
+      } else if (bosEvents.length > 0) {
+        // No CHoCH yet, but check BOS direction
+        const recentBos = bosEvents.slice(-5); // Last 5 BOS events
+        const bullishBos = recentBos.filter(b => b.direction === 'bullish').length;
+        const bearishBos = recentBos.filter(b => b.direction === 'bearish').length;
+        
+        // If clear BOS bias (2+ more of one direction), use it
+        if (bullishBos >= bearishBos + 2) {
+          itfTrend = 'bullish';
+        } else if (bearishBos >= bullishBos + 2) {
+          itfTrend = 'bearish';
+        }
+        // Otherwise stay sideways
+      }
+    }
+    
+    // Enhanced logging for ITF trend detection
+    const smcDebug = process.env.SMC_DEBUG === 'true';
+    if (smcDebug && candles.length >= 20) {
+      logger.info(
+        `[MarketStructureITF] ITF trend classification: ` +
+        `TrendService=${latestSnapshot?.trend || 'none'}, ` +
+        `final=${itfTrend}, ` +
+        `BOS=${bosEvents.length}, CHoCH=${chochEvents.length}, ` +
+        `swings=${swings.length}, ` +
+        `method=${itfTrend === latestSnapshot?.trend ? 'TrendService' : 'BOS/CHoCH-fallback'}`
+      );
+    }
 
     // Check if ITF flow aligns with HTF trend
     const itfFlow = this.determineFlow(itfTrend, htfTrend);
@@ -130,8 +169,7 @@ export class MarketStructureITF {
     // Build BOS events array for backward compatibility
     const bosEventsArray = this.buildBOSEventsArray(bosEvents, chochEvents, msbEvents, candles);
 
-    // Optional debug logging
-    const smcDebug = process.env.SMC_DEBUG === 'true';
+    // Optional debug logging (smcDebug already declared above)
     if (smcDebug && candles.length > 0) {
       const symbol = (candles[0] as any).symbol || 'UNKNOWN';
       logger.debug(
@@ -142,6 +180,12 @@ export class MarketStructureITF {
       );
     }
 
+    // CRITICAL FIX: Return the actual ITF trend (not flow-adjusted)
+    // The flow logic is for strategy filtering, but statistics need the raw ITF trend
+    // Previously: trend was overridden to htfTrend or 'sideways' based on flow
+    // Now: Return the calculated ITF trend (bullish/bearish/sideways) for accurate statistics
+    const finalTrend = itfTrend; // Use the calculated ITF trend
+
     return {
       candles,
       timeframe: 'ITF',
@@ -151,7 +195,9 @@ export class MarketStructureITF {
       swingLows: swingLowsArray,
       bosEvents: bosEventsArray,
       lastBOS,
-      trend: itfFlow === 'aligned' || itfFlow === 'neutral' ? htfTrend : 'sideways',
+      trend: finalTrend, // Return actual ITF trend for statistics
+      // Note: Flow alignment logic (itfFlow) can still be used by strategy for filtering
+      // but doesn't override the trend value returned for statistics
     };
   }
 

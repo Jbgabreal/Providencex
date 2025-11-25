@@ -1,0 +1,2 @@
+ticket,symbol,direction,strategy,entryPrice,exitPrice,entryTime,exitTime,sl,tp,volume,profit,durationMinutes,pips,riskReward
+1,XAUUSD,buy,low,4077.73000,4036.95270,2025-11-16T20:00:00.000Z,2025-11-17T16:30:00.000Z,4036.95270,4200.06190,0.12,-489.33,1230,-407.77,1.00

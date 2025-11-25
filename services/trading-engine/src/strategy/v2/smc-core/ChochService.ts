@@ -149,7 +149,16 @@ export class ChochService {
           // Set initial bias or maintain bullish
           if (state.currentBias === 'unknown') {
             state.currentBias = 'bullish';
-            state.anchorSwing = state.lastConfirmedSwingLow;
+            // CRITICAL FIX: Ensure anchor swing is set from available swings before this BOS
+            // Find the most recent swing low before this BOS
+            const lowsBefore = swingsBefore.filter(s => s.type === 'low');
+            if (lowsBefore.length > 0) {
+              state.anchorSwing = lowsBefore[lowsBefore.length - 1]; // Most recent low
+              state.lastConfirmedSwingLow = state.anchorSwing;
+            } else {
+              // No swing low yet, use last confirmed or null
+              state.anchorSwing = state.lastConfirmedSwingLow;
+            }
           }
         } else {
           // Bearish BOS: update last swing low, anchor remains last swing high
@@ -163,7 +172,16 @@ export class ChochService {
           // Set initial bias or maintain bearish
           if (state.currentBias === 'unknown') {
             state.currentBias = 'bearish';
-            state.anchorSwing = state.lastConfirmedSwingHigh;
+            // CRITICAL FIX: Ensure anchor swing is set from available swings before this BOS
+            // Find the most recent swing high before this BOS
+            const highsBefore = swingsBefore.filter(s => s.type === 'high');
+            if (highsBefore.length > 0) {
+              state.anchorSwing = highsBefore[highsBefore.length - 1]; // Most recent high
+              state.lastConfirmedSwingHigh = state.anchorSwing;
+            } else {
+              // No swing high yet, use last confirmed or null
+              state.anchorSwing = state.lastConfirmedSwingHigh;
+            }
           }
         }
       }
@@ -172,14 +190,33 @@ export class ChochService {
     // Sort by index
     const sorted = chochEvents.sort((a, b) => a.index - b.index);
     
-    // Summary logging
-    const smcDebug = process.env.SMC_DEBUG === 'true';
+    // Enhanced logging for debugging CHoCH = 0 issue
+    const smcDebug = process.env.SMC_DEBUG === 'true' || process.env.SMC_DEBUG_CHOCH === 'true';
     if (smcDebug && bosEvents.length > 0) {
       logger.info(
         `[ChochService] CHoCH detection summary: ` +
         `${sorted.length} CHoCH events from ${bosEvents.length} BOS events. ` +
-        `Final bias: ${state.currentBias}, anchor: ${state.anchorSwing ? state.anchorSwing.type + '@' + state.anchorSwing.price : 'none'}`
+        `Final bias: ${state.currentBias}, anchor: ${state.anchorSwing ? state.anchorSwing.type + '@' + state.anchorSwing.price + ' (idx=' + state.anchorSwing.index + ')' : 'none'}, ` +
+        `swings: ${swings.length} (${swings.filter(s => s.type === 'high').length}H, ${swings.filter(s => s.type === 'low').length}L)`
       );
+      
+      // Detailed logging if CHoCH = 0 but BOS > 0
+      if (sorted.length === 0 && bosEvents.length > 0) {
+        logger.warn(
+          `[ChochService] ⚠️  WARNING: 0 CHoCH events despite ${bosEvents.length} BOS events! ` +
+          `Initial bias: ${state.currentBias}, anchor swings available: ` +
+          `high=${state.lastConfirmedSwingHigh ? state.lastConfirmedSwingHigh.index : 'none'}, ` +
+          `low=${state.lastConfirmedSwingLow ? state.lastConfirmedSwingLow.index : 'none'}`
+        );
+        
+        // Log first few BOS events for debugging
+        const firstBos = bosEvents.slice(0, 3);
+        firstBos.forEach((bos, i) => {
+          logger.warn(
+            `[ChochService] BOS[${i}]: ${bos.direction} @ idx=${bos.index}, broke swing ${bos.brokenSwingType}@${bos.level.toFixed(2)} (idx=${bos.brokenSwingIndex})`
+          );
+        });
+      }
     }
     
     return sorted;

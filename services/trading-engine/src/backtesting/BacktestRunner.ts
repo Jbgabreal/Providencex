@@ -1,11 +1,38 @@
 /**
  * BacktestRunner - Main orchestrator for running backtests
- * 
+ *
  * Coordinates:
  * - Historical data loading
  * - Candle replay
  * - Statistics calculation
  * - Result storage
+ *
+ * BACKTEST PIPELINE FLOW:
+ * 1. HistoricalDataLoader loads candles for date range (via MT5, Postgres, CSV, or mock)
+ * 2. BacktestRunner sorts all candles by timestamp
+ * 3. CandleReplayEngine processes each candle:
+ *    - Expands higher-timeframe candles (M5, M15, etc.) into M1 candles for CandleStore
+ *    - Calls StrategyService.generateSignal(symbol) for each candle
+ *    - If SMC v2 enabled (USE_SMC_V2=true), delegates to SMCStrategyV2.generateEnhancedSignal()
+ *    - SMCStrategyV2 flow:
+ *      a. Gets HTF (H4), ITF (M15), LTF (M1) candles from CandleStore
+ *      b. Checks minimum candle requirements (MIN_HTF_CANDLES=10, MIN_ITF_CANDLES=20, MIN_LTF_CANDLES=10)
+ *      c. Computes HTF bias via HTFBiasService
+ *      d. If DEBUG_FORCE_MINIMAL_ENTRY=true: Uses lenient criteria (HTF bias + any BOS/CHoCH)
+ *      e. Otherwise: Runs strict SetupGateService filter (liquidity sweep, displacement, PD, BOS, FVG)
+ *      f. Returns EnhancedRawSignalV2 or null
+ *    - StrategyService converts EnhancedRawSignalV2 to TradeSignal
+ *    - ExecutionFilter (v3) evaluates signal against spread, session, volume, exposure filters
+ *    - If passed: SimulatedMT5Adapter opens trade with calculated lot size
+ *    - Each candle also checks for SL/TP hits on existing positions
+ * 4. BacktestRunner aggregates trades, calculates stats, saves results
+ *
+ * KEY GATES THAT CAN BLOCK TRADES:
+ * - Insufficient candles (HTF/ITF/LTF)
+ * - HTF bias neutral (no clear direction)
+ * - SetupGateService strict filters (if not in DEBUG_FORCE_MINIMAL_ENTRY mode)
+ * - Execution filters (spread, session, volume, exposure)
+ * - Risk service blocks (daily loss limit, max trades)
  */
 
 import { Logger } from '@providencex/shared-utils';
@@ -30,6 +57,8 @@ import { MarketStructureITF } from '../strategy/v2/MarketStructureITF';
 import { MarketStructureLTF } from '../strategy/v2/MarketStructureLTF';
 import { MarketDataService } from '../services/MarketDataService';
 import { CandleStore } from '../marketData/CandleStore';
+import { BacktestNewsGuardrail } from './BacktestNewsGuardrail';
+import { getConfig } from '../config';
 
 const logger = new Logger('BacktestRunner');
 
@@ -40,12 +69,15 @@ export class BacktestRunner {
   private config: BacktestConfig;
   private dataLoader: HistoricalDataLoader;
   private resultStore: BacktestResultStore;
+  private newsGuardrail: BacktestNewsGuardrail;
   private result: BacktestResult | null = null;
   private partialTrades: BacktestTrade[] = [];
   private partialEquityCurve: EquityPoint[] = [];
   private partialCurrentBalance: number;
   private partialPeakBalance: number;
   private isTerminated = false;
+  private newsBlockedCount = 0; // Track how many trades were blocked by news
+  private startTime: number = 0; // Track backtest start time for progress logging
 
   constructor(config: BacktestConfig, dataLoaderConfig: {
     dataSource: 'csv' | 'postgres' | 'mt5' | 'mock';
@@ -56,6 +88,16 @@ export class BacktestRunner {
     this.config = config;
     this.dataLoader = new HistoricalDataLoader(dataLoaderConfig);
     this.resultStore = new BacktestResultStore(dataLoaderConfig.databaseUrl);
+    // Initialize news guardrail for backtesting (uses database + API endpoint as fallback)
+    // Can be disabled via DISABLE_BACKTEST_NEWS_GUARDRAIL=true env var
+    const disableNewsGuardrail = process.env.DISABLE_BACKTEST_NEWS_GUARDRAIL === 'true';
+    if (disableNewsGuardrail) {
+      logger.info('[BacktestRunner] News guardrail disabled for backtesting (DISABLE_BACKTEST_NEWS_GUARDRAIL=true)');
+      this.newsGuardrail = null as any; // Will be handled in check
+    } else {
+      const newsGuardrailUrl = getConfig().newsGuardrailUrl;
+      this.newsGuardrail = new BacktestNewsGuardrail(dataLoaderConfig.databaseUrl, newsGuardrailUrl);
+    }
     this.partialCurrentBalance = config.initialBalance;
     this.partialPeakBalance = config.initialBalance;
   }
@@ -64,7 +106,8 @@ export class BacktestRunner {
    * Run the backtest
    */
   async run(): Promise<BacktestResult> {
-    const startTime = Date.now();
+    this.startTime = Date.now();
+    const startTime = this.startTime;
     const runId = `backtest_${startTime}`;
 
     logger.info(`[BacktestRunner] Starting backtest run: ${runId}`);
@@ -85,40 +128,75 @@ export class BacktestRunner {
       // Load historical candles for all symbols
       const allCandles: Map<string, Array<{ candle: any; symbol: string }>> = new Map();
       
+      // SENIOR DEV FIX: Always load M1 data directly from data source (MT5/Postgres)
+      // This ensures deterministic backtesting with real price action
+      // No expansion needed - we get actual M1 candles
+      const loadTimeframe = 'M1'; // Force M1 for deterministic backtesting
+      logger.info(`[BacktestRunner] Loading ${loadTimeframe} candles from ${this.dataLoader['config']?.dataSource || 'data source'}...`);
+      logger.info(`[BacktestRunner] CRITICAL: Using real ${loadTimeframe} data - no expansion or interpolation`);
+      
       for (const symbol of symbols) {
-        logger.info(`[BacktestRunner] Loading candles for ${symbol}...`);
+        logger.info(`[BacktestRunner] Loading ${loadTimeframe} candles for ${symbol}...`);
         const candles = await this.dataLoader.loadCandles(
           symbol,
           startDate,
           endDate,
-          this.config.timeframe || 'M5'
+          loadTimeframe // Always M1 for real price data
         );
 
         if (candles.length === 0) {
-          logger.warn(`[BacktestRunner] No candles loaded for ${symbol}`);
+          logger.warn(`[BacktestRunner] No ${loadTimeframe} candles loaded for ${symbol}`);
+          logger.warn(`[BacktestRunner] Ensure ${loadTimeframe} data exists in your data source`);
           continue;
         }
 
+        // Verify we got M1 data (each candle should be ~1 minute apart)
+        if (candles.length > 1) {
+          const timeDiff = candles[1].timestamp - candles[0].timestamp;
+          const expectedM1Diff = 60 * 1000; // 1 minute in ms
+          const tolerance = 10 * 1000; // 10 second tolerance
+          
+          if (Math.abs(timeDiff - expectedM1Diff) > tolerance) {
+            logger.warn(`[BacktestRunner] ⚠️  WARNING: Candle interval is ${timeDiff}ms, expected ~${expectedM1Diff}ms for M1 data`);
+            logger.warn(`[BacktestRunner] Data might not be M1 - backtest may have inaccuracies`);
+          } else {
+            logger.info(`[BacktestRunner] ✅ Verified M1 data: ${candles.length} candles with ~1min intervals`);
+          }
+        }
+
         allCandles.set(symbol, candles.map(c => ({ candle: c, symbol })));
-        logger.info(`[BacktestRunner] Loaded ${candles.length} candles for ${symbol}`);
+        logger.info(`[BacktestRunner] Loaded ${candles.length} ${loadTimeframe} candles for ${symbol}`);
       }
 
       if (allCandles.size === 0) {
         throw new Error('No historical candles loaded for any symbol');
       }
 
-      // Combine and sort all candles by timestamp
-      // Use a loop instead of spread operator to avoid stack overflow with large arrays
+      // SENIOR DEV FIX: Combine and sort all candles deterministically
+      // Use sorted symbol keys to ensure Map iteration order is deterministic
       const sortedCandles: Array<{ candle: any; symbol: string }> = [];
-      for (const candles of allCandles.values()) {
+      const sortedSymbols = Array.from(allCandles.keys()).sort(); // Deterministic order
+      
+      for (const symbol of sortedSymbols) {
+        const candles = allCandles.get(symbol);
+        if (!candles) continue;
+        
         // Push items one by one to avoid stack overflow (more memory efficient than spread/concat)
         for (const item of candles) {
           sortedCandles.push(item);
         }
       }
-      sortedCandles.sort((a, b) => a.candle.timestamp - b.candle.timestamp);
+      // SENIOR DEV FIX: Deterministic sorting - ensure consistent order every run
+      // Sort by timestamp first, then by symbol for tie-breaking (ensures identical results every run)
+      sortedCandles.sort((a, b) => {
+        const timeDiff = a.candle.timestamp - b.candle.timestamp;
+        if (timeDiff !== 0) return timeDiff;
+        // If timestamps are equal (shouldn't happen with M1 data), sort by symbol for determinism
+        return a.symbol.localeCompare(b.symbol);
+      });
 
       logger.info(`[BacktestRunner] Total candles to replay: ${sortedCandles.length}`);
+      logger.info(`[BacktestRunner] ✅ Sorted deterministically: by timestamp, then by symbol`);
 
       // Initialize simulated services
       const simulatedMT5 = new SimulatedMT5Adapter({
@@ -189,11 +267,15 @@ export class BacktestRunner {
           dailyTradeCounts, // Share tracking across strategies
           lastTradeTimestamps, // Share tracking across strategies
           overrideParamSet: this.config.overrideParamSet, // v11: Pass parameter overrides for optimization
+          sourceTimeframe: 'M1', // SENIOR DEV FIX: Always M1 - we load real M1 data directly from MT5
         });
 
         // Replay candles
         let candleIndex = 0;
         const totalCandles = sortedCandles.length;
+        
+        logger.info(`[BacktestRunner] 🚀 Starting candle replay: ${totalCandles} candles to process`);
+        logger.info(`[BacktestRunner] Date range: ${new Date(sortedCandles[0]?.candle.timestamp).toISOString()} to ${new Date(sortedCandles[sortedCandles.length - 1]?.candle.timestamp).toISOString()}`);
         
         for (const { candle, symbol } of sortedCandles) {
           // Check if terminated
@@ -206,11 +288,54 @@ export class BacktestRunner {
           // We'll do this by creating a mock snapshot from simulatedMT5
           this.updateOpenTradesSnapshot(openTradesService, simulatedMT5);
 
-          await replayEngine.processCandle(candle);
+          // Check news guardrail for this candle's timestamp (if enabled)
+          let guardrailDecisionForEngine: import('../types').GuardrailDecision;
+          if (this.newsGuardrail) {
+            const guardrailDecision = await this.newsGuardrail.checkCanTrade(
+              candle.timestamp,
+              strategy
+            );
+
+            // Convert to GuardrailDecision format expected by CandleReplayEngine
+            guardrailDecisionForEngine = {
+              can_trade: guardrailDecision.can_trade,
+              mode: guardrailDecision.mode,
+              active_windows: guardrailDecision.active_window ? [guardrailDecision.active_window] : [],
+              reason_summary: guardrailDecision.reason_summary,
+            };
+
+            // Log if trade is blocked by news (only for first few or if debug mode)
+            if (!guardrailDecision.can_trade && (candleIndex < 100 || process.env.SMC_DEBUG === 'true')) {
+              const candleTime = new Date(candle.timestamp).toISOString();
+              logger.info(`[BacktestRunner] ${symbol} @ ${candleTime}: 🚫 BLOCKED by news guardrail - ${guardrailDecision.reason_summary}`);
+            }
+          } else {
+            // News guardrail disabled - allow all trades
+            guardrailDecisionForEngine = {
+              can_trade: true,
+              mode: 'normal',
+              active_windows: [],
+              reason_summary: 'News guardrail disabled for backtesting',
+            };
+          }
+
+          await replayEngine.processCandle(candle, guardrailDecisionForEngine);
 
           // Update equity curve periodically (every 100 candles or at end)
           candleIndex++;
-          if (candleIndex % 100 === 0 || candleIndex === sortedCandles.length) {
+          // Log progress more frequently for better visibility (every 50 candles for short backtests, or every 10% progress)
+          const shouldLogProgress = 
+            candleIndex % 50 === 0 || 
+            candleIndex === sortedCandles.length || 
+            (totalCandles < 500 && candleIndex % 25 === 0) ||
+            (candleIndex % Math.max(1, Math.floor(totalCandles / 10)) === 0); // Every 10% progress
+          
+          if (shouldLogProgress) {
+            const progressPercent = ((candleIndex / totalCandles) * 100).toFixed(1);
+            const elapsed = Date.now() - this.startTime;
+            const rate = candleIndex / (elapsed / 1000); // candles per second
+            const eta = totalCandles > candleIndex ? ((totalCandles - candleIndex) / rate).toFixed(0) : '0';
+            logger.info(`[BacktestRunner] 📊 Progress: ${candleIndex}/${totalCandles} candles (${progressPercent}%) - ${this.partialTrades.length} trades - ETA: ${eta}s`);
             currentBalance = simulatedMT5.getBalance();
             
             // Calculate equity (balance + unrealized PnL from open positions)
@@ -248,17 +373,26 @@ export class BacktestRunner {
             this.partialCurrentBalance = currentBalance;
             this.partialPeakBalance = peakBalance;
 
-            // Log progress every 1000 candles
-            if (candleIndex % 1000 === 0) {
-              const progressPercent = ((candleIndex / totalCandles) * 100).toFixed(1);
-              logger.info(`[BacktestRunner] Progress: ${candleIndex}/${totalCandles} candles (${progressPercent}%) - ${this.partialTrades.length} trades so far`);
-            }
+            // Progress logging is now handled above with more frequent updates
           }
         }
 
         // Collect trades from this strategy
         const strategyTrades = replayEngine.getTrades();
         allTrades.push(...strategyTrades);
+        
+        // SENIOR DEV: Get signal statistics for this strategy
+        const signalStats = replayEngine.getSignalStats();
+        if (signalStats.signalsGenerated > 0 || process.env.BACKTEST_DEBUG === 'true') {
+          logger.info(`\n[BacktestRunner] 📊 Signal stats for strategy "${strategy}":`);
+          logger.info(`  Signals generated: ${signalStats.signalsGenerated}`);
+          logger.info(`  ✅ Executed: ${signalStats.signalsExecuted}`);
+          logger.info(`  ⚠️  Blocked by risk: ${signalStats.signalsBlockedByRisk}`);
+          logger.info(`  ⚠️  Blocked by execution filter: ${signalStats.signalsBlockedByExecutionFilter}`);
+          if (signalStats.signalsGenerated > 0) {
+            logger.info(`  Execution rate: ${((signalStats.signalsExecuted / signalStats.signalsGenerated) * 100).toFixed(2)}%`);
+          }
+        }
         
         // Log metrics summary for this strategy
         const strategyService = replayEngine.getStrategyService();
@@ -301,27 +435,62 @@ export class BacktestRunner {
         totalReturnPercent: ((currentBalance - this.config.initialBalance) / this.config.initialBalance) * 100,
       };
 
+      // Log ICT Model status with results
+      const useICTModel = (process.env.USE_ICT_MODEL || 'false').toLowerCase() === 'true';
+      
       logger.info(`[BacktestRunner] Backtest completed in ${runtimeMs}ms`);
       logger.info(`[BacktestRunner] Results:`, {
+        ictModel: useICTModel ? 'ENABLED' : 'DISABLED',
         totalTrades: stats.totalTrades,
         winRate: `${stats.winRate.toFixed(2)}%`,
         totalPnL: stats.totalPnL.toFixed(2),
         finalBalance: currentBalance.toFixed(2),
         returnPercent: this.result.totalReturnPercent.toFixed(2) + '%',
+        newsBlocked: this.newsBlockedCount,
       });
 
-      // Save to database
+      // Save to database (with timeout to prevent hanging)
+      // This ensures the optimizer continues even if database save hangs
       try {
-        await this.resultStore.saveResult(this.result);
+        const savePromise = this.resultStore.saveResult(this.result);
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Database save timed out after 5 seconds')), 5000);
+        });
+        await Promise.race([savePromise, timeoutPromise]);
       } catch (error) {
         logger.warn('[BacktestRunner] Failed to save to database (results still saved to disk)', error);
+        // Continue anyway - database save is non-critical
       }
 
-      // Cleanup
-      await this.dataLoader.close();
-      await executionFilterState.close();
-      await this.resultStore.close();
+      // Cleanup (with timeouts to prevent hanging)
+      const cleanupTimeout = 5000; // 5 seconds max for cleanup
+      const cleanupPromises = [
+        this.dataLoader.close().catch(err => logger.warn('[BacktestRunner] Error closing dataLoader:', err)),
+        executionFilterState.close().catch(err => logger.warn('[BacktestRunner] Error closing executionFilterState:', err)),
+        this.resultStore.close().catch(err => logger.warn('[BacktestRunner] Error closing resultStore:', err)),
+      ];
+      
+      if (this.newsGuardrail) {
+        cleanupPromises.push(
+          this.newsGuardrail.close().catch(err => logger.warn('[BacktestRunner] Error closing newsGuardrail:', err))
+        );
+      }
+      
+      // Wait for cleanup with timeout
+      try {
+        logger.info('[BacktestRunner] Starting cleanup operations...');
+        await Promise.race([
+          Promise.all(cleanupPromises),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Cleanup timed out')), cleanupTimeout))
+        ]);
+        logger.info('[BacktestRunner] Cleanup completed successfully');
+      } catch (cleanupError) {
+        logger.warn('[BacktestRunner] Cleanup timed out or failed (non-critical):', cleanupError);
+        // Continue anyway - cleanup failures are non-critical
+      }
 
+      logger.info('[BacktestRunner] ✅ Returning backtest result to caller');
+      logger.info(`[BacktestRunner] Result summary: ${this.result.stats.totalTrades} trades, PnL: $${this.result.stats.totalPnL.toFixed(2)}`);
       return this.result;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -444,7 +613,10 @@ export class BacktestRunner {
         }
 
         // Get candles for each timeframe
-        const htfCandlesRaw = await marketDataService.getRecentCandles(symbol, 'H4', 50);
+        // ICT Model: Use H4 for HTF when enabled, otherwise M15
+        const useICTModel = process.env.USE_ICT_MODEL === 'true';
+        const htfTimeframe = useICTModel ? 'H4' : 'M15';
+        const htfCandlesRaw = await marketDataService.getRecentCandles(symbol, htfTimeframe, 50);
         const itfCandlesRaw = await marketDataService.getRecentCandles(symbol, 'M15', 30);
         const ltfCandlesRaw = await marketDataService.getRecentCandles(symbol, 'M1', 20);
 
@@ -822,7 +994,8 @@ export class BacktestRunner {
 
     // Basic counts
     const winningTrades = trades.filter(t => t.profit > 0);
-    const losingTrades = trades.filter(t => t.profit <= 0);
+    const breakEvenTrades = trades.filter(t => Math.abs(t.profit) < 0.01); // Trades with profit within $0.01 of zero
+    const losingTrades = trades.filter(t => t.profit < -0.01); // Exclude break-even from losing trades
     const winRate = (winningTrades.length / trades.length) * 100;
 
     // PnL calculations
@@ -913,6 +1086,7 @@ export class BacktestRunner {
       totalTrades: trades.length,
       winningTrades: winningTrades.length,
       losingTrades: losingTrades.length,
+      breakEvenTrades: breakEvenTrades.length,
       winRate,
       totalPnL,
       grossProfit,
@@ -941,6 +1115,7 @@ export class BacktestRunner {
       totalTrades: 0,
       winningTrades: 0,
       losingTrades: 0,
+      breakEvenTrades: 0,
       winRate: 0,
       totalPnL: 0,
       grossProfit: 0,
@@ -1174,6 +1349,13 @@ export class BacktestRunner {
    */
   getResult(): BacktestResult | null {
     return this.result;
+  }
+
+  /**
+   * Get news guardrail blocked count
+   */
+  getNewsBlockedCount(): number {
+    return this.newsGuardrail ? this.newsBlockedCount : 0;
   }
 }
 

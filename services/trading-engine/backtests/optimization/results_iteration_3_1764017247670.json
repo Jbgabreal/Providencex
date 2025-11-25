@@ -1,0 +1,23 @@
+{
+  "iteration": 3,
+  "timestamp": "2025-11-24T20:47:27.670Z",
+  "config": {
+    "symbol": "XAUUSD",
+    "startDate": "2024-05-01",
+    "endDate": "2024-05-07",
+    "timeframe": "M5"
+  },
+  "results": {
+    "totalTrades": 28,
+    "winRate": 39.285714285714285,
+    "totalPnL": 2773.0289030283034,
+    "profitFactor": 1.6081823931961703,
+    "avgRR": 1.5892857142857133,
+    "maxDrawdown": 369.65793574118834,
+    "maxDrawdownPercent": 3.696579357411883,
+    "totalReturnPercent": 27.730289030283,
+    "averageWin": 666.5967176897954,
+    "averageLoss": 268.20794067996735,
+    "expectancy": 99.03674653672513
+  }
+}

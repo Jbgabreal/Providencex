@@ -1,0 +1,30 @@
+[
+  {
+    "timestamp": "2024-03-21T00:00:00.000Z",
+    "balance": 10000,
+    "equity": 10000,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2024-03-21T08:15:00.000Z",
+    "balance": 10000,
+    "equity": 10000,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2024-03-21T16:35:00.000Z",
+    "balance": 10000,
+    "equity": 10000,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2024-03-22T00:00:00.000Z",
+    "balance": 10000,
+    "equity": 10000,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  }
+]

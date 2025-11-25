@@ -54,11 +54,19 @@ export async function performDailyNewsScan(): Promise<DailyNewsMap> {
 
 export async function getTodayNewsMap(): Promise<DailyNewsMap | null> {
   const today = formatDateForPX(getNowInPXTimezone());
+  return getNewsMapForDate(today);
+}
+
+/**
+ * Get news map for a specific date (YYYY-MM-DD format)
+ * Useful for backtesting historical dates
+ */
+export async function getNewsMapForDate(dateStr: string): Promise<DailyNewsMap | null> {
   const pool = getDbPool();
 
   const result = await pool.query(
     'SELECT * FROM daily_news_windows WHERE date = $1',
-    [today]
+    [dateStr]
   );
 
   if (result.rows.length === 0) {

@@ -1,0 +1,115 @@
+{
+  "runId": "backtest_1764034471428",
+  "config": {
+    "symbol": "XAUUSD",
+    "strategies": [
+      "low"
+    ],
+    "startDate": "2024-05-01",
+    "endDate": "2024-05-07",
+    "timeframe": "M5",
+    "initialBalance": 10000,
+    "dataSource": "mt5"
+  },
+  "startTime": "2025-11-25T01:34:31.428Z",
+  "endTime": "2025-11-25T01:35:24.936Z",
+  "runtimeMs": 53508,
+  "stats": {
+    "totalTrades": 17,
+    "winningTrades": 3,
+    "losingTrades": 14,
+    "breakEvenTrades": 0,
+    "winRate": 17.647058823529413,
+    "totalPnL": -2548.519500000005,
+    "grossProfit": 3540.672499999996,
+    "grossLoss": 6089.192000000001,
+    "profitFactor": 0.5814683623048831,
+    "maxDrawdown": 2452.8208000000022,
+    "maxDrawdownPercent": 24.280017659484784,
+    "maxConsecutiveLosses": 6,
+    "maxConsecutiveWins": 2,
+    "averageWin": 1180.2241666666653,
+    "averageLoss": 434.9422857142858,
+    "averageRr": 1.2647058823529405,
+    "expectancy": -149.91291176470614,
+    "averageTradeDurationMinutes": 1258,
+    "perSymbolStats": {
+      "XAUUSD": {
+        "trades": 17,
+        "pnl": -2548.519500000005,
+        "winRate": 17.647058823529413
+      }
+    },
+    "perStrategyStats": {
+      "low": {
+        "trades": 17,
+        "pnl": -2548.519500000005,
+        "winRate": 17.647058823529413
+      }
+    },
+    "smcStats": {
+      "htf": {
+        "totalSwings": 2632,
+        "swingHighs": 1389,
+        "swingLows": 1243,
+        "averageSwingsPerEvaluation": 3.8311499272197964,
+        "totalBOS": 10935,
+        "bullishBOS": 5873,
+        "bearishBOS": 5062,
+        "totalCHoCH": 128,
+        "bullishCHoCH": 48,
+        "bearishCHoCH": 80,
+        "totalMSB": 3,
+        "bullishMSB": 0,
+        "bearishMSB": 3,
+        "trendBullish": 183,
+        "trendBearish": 98,
+        "trendSideways": 406,
+        "evaluations": 687
+      },
+      "itf": {
+        "totalSwings": 1588,
+        "swingHighs": 868,
+        "swingLows": 720,
+        "averageSwingsPerEvaluation": 2.3114992721979624,
+        "totalBOS": 3108,
+        "bullishBOS": 1765,
+        "bearishBOS": 1343,
+        "totalCHoCH": 20,
+        "bullishCHoCH": 13,
+        "bearishCHoCH": 7,
+        "totalMSB": 0,
+        "bullishMSB": 0,
+        "bearishMSB": 0,
+        "trendBullish": 0,
+        "trendBearish": 0,
+        "trendSideways": 687,
+        "evaluations": 687
+      },
+      "ltf": {
+        "totalSwings": 1166,
+        "swingHighs": 575,
+        "swingLows": 591,
+        "averageSwingsPerEvaluation": 1.6923076923076923,
+        "totalBOS": 1129,
+        "bullishBOS": 572,
+        "bearishBOS": 557,
+        "totalCHoCH": 0,
+        "bullishCHoCH": 0,
+        "bearishCHoCH": 0,
+        "totalMSB": 0,
+        "bullishMSB": 0,
+        "bearishMSB": 0,
+        "trendBullish": 54,
+        "trendBearish": 54,
+        "trendSideways": 581,
+        "evaluations": 689
+      },
+      "totalEvaluations": 689
+    }
+  },
+  "initialBalance": 10000,
+  "finalBalance": 7451.480499999997,
+  "totalReturn": -2548.519500000003,
+  "totalReturnPercent": -25.485195000000033
+}

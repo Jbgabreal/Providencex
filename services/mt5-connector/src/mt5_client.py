@@ -542,7 +542,12 @@ class MT5Client:
             
             # Normalize volume according to broker constraints
             original_volume = lot_size
-            normalized_volume = self._normalize_volume(original_volume, symbol_info)
+            normalized_volume, volume_error = self._normalize_volume(original_volume, symbol_info, symbol)
+            if volume_error:
+                return {
+                    'success': False,
+                    'error': volume_error
+                }
             
             # Log volume normalization
             logger.info(
@@ -616,28 +621,19 @@ class MT5Client:
             # Try sending order (with retry for invalid stops)
             last_error = None
             tried_modes = []
-            retry_without_stops = False
+            retry_without_stops = False  # Always false now - we never retry without SL/TP
             all_fallback_modes = [mt5.ORDER_FILLING_RETURN, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_FOK]
             has_tried_fallback = False
             
-            # Retry logic: both market and pending orders support SL/TP
-            # If MT5 returns INVALID_STOPS (10016), we retry once without SL/TP
+            # Retry logic removed: We no longer retry without SL/TP
+            # If MT5 returns INVALID_STOPS (10016), we fail the trade immediately
+            # This ensures we never send unprotected trades
             # Market orders use live prices, pending orders use entry_price for SL/TP adjustment
-            max_attempts = 2  # Allow one retry without stops if INVALID_STOPS occurs
+            max_attempts = 1  # Single attempt - fail if SL/TP cannot be set
             
             for attempt in range(max_attempts):
-                if attempt > 0 and order_kind != 'market':
-                    # Second attempt: retry without stops (only for pending orders)
-                    logger.warning(f"[RETRY_NO_STOPS] {symbol}: retrying pending order with sl=0.0, tp=0.0 due to invalid stops error")
-                    adjusted_sl = 0.0
-                    adjusted_tp = 0.0
-                    retry_without_stops = True
-                elif attempt > 0 and order_kind == 'market':
-                    # Should not happen for market orders (already sl=0, tp=0), but handle gracefully
-                    logger.warning(f"[RETRY_NO_STOPS] {symbol}: retrying market order with sl=0.0, tp=0.0")
-                    adjusted_sl = 0.0
-                    adjusted_tp = 0.0
-                    retry_without_stops = True
+                # Removed: Retry logic that would send orders without SL/TP
+                # We now fail immediately if SL/TP cannot be set (see 10016 handler below)
                 
                 # Keep track of modes to try: start with reported modes, add fallback if all fail
                 modes_list = list(filling_modes_to_try)
@@ -724,108 +720,41 @@ class MT5Client:
                             order_kind=order_kind,
                         )
                     
-                    # Handle invalid stops (10016) - retry once without stops
+                    # Handle invalid stops (10016) - FAIL instead of retrying without SL/TP
+                    # With safety buffer, this should rarely happen, but if it does, we fail the trade
+                    # to ensure we never send unprotected trades
                     elif result.retcode == 10016:  # TRADE_RETCODE_INVALID_STOPS
-                        if order_kind == 'market':
-                            # For market orders: retry once without SL/TP
-                            logger.warning(
-                                f"[RETRY_NO_STOPS] Invalid stops (10016) for {symbol}: retrying without SL/TP"
-                            )
-                            
-                            # Build retry request with same parameters but sl=0, tp=0
-                            retry_request = trade_request.copy()
-                            retry_request["sl"] = 0.0
-                            retry_request["tp"] = 0.0
-                            
-                            # Send retry order
-                            retry_result = mt5.order_send(retry_request)
-                            
-                            if retry_result is None:
-                                error_code, error_desc = mt5.last_error()
-                                error_msg = f"OrderSend failed after retry without stops: {error_desc} (code: {error_code})"
-                                error_details = {}
-                                log_mt5_error("order_send (retry)", error_code, error_desc, {
-                                    'symbol': symbol,
-                                    'direction': direction,
-                                    'order_kind': order_kind,
-                                })
-                                return self._make_error_response(
-                                    error_code=error_code if error_code else -10009,
-                                    error_message=error_msg,
-                                    symbol=actual_symbol,
-                                    direction=direction,
-                                    order_kind=order_kind,
-                                    volume=normalized_volume,
-                                )
-                            
-                            if retry_result.retcode == mt5.TRADE_RETCODE_DONE:
-                                # Success on retry!
-                                ticket = retry_result.order
-                                logger.info(
-                                    f"[RETRY_SUCCESS] {symbol}: Order executed successfully after retry without SL/TP"
-                                )
-                                log_trade_success("open_trade", ticket, {
-                                    'symbol': symbol,
-                                    'direction': direction,
-                                    'order_kind': order_kind,
-                                    'lot_size': lot_size,
-                                    'entry_price': entry_price_used,
-                                    'stop_loss': 0.0,
-                                    'take_profit': 0.0,
-                                    'strategy': strategy,
-                                    'filling_mode': filling_mode,
-                                    'retry_without_stops': True,
-                                })
-                                # Return structured success response with full context (retry path)
-                                return self._make_success_response(
-                                    ticket=ticket,
-                                    symbol=actual_symbol,  # Use broker symbol
-                                    volume=normalized_volume,
-                                    price=entry_price_used,
-                                    direction=direction,
-                                    order_kind=order_kind,
-                                )
-                            else:
-                                # Retry also failed
-                                error_msg = f"MT5 order_send failed after retry without stops: {retry_result.comment or 'Unknown error'}"
-                                logger.error(
-                                    f"[RETRY_FAILED] {symbol}: Retry without stops also failed: "
-                                    f"{retry_result.comment} (code: {retry_result.retcode})"
-                                )
-                                log_mt5_error("order_send (retry)", retry_result.retcode, retry_result.comment or "Unknown error", {
-                                    'symbol': symbol,
-                                    'direction': direction,
-                                    'order_kind': order_kind,
-                                    'retcode': retry_result.retcode,
-                                })
-                                return self._make_error_response(
-                                    error_code=retry_result.retcode,
-                                    error_message=error_msg,
-                                    symbol=actual_symbol,
-                                    direction=direction,
-                                    order_kind=order_kind,
-                                    volume=normalized_volume,
-                                )
-                        elif attempt == 0:
-                            # First attempt failed with invalid stops (pending orders), will retry without stops on next attempt
-                            logger.warning(f"[RETRY_NO_STOPS] {symbol}: retrying pending order with sl=0.0, tp=0.0 due to invalid stops error")
-                            last_error = f"Invalid stops (code: {result.retcode}): {result.comment}"
-                            break  # Break from filling mode loop, will retry on next attempt
-                        else:
-                            # Already retried without stops, still failed
-                            error_msg = f"OrderSend failed: Invalid stops even without SL/TP (code: {result.retcode}) - {result.comment}"
-                            error_details = result._asdict() if hasattr(result, '_asdict') else {}
-                            log_mt5_error("order_send", result.retcode, result.comment or "Invalid stops", {
-                                'symbol': symbol,
-                                'direction': direction,
-                                'order_kind': order_kind,
-                                'retcode': result.retcode,
-                            })
-                            return {
-                                'success': False,
-                                'error': error_msg,
-                                'details': error_details
-                            }
+                        # Calculate min stop distance for error message (same as in _adjust_stop_loss_take_profit)
+                        point = symbol_info.point
+                        min_stop_distance_points = symbol_info.trade_stops_level if hasattr(symbol_info, 'trade_stops_level') and symbol_info.trade_stops_level else 0
+                        min_stop_distance_price = min_stop_distance_points * point
+                        safety_buffer_multiplier = 1.2
+                        min_stop_distance_price_with_buffer = min_stop_distance_price * safety_buffer_multiplier
+                        
+                        error_msg = (
+                            f"MT5 rejected stop loss/take profit (code: 10016 - INVALID_STOPS): {result.comment or 'Unknown error'}. "
+                            f"Adjusted SL={trade_sl}, TP={trade_tp}, entry={entry_price_used}, "
+                            f"min_stop_distance={min_stop_distance_price_with_buffer}. "
+                            f"Trade rejected to prevent unprotected position."
+                        )
+                        logger.error(f"[INVALID_STOPS] {symbol}: {error_msg}")
+                        log_mt5_error("order_send", result.retcode, result.comment or "Invalid stops", {
+                            'symbol': symbol,
+                            'direction': direction,
+                            'order_kind': order_kind,
+                            'adjusted_sl': trade_sl,
+                            'adjusted_tp': trade_tp,
+                            'entry_price': entry_price_used,
+                            'min_stop_distance': min_stop_distance_price_with_buffer,
+                        })
+                        return self._make_error_response(
+                            error_code=result.retcode,
+                            error_message=error_msg,
+                            symbol=actual_symbol,
+                            direction=direction,
+                            order_kind=order_kind,
+                            volume=normalized_volume,
+                        )
                     elif result.retcode == 10014:  # TRADE_RETCODE_INVALID_VOLUME - invalid volume
                         # Volume error - don't retry with different filling mode, return immediately
                         error_msg = f"OrderSend failed: Invalid volume (code: {result.retcode}) - {result.comment}"
@@ -1139,7 +1068,7 @@ class MT5Client:
                 }
             
             # Normalize volume to broker constraints
-            normalized_volume, vol_error = self._normalize_volume(volume_to_close, symbol_info)
+            normalized_volume, vol_error = self._normalize_volume(volume_to_close, symbol_info, symbol)
             if vol_error:
                 return {
                     'success': False,
@@ -1418,6 +1347,11 @@ class MT5Client:
         min_stop_distance_points = symbol_info.trade_stops_level if hasattr(symbol_info, 'trade_stops_level') and symbol_info.trade_stops_level else 0
         min_stop_distance_price = min_stop_distance_points * point
         
+        # Add safety buffer (20% extra) to ensure MT5 accepts the stop
+        # This prevents retcode 10016 (INVALID_STOPS) rejections
+        safety_buffer_multiplier = 1.2
+        min_stop_distance_price_with_buffer = min_stop_distance_price * safety_buffer_multiplier
+        
         adjusted_sl = None
         adjusted_tp = None
         dir_lower = direction.lower()
@@ -1431,13 +1365,13 @@ class MT5Client:
                         f"Stop loss ignored: requested={requested_sl} is >= entry_price={entry_price} for BUY order"
                     )
                 else:
-                    # SL must be below entry by at least min_stop_distance
-                    max_sl = entry_price - min_stop_distance_price
+                    # SL must be below entry by at least min_stop_distance (with safety buffer)
+                    max_sl = entry_price - min_stop_distance_price_with_buffer
                     if requested_sl > max_sl:
                         adjusted_sl = max_sl
                         logger.warning(
                             f"Stop loss adjusted: requested={requested_sl}, adjusted={adjusted_sl} "
-                            f"(min_stop_distance={min_stop_distance_price})"
+                            f"(min_stop_distance={min_stop_distance_price}, with {safety_buffer_multiplier}x buffer={min_stop_distance_price_with_buffer})"
                         )
                     else:
                         adjusted_sl = requested_sl
@@ -1448,13 +1382,13 @@ class MT5Client:
                         f"Stop loss ignored: requested={requested_sl} is <= entry_price={entry_price} for SELL order"
                     )
                 else:
-                    # SL must be above entry by at least min_stop_distance
-                    min_sl = entry_price + min_stop_distance_price
+                    # SL must be above entry by at least min_stop_distance (with safety buffer)
+                    min_sl = entry_price + min_stop_distance_price_with_buffer
                     if requested_sl < min_sl:
                         adjusted_sl = min_sl
                         logger.warning(
                             f"Stop loss adjusted: requested={requested_sl}, adjusted={adjusted_sl} "
-                            f"(min_stop_distance={min_stop_distance_price})"
+                            f"(min_stop_distance={min_stop_distance_price}, with {safety_buffer_multiplier}x buffer={min_stop_distance_price_with_buffer})"
                         )
                     else:
                         adjusted_sl = requested_sl
@@ -1627,8 +1561,18 @@ class MT5Client:
                 # Map MT5 position type to our direction
                 direction = 'buy' if pos.type == mt5.ORDER_TYPE_BUY else 'sell'
                 
-                # Convert open time from MT5 timestamp to datetime
-                open_time_dt = datetime.fromtimestamp(pos.time_open) if pos.time_open else datetime.now()
+                # Convert open time from MT5 timestamp to datetime (guard attributes for different API versions)
+                raw_time = (
+                    getattr(pos, 'time', None)
+                    or getattr(pos, 'time_open', None)
+                    or getattr(pos, 'time_msc', None)
+                )
+                if raw_time:
+                    # Heuristic: MT5 *_msc fields are in ms while *_time are seconds
+                    seconds = raw_time / 1000 if raw_time > 10**11 else raw_time
+                    open_time_dt = datetime.fromtimestamp(seconds)
+                else:
+                    open_time_dt = datetime.now()
                 
                 # Normalize symbol name (remove broker suffixes for consistency if needed)
                 # For now, keep as-is but could normalize like in validate_symbol

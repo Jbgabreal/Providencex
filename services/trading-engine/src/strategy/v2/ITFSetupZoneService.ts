@@ -88,8 +88,17 @@ export class ITFSetupZoneService {
       priceMin = Math.min(priceMin, relevantOB.low);
       priceMax = Math.max(priceMax, relevantOB.high);
       const obTime = relevantOB.timestamp;
-      if (!sourceTime || (obTime instanceof Date && sourceTime instanceof Date && obTime.getTime() > sourceTime.getTime())) {
-        sourceTime = obTime;
+      // Type guard: ensure timestamp is Date before using
+      if (obTime instanceof Date) {
+        if (sourceTime === null) {
+          sourceTime = obTime;
+        } else {
+          // sourceTime is guaranteed to be Date here (not null)
+          const currentTime = (sourceTime as Date).getTime();
+          if (obTime.getTime() > currentTime) {
+            sourceTime = obTime;
+          }
+        }
       }
     }
 
@@ -97,8 +106,17 @@ export class ITFSetupZoneService {
       priceMin = Math.min(priceMin, relevantFVG.low);
       priceMax = Math.max(priceMax, relevantFVG.high);
       const fvgTime = relevantFVG.timestamp;
-      if (!sourceTime || (fvgTime instanceof Date && sourceTime instanceof Date && fvgTime.getTime() > sourceTime.getTime())) {
-        sourceTime = fvgTime;
+      // Type guard: ensure timestamp is Date before using
+      if (fvgTime instanceof Date) {
+        if (sourceTime === null) {
+          sourceTime = fvgTime;
+        } else {
+          // sourceTime is guaranteed to be Date here (not null)
+          const currentTime = (sourceTime as Date).getTime();
+          if (fvgTime.getTime() > currentTime) {
+            sourceTime = fvgTime;
+          }
+        }
       }
     }
 

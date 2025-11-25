@@ -1,0 +1,51 @@
+[
+  {
+    "timestamp": "2024-05-21T00:00:00.000Z",
+    "balance": 10000,
+    "equity": 10000,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2024-05-22T17:35:00.000Z",
+    "balance": 9184.397074332934,
+    "equity": 9184.397074332934,
+    "drawdown": 815.6029256670663,
+    "drawdownPercent": 8.156029256670664
+  },
+  {
+    "timestamp": "2024-05-24T11:15:00.000Z",
+    "balance": 8274.112343253339,
+    "equity": 8477.566653649485,
+    "drawdown": 1522.4333463505154,
+    "drawdownPercent": 15.224333463505154
+  },
+  {
+    "timestamp": "2024-05-26T04:55:00.000Z",
+    "balance": 8957.424904484278,
+    "equity": 9076.14665572278,
+    "drawdown": 923.8533442772205,
+    "drawdownPercent": 9.238533442772205
+  },
+  {
+    "timestamp": "2024-05-27T22:35:00.000Z",
+    "balance": 10113.589435760861,
+    "equity": 10398.852844681653,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2024-05-29T16:15:00.000Z",
+    "balance": 12982.998378404238,
+    "equity": 12982.998378404238,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2024-05-30T00:00:00.000Z",
+    "balance": 12982.998378404238,
+    "equity": 13001.41314442274,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  }
+]

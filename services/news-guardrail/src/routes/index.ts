@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getTodayNewsMap } from '../services/newsScanService';
+import { getTodayNewsMap, getNewsMapForDate } from '../services/newsScanService';
 import { canTradeNow } from '../services/tradingCheckService';
 import { performDailyNewsScan } from '../services/newsScanService';
 import { Logger } from '@providencex/shared-utils';
@@ -17,6 +17,31 @@ router.get('/news-map/today', async (req, res) => {
     res.json(newsMap);
   } catch (error) {
     logger.error('Error fetching today news map', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /news-map/:date - Get news map for a specific date (YYYY-MM-DD format)
+// Useful for backtesting historical dates
+router.get('/news-map/:date', async (req, res) => {
+  try {
+    const dateStr = req.params.date;
+    
+    // Validate date format (YYYY-MM-DD)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+    }
+    
+    const newsMap = await getNewsMapForDate(dateStr);
+    if (!newsMap) {
+      return res.status(404).json({ 
+        error: `No news map found for date: ${dateStr}`,
+        note: 'Historical news data must be pre-populated in the database. The news guardrail service only scans ForexFactory for today\'s calendar.'
+      });
+    }
+    res.json(newsMap);
+  } catch (error) {
+    logger.error('Error fetching news map for date', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

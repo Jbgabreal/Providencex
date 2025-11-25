@@ -7,11 +7,72 @@
  *   pnpm backtest --symbol XAUUSD,EURUSD --from 2024-01-01 --to 2024-12-31 --strategy low,high --data-source postgres
  */
 
+// Load environment variables from .env file (if present)
+import dotenv from 'dotenv';
+import * as path from 'path';
+import * as fs from 'fs';
+// Try multiple paths to find .env (root, trading-engine, or cwd)
+// Since __dirname changes based on compiled vs source, try several options
+const rootEnvPath = path.join(__dirname, '../../../.env'); // From dist/backtesting to root
+const localEnvPath = path.join(__dirname, '../../.env'); // From dist/backtesting to trading-engine
+const cwdEnvPath = path.join(process.cwd(), '.env'); // Current working directory
+
+// Try multiple root paths - root .env is critical for ICT model
+const rootPaths = [
+  path.resolve(process.cwd(), '../../.env'), // From services/trading-engine to root (most common)
+  path.resolve(__dirname, '../../../../.env'), // From compiled dist/backtesting to root
+  path.resolve(process.cwd(), '../../../.env'), // Alternative root path  
+  rootEnvPath, // Original calculation
+];
+
+// Load .env files: Try all paths, root takes precedence (loaded last with override)
+let rootEnvLoaded = false;
+const allPaths = [
+  { name: 'cwd', path: cwdEnvPath, isRoot: false },
+  { name: 'local', path: localEnvPath, isRoot: false },
+  ...rootPaths.map((p, i) => ({ name: `root-${i + 1}`, path: p, isRoot: true })),
+];
+
+allPaths.forEach(({ name, path: envPath, isRoot }) => {
+  try {
+    if (fs.existsSync(envPath)) {
+      dotenv.config({ path: envPath, override: isRoot }); // Root paths override, local don't
+      if (isRoot && !rootEnvLoaded) {
+        console.log(`[BacktestCLI] ✅ Loaded root .env from: ${name} (${envPath})`);
+        rootEnvLoaded = true;
+      }
+    }
+  } catch (error) {
+    // Ignore errors, try next path
+  }
+});
+
+// If root .env not loaded, warn user
+if (!rootEnvLoaded) {
+  console.log('[BacktestCLI] ⚠️  WARNING: Root .env file not found!');
+  console.log('[BacktestCLI] ICT Model may not work. Check that root .env exists at: ../../.env');
+}
+
+// CRITICAL: Ensure SMC v2 is enabled for backtests
+if (!process.env.USE_SMC_V2) {
+  process.env.USE_SMC_V2 = 'true';
+  console.log('[BacktestCLI] USE_SMC_V2 not set, defaulting to true for backtests');
+}
+
+// Log ICT Model configuration status
+const useICTModel = (process.env.USE_ICT_MODEL || 'false').toLowerCase() === 'true';
+if (useICTModel) {
+  console.log('[BacktestCLI] ✅ ICT Model ENABLED - USE_ICT_MODEL=true');
+  console.log(`[BacktestCLI] ICT_DEBUG=${process.env.ICT_DEBUG || 'false'}`);
+  console.log(`[BacktestCLI] SMC_RISK_REWARD=${process.env.SMC_RISK_REWARD || '3'}`);
+} else {
+  console.log('[BacktestCLI] ⚠️  ICT Model NOT enabled - USE_ICT_MODEL=' + (process.env.USE_ICT_MODEL || 'not set'));
+  console.log('[BacktestCLI] Set USE_ICT_MODEL=true in root .env file to enable ICT model');
+}
+
 import { BacktestRunner } from './BacktestRunner';
 import { BacktestConfig } from './types';
 import { Logger } from '@providencex/shared-utils';
-import * as path from 'path';
-import * as fs from 'fs/promises';
 
 const logger = new Logger('BacktestCLI');
 
@@ -36,7 +97,7 @@ function parseArgs(): {
   let to = '2024-12-31';
   let dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' = 'mock';
   let csvPath: string | undefined;
-  let initialBalance = 10000;
+  let initialBalance = 1000;
   let outputDir: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
@@ -260,6 +321,22 @@ async function main(): Promise<void> {
     // Save results
     await runner.saveResults(outputDir);
 
+    // Log ICT Model status before summary
+    const useICTModel = (process.env.USE_ICT_MODEL || 'false').toLowerCase() === 'true';
+    const ictDebug = (process.env.ICT_DEBUG || 'false').toLowerCase() === 'true';
+    const smcRiskReward = process.env.SMC_RISK_REWARD || '3';
+    
+    console.log('\n' + '='.repeat(80));
+    console.log('BACKTEST CONFIGURATION');
+    console.log('='.repeat(80));
+    console.log(`ICT Model: ${useICTModel ? '✅ ENABLED' : '❌ DISABLED'}`);
+    if (useICTModel) {
+      console.log(`  ICT_DEBUG: ${ictDebug}`);
+      console.log(`  SMC_RISK_REWARD: ${smcRiskReward}`);
+    }
+    console.log(`USE_ICT_MODEL env var: ${process.env.USE_ICT_MODEL || 'not set'}`);
+    console.log('='.repeat(80));
+
     // Print summary
     console.log('\n' + '='.repeat(80));
     console.log('BACKTEST RESULTS');
@@ -268,9 +345,13 @@ async function main(): Promise<void> {
     console.log(`Date Range: ${args.from} to ${args.to}`);
     console.log(`Symbol(s): ${Array.isArray(args.symbol) ? args.symbol.join(', ') : args.symbol}`);
     console.log(`Strategy(ies): ${args.strategies.join(', ')}`);
+    console.log(`ICT Model: ${useICTModel ? '✅ ENABLED' : '❌ DISABLED'}`);
     console.log(`Runtime: ${(result.runtimeMs / 1000).toFixed(2)}s`);
     console.log('\n--- Statistics ---');
     console.log(`Total Trades: ${result.stats.totalTrades}`);
+    console.log(`  Won: ${result.stats.winningTrades}`);
+    console.log(`  Lost: ${result.stats.losingTrades}`);
+    console.log(`  Break-Even: ${result.stats.breakEvenTrades}`);
     console.log(`Win Rate: ${result.stats.winRate.toFixed(2)}%`);
     
     // Display SMC Core Statistics
@@ -278,9 +359,11 @@ async function main(): Promise<void> {
       console.log(`\n--- SMC Core Statistics ---`);
       console.log(`Total Evaluations: ${result.stats.smcStats.totalEvaluations}`);
       
-      // HTF Stats
+      // HTF Stats - Show H4 if ICT model is enabled, otherwise M15
+      const useICTModel = process.env.USE_ICT_MODEL === 'true';
+      const htfLabel = useICTModel ? 'H4' : 'M15';
       const htf = result.stats.smcStats.htf;
-      console.log(`\nHTF (H4):`);
+      console.log(`\nHTF (${htfLabel}):`);
       console.log(`  Swings: ${htf.totalSwings} (${htf.swingHighs} highs, ${htf.swingLows} lows) - Avg: ${htf.averageSwingsPerEvaluation.toFixed(2)}/eval`);
       console.log(`  BOS: ${htf.totalBOS} (${htf.bullishBOS} bullish, ${htf.bearishBOS} bearish)`);
       console.log(`  CHoCH: ${htf.totalCHoCH} (${htf.bullishCHoCH} bullish, ${htf.bearishCHoCH} bearish)`);
@@ -311,6 +394,14 @@ async function main(): Promise<void> {
     console.log(`Total PnL: $${result.stats.totalPnL.toFixed(2)}`);
     console.log(`Profit Factor: ${result.stats.profitFactor.toFixed(2)}`);
     console.log(`Max Drawdown: $${result.stats.maxDrawdown.toFixed(2)} (${result.stats.maxDrawdownPercent.toFixed(2)}%)`);
+    
+    // Show news guardrail stats
+    if (runner) {
+      const newsBlocked = runner.getNewsBlockedCount();
+      if (newsBlocked > 0) {
+        console.log(`News Guardrail: ${newsBlocked} potential trades blocked by high-impact news events`);
+      }
+    }
     console.log(`Max Consecutive Losses: ${result.stats.maxConsecutiveLosses}`);
     console.log(`Average R:R: ${result.stats.averageRr.toFixed(2)}`);
     console.log(`Expectancy: $${result.stats.expectancy.toFixed(2)}`);

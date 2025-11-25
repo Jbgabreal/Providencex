@@ -53,8 +53,11 @@ export class MarketStructureLTF {
       strictClose: true, // ICT-style strict close (closing price breaks)
     });
     
+    // CRITICAL FIX: Reduce minSwingPairs from 2 to 1 for LTF to allow trend detection with limited candles
+    // LTF timeframe has many swings but limited data in each evaluation window
+    const ltfMinSwingPairs = parseInt(process.env.SMC_LTF_MIN_SWING_PAIRS || '1', 10);
     this.trendService = new TrendService({
-      minSwingPairs: 2,
+      minSwingPairs: ltfMinSwingPairs, // Reduced from 2 to 1 (configurable)
       discountMax: 0.5,
       premiumMin: 0.5,
     });
@@ -101,6 +104,27 @@ export class MarketStructureLTF {
     
     // Detect CHoCH using state machine
     const chochEvents = this.chochService.detectChoCh(candles, swings, bosEvents);
+    
+    // CRITICAL: Enhanced logging for LTF CHoCH detection (was returning 0)
+    const smcDebug = process.env.SMC_DEBUG === 'true' || process.env.SMC_DEBUG_CHOCH === 'true';
+    if (smcDebug && bosEvents.length > 0 && chochEvents.length === 0) {
+      logger.warn(
+        `[MarketStructureLTF] ⚠️  LTF: 0 CHoCH events from ${bosEvents.length} BOS events, ` +
+        `swings: ${swings.length} (${swings.filter(s => s.type === 'high').length}H, ${swings.filter(s => s.type === 'low').length}L), ` +
+        `candles: ${candles.length}`
+      );
+    } else if (smcDebug && chochEvents.length > 0) {
+      logger.info(
+        `[MarketStructureLTF] ✅ LTF: ${chochEvents.length} CHoCH events from ${bosEvents.length} BOS events`
+      );
+      // Log first few CHoCH events
+      chochEvents.slice(0, 3).forEach((choch, i) => {
+        logger.info(
+          `[MarketStructureLTF] CHoCH[${i}]: ${choch.fromTrend}→${choch.toTrend} @ idx=${choch.index}, ` +
+          `broke ${choch.brokenSwingType}@${choch.level.toFixed(2)} (idx=${choch.brokenSwingIndex})`
+        );
+      });
+    }
     
     // Detect MSB (Market Structure Break)
     const msbEvents = structuralSwings 

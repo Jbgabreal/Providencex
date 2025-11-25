@@ -128,6 +128,7 @@ export class BacktestResultStore {
 
   /**
    * Save backtest result to database
+   * Note: This operation has a timeout to prevent hanging
    */
   async saveResult(result: BacktestResult): Promise<void> {
     if (!this.pool) {
@@ -135,38 +136,114 @@ export class BacktestResultStore {
       return;
     }
 
+    // Add overall timeout to prevent hanging (10 seconds max)
+    const overallTimeout = 10000;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Database save operation timed out after ${overallTimeout / 1000} seconds`));
+      }, overallTimeout);
+    });
+
+    // Define columns outside try block for error handling
+    const insertColumns = [
+      'run_id',
+      'config_json',
+      'start_time',
+      'end_time',
+      'runtime_ms',
+      'stats_json',
+      'initial_balance',
+      'final_balance',
+      'total_return',
+      'total_return_percent'
+    ];
+
     try {
-      // Initialize tables if needed
-      await this.initializeTables();
+      // Wrap the entire save operation in a timeout race
+      await Promise.race([
+        (async () => {
+          // Initialize tables if needed
+          await this.initializeTables();
 
-      // Insert backtest run
-      await this.pool.query(
-        `INSERT INTO backtest_runs (
-          run_id, config_json, start_time, end_time, runtime_ms, stats_json,
-          initial_balance, final_balance, total_return, total_return_percent
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        ON CONFLICT (run_id) DO UPDATE SET
-          config_json = EXCLUDED.config_json,
-          stats_json = EXCLUDED.stats_json,
-          final_balance = EXCLUDED.final_balance,
-          total_return = EXCLUDED.total_return,
-          total_return_percent = EXCLUDED.total_return_percent`,
-        [
-          result.runId,
-          JSON.stringify(result.config),
-          new Date(result.startTime).toISOString(),
-          new Date(result.endTime).toISOString(),
-          result.runtimeMs,
-          JSON.stringify(result.stats),
-          result.initialBalance,
-          result.finalBalance,
-          result.totalReturn,
-          result.totalReturnPercent,
-        ]
-      );
+      // Insert backtest run - explicitly list columns to avoid schema mismatch
+      // Only insert columns that exist in our schema (id and created_at are auto-generated)
+      // Validate all values are defined before inserting
+      const insertValues = [
+        result.runId || '',
+        JSON.stringify(result.config || {}),
+        new Date(result.startTime).toISOString(),
+        new Date(result.endTime).toISOString(),
+        result.runtimeMs || 0,
+        JSON.stringify(result.stats || {}),
+        result.initialBalance ?? 0,
+        result.finalBalance ?? 0,
+        result.totalReturn ?? 0,
+        result.totalReturnPercent ?? 0,
+      ];
 
-      // Insert trades (batch insert for efficiency)
+      // Validate that we have the correct number of values
+      if (insertValues.length !== insertColumns.length) {
+        throw new Error(`Value count mismatch: ${insertValues.length} values for ${insertColumns.length} columns`);
+      }
+
+      // Validate no undefined values (null is OK for nullable columns, but undefined is not)
+      const undefinedIndices = insertValues.map((v, i) => v === undefined ? i : -1).filter(i => i !== -1);
+      if (undefinedIndices.length > 0) {
+        throw new Error(`Undefined values at indices: ${undefinedIndices.join(', ')}. Columns: ${undefinedIndices.map(i => insertColumns[i]).join(', ')}`);
+      }
+      
+      // Ensure all values are actually defined (double-check)
+      for (let i = 0; i < insertValues.length; i++) {
+        if (insertValues[i] === undefined) {
+          logger.error(`[BacktestStore] Value at index ${i} (column: ${insertColumns[i]}) is undefined`);
+          insertValues[i] = null as any; // Convert undefined to null for nullable columns (pg accepts null)
+        }
+      }
+
+      // Build parameterized query with explicit column list
+      // Ensure we have exactly the right number of placeholders
+      const placeholders = insertColumns.map((_, i) => `$${i + 1}`).join(', ');
+      const columnsList = insertColumns.join(', ');
+      
+      // Final validation: ensure placeholders match values count
+      const placeholderCount = (placeholders.match(/\$/g) || []).length;
+      if (placeholderCount !== insertValues.length) {
+        throw new Error(`Placeholder count mismatch: ${placeholderCount} placeholders for ${insertValues.length} values`);
+      }
+      if (insertColumns.length !== insertValues.length) {
+        throw new Error(`Column count mismatch: ${insertColumns.length} columns for ${insertValues.length} values`);
+      }
+      
+      // Construct the SQL query as a single line to avoid any parsing issues
+      const insertQuery = `INSERT INTO backtest_runs (${columnsList}) VALUES (${placeholders}) ON CONFLICT (run_id) DO UPDATE SET config_json = EXCLUDED.config_json, stats_json = EXCLUDED.stats_json, final_balance = EXCLUDED.final_balance, total_return = EXCLUDED.total_return, total_return_percent = EXCLUDED.total_return_percent`;
+      
+      // Always log for debugging (since this is a persistent issue)
+      logger.info(`[BacktestStore] Inserting ${insertValues.length} values into ${insertColumns.length} columns`);
+      logger.info(`[BacktestStore] Placeholder count: ${placeholderCount}, Value count: ${insertValues.length}`);
+      logger.info(`[BacktestStore] Columns: ${columnsList}`);
+      logger.info(`[BacktestStore] Placeholders: ${placeholders}`);
+      logger.info(`[BacktestStore] Values: ${insertValues.map((v, i) => `${insertColumns[i]}=${v === null ? 'null' : v === undefined ? 'undefined' : typeof v === 'string' ? v.substring(0, 50) : v}`).join(', ')}`);
+      
+      // Execute the query
+      if (!this.pool) {
+        throw new Error('Database pool not initialized');
+      }
+      let queryResult;
+      try {
+        queryResult = await this.pool.query(insertQuery, insertValues);
+        
+        if (process.env.NODE_ENV === 'development' || process.env.SMC_DEBUG === 'true') {
+          logger.info(`[BacktestStore] Query executed successfully, rows affected: ${queryResult.rowCount}`);
+        }
+      } catch (queryError) {
+        const queryErrorMsg = queryError instanceof Error ? queryError.message : String(queryError);
+        logger.error(`[BacktestStore] Failed to insert backtest run: ${queryErrorMsg}`);
+        throw queryError; // Re-throw to be caught by outer try-catch
+      }
+
+      // Insert trades (batch insert for efficiency) - wrapped in try-catch to not block on errors
       if (result.trades.length > 0) {
+        try {
         const values: any[] = [];
         const placeholders: string[] = [];
         let paramIndex = 1;
@@ -197,17 +274,27 @@ export class BacktestResultStore {
           );
         }
 
-        await this.pool.query(
-          `INSERT INTO backtest_trades (
-            run_id, ticket, symbol, direction, strategy, entry_price, exit_price,
-            entry_time, exit_time, sl, tp, volume, profit, duration_minutes, pips, risk_reward
-          ) VALUES ${placeholders.join(', ')}`,
-          values
-        );
+          if (!this.pool) {
+            logger.warn('[BacktestStore] Database pool not initialized - skipping trades insert');
+            return;
+          }
+          await this.pool.query(
+            `INSERT INTO backtest_trades (
+              run_id, ticket, symbol, direction, strategy, entry_price, exit_price,
+              entry_time, exit_time, sl, tp, volume, profit, duration_minutes, pips, risk_reward
+            ) VALUES ${placeholders.join(', ')}`,
+            values
+          );
+          logger.info(`[BacktestStore] Inserted ${result.trades.length} trades`);
+        } catch (tradesError) {
+          logger.warn(`[BacktestStore] Failed to insert trades (non-critical): ${tradesError instanceof Error ? tradesError.message : String(tradesError)}`);
+          // Continue - trades insertion failure is non-critical
+        }
       }
 
-      // Insert equity curve (sample every Nth point to avoid too much data)
+      // Insert equity curve (sample every Nth point to avoid too much data) - wrapped in try-catch
       if (result.equityCurve.length > 0) {
+        try {
         const sampleRate = Math.max(1, Math.floor(result.equityCurve.length / 1000)); // Max 1000 points
         const sampledEquity = result.equityCurve.filter((_, index) => index % sampleRate === 0 || index === result.equityCurve.length - 1);
 
@@ -229,18 +316,66 @@ export class BacktestResultStore {
           );
         }
 
-        await this.pool.query(
-          `INSERT INTO backtest_equity (run_id, timestamp, balance, equity, drawdown, drawdown_percent)
-           VALUES ${placeholders.join(', ')}`,
-          values
-        );
+          if (!this.pool) {
+            logger.warn('[BacktestStore] Database pool not initialized - skipping equity curve insert');
+            return;
+          }
+          await this.pool.query(
+            `INSERT INTO backtest_equity (run_id, timestamp, balance, equity, drawdown, drawdown_percent)
+             VALUES ${placeholders.join(', ')}`,
+            values
+          );
+          logger.info(`[BacktestStore] Inserted ${sampledEquity.length} equity curve points`);
+        } catch (equityError) {
+          logger.warn(`[BacktestStore] Failed to insert equity curve (non-critical): ${equityError instanceof Error ? equityError.message : String(equityError)}`);
+          // Continue - equity curve insertion failure is non-critical
+        }
       }
 
-      logger.info(`[BacktestStore] Saved backtest result ${result.runId} to database`);
+          logger.info(`[BacktestStore] Saved backtest result ${result.runId} to database`);
+        })(),
+        timeoutPromise
+      ]);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(`[BacktestStore] Failed to save result: ${errorMsg}`, error);
+      
+      // Provide more detailed error information for schema mismatches
+      if (errorMsg.includes('more target columns than expressions') || errorMsg.includes('42601') || errorMsg.includes('timed out')) {
+        if (errorMsg.includes('timed out')) {
+          logger.warn(`[BacktestStore] Database save timed out - this is non-critical, results are saved to disk`);
+        } else {
+          logger.error(`[BacktestStore] Schema mismatch detected. The database table may have different columns than expected.`);
+          logger.error(`[BacktestStore] Attempted to insert into columns: ${insertColumns.join(', ')}`);
+          logger.error(`[BacktestStore] Error: ${errorMsg}`);
+          logger.warn(`[BacktestStore] Backtest results are still saved to disk, but not to database.`);
+          
+          // Try to get table schema for debugging (with timeout)
+          try {
+            const schemaPromise = this.pool?.query(`
+              SELECT column_name, data_type 
+              FROM information_schema.columns 
+              WHERE table_name = 'backtest_runs' 
+              ORDER BY ordinal_position
+            `);
+            if (schemaPromise) {
+              const schemaResult = await Promise.race([
+                schemaPromise,
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Schema check timeout')), 2000))
+              ]);
+              if (schemaResult && schemaResult.rows.length > 0) {
+                logger.info(`[BacktestStore] Actual table columns: ${schemaResult.rows.map((r: any) => r.column_name).join(', ')}`);
+              }
+            }
+          } catch (schemaError) {
+            // Ignore schema check errors
+          }
+        }
+      } else {
+        logger.error(`[BacktestStore] Failed to save result: ${errorMsg}`, error);
+      }
+      
       // Don't throw - backtest results are still saved to disk
+      // This ensures the optimizer continues even if database save fails
     }
   }
 

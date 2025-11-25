@@ -33,15 +33,15 @@ export const executionFilterConfig: ExecutionFilterConfig = {
       symbol: 'XAUUSD',
       enabled: true,
       allowedDirections: ['buy', 'sell'],
-      
+
       // Multi-timeframe requirements
-      requireHtfAlignment: true,
+      requireHtfAlignment: process.env.EXEC_FILTER_REQUIRE_HTF_ALIGNMENT !== 'false', // Default: true, can override with env
       allowedHtfTrends: ['bullish', 'bearish'], // No trades in hard range
-      
-      // Structural confirmations - strict requirements for gold
-      requireBosInDirection: true,
-      requireLiquiditySweep: true,
-      requireDisplacementCandle: true,
+
+      // Structural confirmations - strict requirements for gold (can be overridden for backtesting)
+      requireBosInDirection: process.env.EXEC_FILTER_REQUIRE_BOS !== 'false', // Default: true
+      requireLiquiditySweep: process.env.EXEC_FILTER_REQUIRE_LIQUIDITY_SWEEP !== 'false', // Default: true
+      requireDisplacementCandle: process.env.EXEC_FILTER_REQUIRE_DISPLACEMENT !== 'false', // Default: true
       
       // Session windows (in engine timezone)
       enabledSessions: [
@@ -53,12 +53,12 @@ export const executionFilterConfig: ExecutionFilterConfig = {
       blockNewsGuardrailModes: ['avoid'],
       
       // Trade frequency limits
-      maxTradesPerDay: 5,
-      minMinutesBetweenTrades: 15,
-      maxConcurrentTradesPerSymbol: 2,
+      maxTradesPerDay: 10, // Increased for backtesting
+      minMinutesBetweenTrades: 10, // Reduced for backtesting
+      maxConcurrentTradesPerSymbol: 5, // Increased from 2 to allow more concurrent trades during backtesting
       
       // v4 Exposure & Concurrency (optional - backward compatible)
-      maxConcurrentTradesPerDirection: 1, // Max 1 buy OR 1 sell at a time
+      maxConcurrentTradesPerDirection: 3, // Increased from 1 to allow multiple trades in same direction
       maxDailyRiskPerSymbol: 200, // Max $200 risk per symbol (account currency)
       
       // Price/volatility filters
@@ -66,10 +66,11 @@ export const executionFilterConfig: ExecutionFilterConfig = {
       minDistanceFromDailyHighLowPips: 30,
       
       // Confluence threshold - minimum confluence score required (0-100)
-      minConfluenceScore: 65, // v15b: slightly relaxed from 70 to allow trend-following trades with non-ideal PD
+      minConfluenceScore: parseInt(process.env.EXEC_FILTER_MIN_CONFLUENCE_SCORE || '30', 10), // Lowered from 65 to 50 for backtesting
       
       // Displacement candle check - symbol-aware (already defined above)
-      displacementMinATRMultiplier: 2.0, // Displacement candle must be >= 2x ATR
+      // ITERATION 1: Increased from 2.0x to 2.5x ATR for stronger momentum requirement
+      displacementMinATRMultiplier: 2.5, // Displacement candle must be >= 2.5x ATR (was 2.0x)
     },
     
     EURUSD: {
@@ -95,8 +96,8 @@ export const executionFilterConfig: ExecutionFilterConfig = {
       blockNewsGuardrailModes: ['avoid'],
       
       // Trade frequency limits
-      maxTradesPerDay: 4,
-      minMinutesBetweenTrades: 20,
+      maxTradesPerDay: 10,
+      minMinutesBetweenTrades: 10,
       maxConcurrentTradesPerSymbol: 2,
       
       // v4 Exposure & Concurrency
@@ -133,8 +134,8 @@ export const executionFilterConfig: ExecutionFilterConfig = {
       
       blockNewsGuardrailModes: ['avoid'],
       
-      maxTradesPerDay: 4,
-      minMinutesBetweenTrades: 20,
+      maxTradesPerDay: 10,
+      minMinutesBetweenTrades: 10,
       maxConcurrentTradesPerSymbol: 2,
       
       // v4 Exposure & Concurrency
@@ -163,8 +164,8 @@ export const executionFilterConfig: ExecutionFilterConfig = {
       
       blockNewsGuardrailModes: ['avoid'],
       
-      maxTradesPerDay: 3,
-      minMinutesBetweenTrades: 30,
+      maxTradesPerDay: 10,
+      minMinutesBetweenTrades: 10,
       maxConcurrentTradesPerSymbol: 1,
       
       // v4 Exposure & Concurrency

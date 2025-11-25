@@ -1,0 +1,57 @@
+{
+  "summary": {
+    "totalMonths": 3,
+    "profitableMonths": 1,
+    "losingMonths": 2,
+    "totalTrades": 1474,
+    "avgTradesPerMonth": 491.3333333333333,
+    "avgWinRate": 24.666445195427425,
+    "totalPnL": -7235.080091937376,
+    "avgMonthlyReturn": -2411.693333333333,
+    "avgProfitFactor": 0.9620449064745245,
+    "avgRR": 1.4933289039085482,
+    "maxDrawdown": 83.37453564382524,
+    "monthlyResults": [
+      {
+        "month": "2023-01",
+        "startDate": "2023-01-01",
+        "endDate": "2023-01-31",
+        "trades": 513,
+        "winRate": 25.93,
+        "totalPnL": 892.8,
+        "profitFactor": 1.01,
+        "avgRR": 1.52,
+        "totalReturn": 892.8,
+        "maxDrawdown": 64.76,
+        "status": "✅"
+      },
+      {
+        "month": "2023-02",
+        "startDate": "2023-02-01",
+        "endDate": "2023-02-28",
+        "trades": 512,
+        "winRate": 22.46,
+        "totalPnL": -7998.7,
+        "profitFactor": 0.88,
+        "avgRR": 1.45,
+        "totalReturn": -7998.7,
+        "maxDrawdown": 83.37,
+        "status": "❌"
+      },
+      {
+        "month": "2023-03",
+        "startDate": "2023-03-01",
+        "endDate": "2023-03-31",
+        "trades": 449,
+        "winRate": 25.61,
+        "totalPnL": -129.18,
+        "profitFactor": 1,
+        "avgRR": 1.51,
+        "totalReturn": -129.18,
+        "maxDrawdown": 56.83,
+        "status": "❌"
+      }
+    ]
+  },
+  "iteration": 1
+}

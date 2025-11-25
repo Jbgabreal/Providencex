@@ -36,13 +36,22 @@ export class StrategyService {
     
     // Initialize SMC v2 if enabled
     if (this.config.useSMCV2) {
+      // ICT Model: Use H4 for bias when USE_ICT_MODEL is enabled, otherwise use M15
+      const useICTModel = process.env.USE_ICT_MODEL === 'true';
+      const htfTF = useICTModel ? 'H4' : 'M15';
+      const itfTF = useICTModel ? 'M15' : 'M15';
+      
       this.smcV2 = new SMCStrategyV2(marketDataService, {
         enabled: true,
-        htfTimeframe: this.config.smcTimeframes.htf, // H4
-        itfTimeframe: 'M15', // ITF is always M15
-        ltfTimeframe: this.config.smcTimeframes.ltf, // M1
+        htfTimeframe: htfTF, // H4 for ICT model bias, M15 for old SMC v2
+        itfTimeframe: itfTF, // M15 for setup
+        ltfTimeframe: 'M1', // LTF is 1m for entry confirmation
         paramOverrides: paramOverrides, // v11: Pass parameter overrides
       });
+      
+      if (useICTModel) {
+        logger.info(`[StrategyService] ICT Model ENABLED - Using H4 for bias, M15 for setup, M1 for entry`);
+      }
       logger.info('[StrategyService] SMC v2 enabled - using EnhancedRawSignalV2');
       if (paramOverrides) {
         logger.info('[StrategyService] Parameter overrides applied for optimization');

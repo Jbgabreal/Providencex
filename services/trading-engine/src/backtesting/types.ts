@@ -102,6 +102,7 @@ export interface BacktestStats {
   totalTrades: number;
   winningTrades: number;
   losingTrades: number;
+  breakEvenTrades: number; // Trades with profit ≈ 0
   winRate: number; // Percentage
   
   // PnL

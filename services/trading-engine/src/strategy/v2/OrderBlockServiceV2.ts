@@ -62,7 +62,8 @@ export class OrderBlockServiceV2 {
       // Bearish Order Block: strong bearish candle with large upper wick
       if (trend === 'bearish' && candle.close < candle.open) {
         const body = Math.abs(candle.close - candle.open);
-        const upperWick = candle.high - candle.open;
+        // Fixed: For bearish candles, upper wick = high - close (not high - open)
+        const upperWick = candle.high - candle.close;
         const wickToBodyRatio = body > 0 ? upperWick / body : 0;
 
         if (wickToBodyRatio >= this.minWickToBodyRatio && candle.close < prevCandle.low) {

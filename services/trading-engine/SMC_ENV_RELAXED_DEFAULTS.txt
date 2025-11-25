@@ -1,0 +1,12 @@
+# SMC Strategy - Relaxed Defaults for Backtesting
+# Copy these to your .env file or set as environment variables
+
+SMC_MIN_HTF_CANDLES=10
+SMC_REQUIRE_LTF_BOS=false
+SMC_MIN_ITF_BOS_COUNT=0
+SMC_SKIP_ITF_ALIGNMENT=true
+
+# Optional: Enable debug logging
+SMC_DEBUG=true
+SMC_DEBUG_FORCE_MINIMAL_ENTRY=true
+

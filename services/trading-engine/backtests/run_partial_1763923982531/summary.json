@@ -1,0 +1,55 @@
+{
+  "runId": "backtest_partial_1763923982533",
+  "status": "PARTIAL",
+  "config": {
+    "symbol": "XAUUSD",
+    "strategies": [
+      "low"
+    ],
+    "startDate": "2024-12-01",
+    "endDate": "2024-12-30",
+    "timeframe": "M5",
+    "initialBalance": 10000,
+    "dataSource": "mt5"
+  },
+  "startTime": "2024-12-01T00:00:00.000Z",
+  "endTime": "2025-11-23T18:53:02.533Z",
+  "stats": {
+    "totalTrades": 25,
+    "winningTrades": 6,
+    "losingTrades": 19,
+    "winRate": 24,
+    "totalPnL": -616.4744000000055,
+    "grossProfit": 8618.975699999997,
+    "grossLoss": 9235.450100000002,
+    "profitFactor": 0.9332491223140272,
+    "maxDrawdown": 1857.4612000000034,
+    "maxDrawdownPercent": 17.328031668933775,
+    "maxConsecutiveLosses": 4,
+    "maxConsecutiveWins": 1,
+    "averageWin": 1436.4959499999995,
+    "averageLoss": 486.07632105263167,
+    "averageRr": 1.4799999999999998,
+    "expectancy": -24.658976000000166,
+    "averageTradeDurationMinutes": 3026,
+    "perSymbolStats": {
+      "XAUUSD": {
+        "trades": 25,
+        "pnl": -616.4744000000055,
+        "winRate": 24
+      }
+    },
+    "perStrategyStats": {
+      "low": {
+        "trades": 25,
+        "pnl": -616.4744000000055,
+        "winRate": 24
+      }
+    }
+  },
+  "initialBalance": 10000,
+  "finalBalance": 9383.525599999995,
+  "totalReturn": -616.4744000000046,
+  "totalReturnPercent": -6.164744000000046,
+  "note": "This is a partial result saved after graceful shutdown"
+}

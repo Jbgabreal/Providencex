@@ -103,6 +103,22 @@ cd services/api-gateway
 pnpm dev
 ```
 
+**Option B: Start services individually from root**
+```bash
+pnpm --filter @providencex/trading-engine dev
+pnpm --filter @providencex/mt5-connector dev
+pnpm --filter @providencex/news-guardrail dev
+
+
+pnpm --filter @providencex/trading-engine ai-optimize --symbol XAUUSD --data-source postgres --year 2023 --months 3
+
+cd services/trading-engine
+pnpm --filter @providencex/trading-engine backtest --symbol XAUUSD --from 2024-05-01 --to 2024-06-30 --data-source postgres
+
+pnpm --filter @providencex/trading-engine optimize-single --from 2024-05-01 --to 2024-06-30 --symbol XAUUSD --data-source postgres
+
+```
+
 ## Service Ports (Default)
 
 - News Guardrail: `3010`
@@ -164,6 +180,31 @@ curl -X POST http://localhost:3020/simulate-signal \
   -H "Content-Type: application/json" \
   -d '{"symbol": "XAUUSD"}'
 ```
+
+### Performance Reports
+
+The trading engine now generates detailed performance reports that cover setups, executed trades, and skipped opportunities (false negatives).
+
+- **Automatic schedule (America/New_York):** 6 AM, 12 PM, 6 PM, 12 AM.  
+  Each run analyzes the previous 6 hours.
+- **Includes:** setup counts, skip reasons, win/loss/break-even trades, PnL metrics, and skipped setups that would have been profitable.
+
+API endpoints (all served by `@providencex/trading-engine`):
+
+```bash
+# Get latest reports (default 10)
+curl http://localhost:3020/api/v1/performance-reports
+
+# Fetch a specific report
+curl http://localhost:3020/api/v1/performance-reports/<reportId>
+
+# Manually trigger a report (optional period override)
+curl -X POST http://localhost:3020/api/v1/performance-reports/generate \
+  -H "Content-Type: application/json" \
+  -d '{"periodStart": "2025-02-01T06:00:00Z", "periodEnd": "2025-02-01T12:00:00Z"}'
+```
+
+Reports are stored in the shared Postgres database (`performance_reports` table) for later review.
 
 ### MT5 Connector
 

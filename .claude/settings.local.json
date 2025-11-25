@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm backtest:*)",
+      "Bash(tee:*)",
+      "Bash(cat:*)",
+      "Bash(node -e:*)",
+      "Bash(timeout 60 pnpm backtest:*)",
+      "Bash(timeout 120 pnpm backtest:*)",
+      "Bash(timeout 180 pnpm backtest:*)",
+      "Bash(timeout 300 pnpm backtest:*)",
+      "Bash(timeout 900 pnpm backtest:*)",
+      "Bash(xargs cat:*)",
+      "Bash(tsx analyze-trades.ts:*)",
+      "Bash(npx tsx:*)",
+      "Bash(npx tsc:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

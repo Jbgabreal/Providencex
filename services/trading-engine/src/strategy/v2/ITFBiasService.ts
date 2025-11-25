@@ -202,7 +202,14 @@ export class ITFBiasService {
           }
           if (state.currentBias === 'unknown') {
             state.currentBias = 'bullish';
-            state.anchorSwing = state.lastConfirmedSwingLow;
+            // CRITICAL FIX: Set anchor swing from available swings before this BOS
+            const lowsBefore = swingsBefore.filter(s => s.type === 'low');
+            if (lowsBefore.length > 0) {
+              state.anchorSwing = lowsBefore[lowsBefore.length - 1];
+              state.lastConfirmedSwingLow = state.anchorSwing;
+            } else {
+              state.anchorSwing = state.lastConfirmedSwingLow;
+            }
           }
         } else {
           const brokenSwing = swingsSorted.find(s => s.index === bos.brokenSwingIndex);
@@ -213,7 +220,14 @@ export class ITFBiasService {
           }
           if (state.currentBias === 'unknown') {
             state.currentBias = 'bearish';
-            state.anchorSwing = state.lastConfirmedSwingHigh;
+            // CRITICAL FIX: Set anchor swing from available swings before this BOS
+            const highsBefore = swingsBefore.filter(s => s.type === 'high');
+            if (highsBefore.length > 0) {
+              state.anchorSwing = highsBefore[highsBefore.length - 1];
+              state.lastConfirmedSwingHigh = state.anchorSwing;
+            } else {
+              state.anchorSwing = state.lastConfirmedSwingHigh;
+            }
           }
         }
       }
@@ -246,6 +260,36 @@ export class ITFBiasService {
       // Truly neutral - no BOS events or state is unknown
       finalBias = 'neutral';
       method = 'none';
+    }
+    
+    // CRITICAL FIX: If we have a state machine bias but it's still 'unknown', check for any BOS
+    // This can happen if the first BOS didn't properly initialize the anchor
+    if (state.currentBias === 'unknown' && bosEvents.length > 0 && swings.length >= 2) {
+      // Try to infer initial bias from first BOS and available swings
+      const firstBos = bosEventsSorted[0];
+      const swingsBeforeFirstBos = swingsSorted.filter(s => s.index < firstBos.index);
+      
+      if (firstBos.direction === 'bullish' && swingsBeforeFirstBos.some(s => s.type === 'low')) {
+        // Bullish BOS with prior swing low - likely bullish start
+        finalBias = 'bullish';
+        method = 'bos';
+      } else if (firstBos.direction === 'bearish' && swingsBeforeFirstBos.some(s => s.type === 'high')) {
+        // Bearish BOS with prior swing high - likely bearish start
+        finalBias = 'bearish';
+        method = 'bos';
+      }
+    }
+
+    // Enhanced logging for debugging ITF bias detection
+    const smcDebug = process.env.SMC_DEBUG === 'true';
+    if (smcDebug && candles.length >= 20) {
+      logger.info(
+        `[ITFBiasService] ITF bias: ${finalBias} (method: ${method}), ` +
+        `state machine bias: ${state.currentBias}, ` +
+        `BOS: ${bullishBosCount}B/${bearishBosCount}b, ` +
+        `CHoCH: ${chochEvents.length}, ` +
+        `anchor: ${state.anchorSwing ? state.anchorSwing.type + '@' + state.anchorSwing.price.toFixed(2) : 'none'}`
+      );
     }
 
     return {

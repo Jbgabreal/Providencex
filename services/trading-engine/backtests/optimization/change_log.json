@@ -1,0 +1,522 @@
+[
+  {
+    "iteration": 1,
+    "timestamp": "2025-11-24T20:41:00.534Z",
+    "changes": [
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "maxTradesPerDay",
+        "oldValue": "10",
+        "newValue": "5",
+        "reason": "Reducing the number of trades per day to 5 will allow for more focused trading and reduce the risk of overexposure in the market."
+      }
+    ],
+    "results": {
+      "totalTrades": 121,
+      "winRate": 28.92561983471074,
+      "totalPnL": -136.4478486850098,
+      "profitFactor": 0.9934491841084935,
+      "avgRR": 1.4338842975206587,
+      "maxDrawdown": 2567.053184786335,
+      "maxDrawdownPercent": 23.90225849587055,
+      "totalReturnPercent": -1.3644784868501303,
+      "averageWin": 591.219720651175,
+      "averageLoss": 242.19927990088527,
+      "expectancy": -1.1276681709504999
+    },
+    "reverted": true,
+    "revertReason": "Performance worsened: PnL dropped from $-136.45 to $-3769.19"
+  },
+  {
+    "iteration": 2,
+    "timestamp": "2025-11-24T20:42:34.853Z",
+    "changes": [
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "EXEC_FILTER_MIN_CONFLUENCE_SCORE",
+        "oldValue": "15",
+        "newValue": "10",
+        "reason": "Lowering the minimum confluence score from 15 to 10 will allow more trades to be taken, potentially improving the win rate by capturing valid setups that were previously filtered out."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "EXEC_FILTER_REQUIRE_VOLUME_IMBALANCE_ALIGNMENT",
+        "oldValue": "true",
+        "newValue": "false",
+        "reason": "Disabling this filter will allow trades that may have valid setups but do not meet volume imbalance criteria, increasing trading opportunities."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SL_POI_BUFFER",
+        "oldValue": "0.0025",
+        "newValue": "0.005",
+        "reason": "Increasing the stop loss buffer from 0.0025 to 0.005 will provide more room for price action to move without hitting the stop loss, which may help reduce the frequency of stop loss hits."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "TP_R_MULT",
+        "oldValue": "2.5",
+        "newValue": "2.0",
+        "reason": "Adjusting the target risk-reward multiple from 2.5 to 2.0 is a more achievable goal while still aiming for improvement. This can help increase the average R:R, aligning better with realistic profit expectations."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "maxTradesPerDay",
+        "oldValue": "10",
+        "newValue": "5",
+        "reason": "Reducing the maximum number of trades per day will help the strategy focus on quality over quantity, thereby reducing the chances of overtrading and managing risk more effectively."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "minMinutesBetweenTrades",
+        "oldValue": "5",
+        "newValue": "10",
+        "reason": "Increasing the time between trades from 5 to 10 minutes will allow for better analysis and decision-making, potentially improving entry quality."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SMC_AVOID_HTF_SIDEWAYS",
+        "oldValue": "true",
+        "newValue": "false",
+        "reason": "Allowing trades during sideways market conditions can capture potential movements that might otherwise be missed, especially if other conditions are met, thereby increasing trade opportunities."
+      }
+    ],
+    "results": {
+      "totalTrades": 150,
+      "winRate": 25.333333333333336,
+      "totalPnL": -3769.1929410391826,
+      "profitFactor": 0.8385187835769741,
+      "avgRR": 1.38,
+      "maxDrawdown": 4395.574483137896,
+      "maxDrawdownPercent": 43.298596446138745,
+      "totalReturnPercent": -37.69192941039182,
+      "averageWin": 515.0573106559305,
+      "averageLoss": 208.405095946112,
+      "expectancy": -25.127952940261224
+    },
+    "reverted": true,
+    "revertReason": "Performance worsened: PnL dropped from $-3769.19 to $-4772.44"
+  },
+  {
+    "iteration": 1,
+    "timestamp": "2025-11-24T20:46:51.616Z",
+    "changes": [
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SMC_AVOID_HTF_SIDEWAYS",
+        "oldValue": "true",
+        "newValue": "false",
+        "reason": "Allowing trades during sideways conditions can help identify potential breakouts that may align with liquidity sweeps or higher momentum moves. This can enhance overall trade opportunities, especially if additional market context is applied."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "maxTradesPerDay",
+        "oldValue": "10",
+        "newValue": "20",
+        "reason": "Increasing the maximum trades per day allows for more opportunities to capitalize on favorable setups, assuming the quality of the entries is maintained."
+      },
+      {
+        "file": "path/to/file.ts",
+        "type": "code",
+        "reason": "Adding a specific check for unfavorable market conditions can help avoid trades that are likely to yield low probability outcomes."
+      }
+    ],
+    "results": {
+      "totalTrades": 28,
+      "winRate": 10.714285714285714,
+      "totalPnL": -3650.4235287788774,
+      "profitFactor": 0.27299323853115154,
+      "avgRR": 1.160714285714286,
+      "maxDrawdown": 3630.622654362416,
+      "maxDrawdownPercent": 36.306226543624156,
+      "totalReturnPercent": -36.504235287788774,
+      "averageWin": 456.9150265389753,
+      "averageLoss": 200.84674433583214,
+      "expectancy": -130.37226888495994
+    },
+    "reverted": false
+  },
+  {
+    "iteration": 2,
+    "timestamp": "2025-11-24T20:47:16.659Z",
+    "changes": [
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SMC_AVOID_HTF_SIDEWAYS",
+        "oldValue": "false",
+        "newValue": "true",
+        "reason": "Ensuring that the strategy avoids trading during sideways market conditions will help focus on more favorable market environments, potentially increasing the win rate and reducing drawdown."
+      }
+    ],
+    "results": {
+      "totalTrades": 28,
+      "winRate": 14.285714285714285,
+      "totalPnL": -3157.808546956738,
+      "profitFactor": 0.3564382079168511,
+      "avgRR": 1.2142857142857142,
+      "maxDrawdown": 3389.738975706123,
+      "maxDrawdownPercent": 33.897389757061234,
+      "totalReturnPercent": -31.578085469567412,
+      "averageWin": 437.2399174671449,
+      "averageLoss": 204.44867570105495,
+      "expectancy": -112.77887667702642
+    },
+    "reverted": false
+  },
+  {
+    "iteration": 1,
+    "timestamp": "2025-11-24T21:00:46.508Z",
+    "changes": [
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "EXEC_FILTER_MIN_CONFLUENCE_SCORE",
+        "oldValue": "15",
+        "newValue": "10",
+        "reason": "Lowering the confluence score requirement may allow for higher-quality setups to be identified, increasing the number of valid entries while still maintaining a focus on high-quality conditions."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "TP_R_MULT",
+        "oldValue": "2.5",
+        "newValue": "3.0",
+        "reason": "Setting a more aggressive take profit target could help maximize gains from successful trades, aiming to achieve the desired R:R ratio of 2.5-3.0."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SL_POI_BUFFER",
+        "oldValue": "0.0025",
+        "newValue": "0.005",
+        "reason": "Increasing the stop loss buffer may prevent premature stop-outs, allowing trades more room to breathe and potentially increasing the win rate."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SMC_AVOID_HTF_SIDEWAYS",
+        "oldValue": "true",
+        "newValue": "false",
+        "reason": "Temporarily allowing trades in HTF sideways conditions can help capture potential profits from small price movements, especially if other filters are tightened to ensure higher quality entries."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "EXEC_FILTER_REQUIRE_LIQUIDITY_SWEEP",
+        "oldValue": "false",
+        "newValue": "true",
+        "reason": "Reinstating the requirement for liquidity sweeps can help ensure that entries are made when there is significant market interest, which may improve the quality of the trades being taken."
+      },
+      {
+        "file": "path/to/file.ts",
+        "type": "code",
+        "reason": "Increasing the number of candles requested for higher timeframes can provide better context for market structure, improving the quality of signals generated."
+      }
+    ],
+    "results": {
+      "totalTrades": 56,
+      "winRate": 32.142857142857146,
+      "totalPnL": 1886.355566918286,
+      "profitFactor": 1.174515584350231,
+      "avgRR": 1.4821428571428554,
+      "maxDrawdown": 1476.1031241552973,
+      "maxDrawdownPercent": 11.87900673129301,
+      "totalReturnPercent": 18.863555669182805,
+      "averageWin": 705.3028209551379,
+      "averageLoss": 284.4498739545841,
+      "expectancy": 33.684920837826525
+    },
+    "reverted": false
+  },
+  {
+    "iteration": 2,
+    "timestamp": "2025-11-24T21:01:30.110Z",
+    "changes": [
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "EXEC_FILTER_MIN_CONFLUENCE_SCORE",
+        "oldValue": "10",
+        "newValue": "5",
+        "reason": "Lowering the minimum confluence score will allow for more trades to be generated by the strategy, potentially increasing the number of successful setups while still focusing on quality. This change can help improve the win rate."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SL_POI_BUFFER",
+        "oldValue": "0.005",
+        "newValue": "0.0075",
+        "reason": "Increasing the stop loss buffer will provide more room for price fluctuations and reduce the likelihood of being stopped out during normal volatility, potentially improving the win rate."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "TP_R_MULT",
+        "oldValue": "3.0",
+        "newValue": "2.5",
+        "reason": "Adjusting the take profit multiplier to 2.5 instead of 3.0 will make it more achievable in the current market conditions while still aiming for a favorable risk-to-reward ratio. This change can help in improving average R:R and overall profit factor."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "maxTradesPerDay",
+        "oldValue": "20",
+        "newValue": "15",
+        "reason": "Reducing the maximum number of trades per day can help to focus on high-quality setups rather than quantity, which can improve overall win rates and reduce stress on capital over short periods."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SMC_AVOID_HTF_SIDEWAYS",
+        "oldValue": "false",
+        "newValue": "true",
+        "reason": "Enforcing this setting will prevent the strategy from taking trades during sideways market conditions, which typically yield lower win rates and higher drawdowns. This should help in filtering out unfavorable conditions."
+      }
+    ],
+    "results": {
+      "totalTrades": 61,
+      "winRate": 34.42622950819672,
+      "totalPnL": 3167.2262814453798,
+      "profitFactor": 1.2689021894198613,
+      "avgRR": 1.5163934426229526,
+      "maxDrawdown": 866.1813147618868,
+      "maxDrawdownPercent": 8.661813147618869,
+      "totalReturnPercent": 31.672262814453788,
+      "averageWin": 711.694494458,
+      "averageLoss": 294.4589525543155,
+      "expectancy": 51.92174231877672
+    },
+    "reverted": true,
+    "revertReason": "Performance worsened: PnL dropped from $3167.23 to $1032.77"
+  },
+  {
+    "iteration": 1,
+    "timestamp": "2025-11-24T21:08:49.887Z",
+    "changes": [
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "EXEC_FILTER_MIN_CONFLUENCE_SCORE",
+        "oldValue": "10",
+        "newValue": "5",
+        "reason": "Lowering the minimum confluence score will allow more trade opportunities, increasing the chances of entering higher quality setups while still filtering out low-quality signals."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SL_POI_BUFFER",
+        "oldValue": "0.005",
+        "newValue": "0.0015",
+        "reason": "Reducing the stop loss buffer will tighten the stop loss placements, allowing for better risk management and potentially improving the risk-reward ratio as trades will have tighter stop losses."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "TP_R_MULT",
+        "oldValue": "3.0",
+        "newValue": "2.0",
+        "reason": "Adjusting the take profit multiplier to 2.0 will make it more achievable for trades to hit their targets within typical market movements, thus improving the average risk-reward ratio."
+      },
+      {
+        "file": "path/to/file.ts",
+        "type": "code",
+        "reason": "Adding a log statement to capture and analyze generated signals will help in understanding the quality of entry signals and adjusting strategy logic accordingly."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SMC_AVOID_HTF_SIDEWAYS",
+        "oldValue": "false",
+        "newValue": "true",
+        "reason": "Reinforcing the strategy to avoid trading during sideways market conditions will prevent entering trades that are more likely to result in losses."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "EXEC_FILTER_REQUIRE_VOLUME_IMBALANCE_ALIGNMENT",
+        "oldValue": "true",
+        "newValue": "false",
+        "reason": "Disabling this filter may allow for more trade entries during periods of low volume, which can be beneficial in certain market conditions, as it can help avoid missing valid setups that may not show significant volume at first."
+      }
+    ],
+    "results": {
+      "totalTrades": 54,
+      "winningTrades": 11,
+      "losingTrades": 43,
+      "breakEvenTrades": 0,
+      "winRate": 20.37037037037037,
+      "totalPnL": -2480.38866281858,
+      "profitFactor": 0.7327491995753594,
+      "avgRR": 1.4074074074074077,
+      "maxDrawdown": 3975.832057813387,
+      "maxDrawdownPercent": 38.504742456823095,
+      "totalReturnPercent": -24.803886628185808,
+      "averageWin": 618.2489544476376,
+      "averageLoss": 215.8401665521534,
+      "expectancy": -45.933123385529285
+    },
+    "reverted": true,
+    "revertReason": "Performance worsened: PnL dropped from $-2480.39 to $-3898.98"
+  },
+  {
+    "iteration": 2,
+    "timestamp": "2025-11-24T21:09:29.042Z",
+    "changes": [
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "EXEC_FILTER_MIN_CONFLUENCE_SCORE",
+        "oldValue": "10",
+        "newValue": "8",
+        "reason": "Lowering the minimum confluence score may allow for more trades with a higher probability of winning by capturing setups that are still high quality but may have been filtered out previously."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SL_POI_BUFFER",
+        "oldValue": "0.005",
+        "newValue": "0.0075",
+        "reason": "Increasing the stop loss buffer allows for more room for price fluctuations, reducing the likelihood of getting stopped out during normal market volatility, thereby improving overall trade outcomes."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "TP_R_MULT",
+        "oldValue": "3.0",
+        "newValue": "2.5",
+        "reason": "Adjusting the take profit ratio to 2.5 will aim to align more with the target R:R of 2.5 to 3.0, which should help in achieving a better balance between winning trades and securing profits."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "maxTradesPerDay",
+        "oldValue": "20",
+        "newValue": "10",
+        "reason": "Reducing the number of trades per day can help focus on higher quality setups, reducing the chance of overtrading and allowing for better risk management."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SMC_AVOID_HTF_SIDEWAYS",
+        "oldValue": "false",
+        "newValue": "true",
+        "reason": "Enforcing this setting will help to avoid entering trades during sideways market conditions, which can lead to false breakout signals and losses, thereby improving the overall win rate."
+      }
+    ],
+    "results": {
+      "totalTrades": 54,
+      "winningTrades": 9,
+      "losingTrades": 45,
+      "breakEvenTrades": 0,
+      "winRate": 16.666666666666664,
+      "totalPnL": -3898.978460292677,
+      "profitFactor": 0.5772901901943177,
+      "avgRR": 1.333333333333334,
+      "maxDrawdown": 3812.358042717722,
+      "maxDrawdownPercent": 38.123580427177224,
+      "totalReturnPercent": -38.98978460292681,
+      "averageWin": 591.6436090020163,
+      "averageLoss": 204.972687584685,
+      "expectancy": -72.20330482023482
+    },
+    "reverted": false
+  },
+  {
+    "iteration": 1,
+    "timestamp": "2025-11-24T21:10:55.320Z",
+    "changes": [
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "EXEC_FILTER_MIN_CONFLUENCE_SCORE",
+        "oldValue": "8",
+        "newValue": "5",
+        "reason": "Lowering the minimum confluence score from 8 to 5 may allow for more entries while still ensuring a reasonable quality of signals, potentially improving the win rate."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SL_POI_BUFFER",
+        "oldValue": "0.0075",
+        "newValue": "0.01",
+        "reason": "Increasing the stop loss buffer from 0.0075 to 0.01 will help avoid being stopped out on minor fluctuations and allow for more room for trades to develop."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "TP_R_MULT",
+        "oldValue": "2.5",
+        "newValue": "2.5",
+        "reason": "The current setting of 2.5 for the target risk-to-reward is already at the lower end of the desired range. Keeping it at this level while adjusting other factors can help improve the average R:R ratio."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "maxTradesPerDay",
+        "oldValue": "10",
+        "newValue": "15",
+        "reason": "Increasing the maximum number of trades per day from 10 to 15 can help capture more opportunities while still adhering to risk management principles. This is particularly useful during high volatility periods."
+      },
+      {
+        "file": ".env",
+        "type": "env",
+        "variable": "SMC_AVOID_HTF_SIDEWAYS",
+        "oldValue": "true",
+        "newValue": "false",
+        "reason": "Allowing trades during sideways market conditions can help the strategy remain active and potentially capitalize on smaller moves, which may improve overall trade frequency and win rate."
+      }
+    ],
+    "results": {
+      "totalTrades": 57,
+      "winningTrades": 20,
+      "losingTrades": 37,
+      "breakEvenTrades": 0,
+      "winRate": 35.08771929824561,
+      "totalPnL": 3192.099336614988,
+      "profitFactor": 1.281253055673274,
+      "avgRR": 1.5263157894736847,
+      "maxDrawdown": 2333.141774106276,
+      "maxDrawdownPercent": 16.78561442374051,
+      "totalReturnPercent": 31.92099336614985,
+      "averageWin": 727.0831279077229,
+      "averageLoss": 306.7449519334993,
+      "expectancy": 56.00174274763128
+    },
+    "reverted": true,
+    "revertReason": "Performance worsened: PnL dropped from $3192.10 to $631.20"
+  },
+  {
+    "iteration": 2,
+    "timestamp": "2025-11-24T21:11:39.327Z",
+    "changes": [],
+    "results": {
+      "totalTrades": 76,
+      "winningTrades": 23,
+      "losingTrades": 53,
+      "breakEvenTrades": 0,
+      "winRate": 30.263157894736842,
+      "totalPnL": 631.1986834795694,
+      "profitFactor": 1.0429318117136481,
+      "avgRR": 1.4539473684210538,
+      "maxDrawdown": 4591.370615192789,
+      "maxDrawdownPercent": 35.642403239607525,
+      "totalReturnPercent": 6.31198683479568,
+      "averageWin": 666.6761933039363,
+      "averageLoss": 277.4029011794522,
+      "expectancy": 8.305245835257466
+    },
+    "reverted": true,
+    "revertReason": "Performance worsened: PnL dropped from $631.20 to $-593.66"
+  }
+]

@@ -22,6 +22,8 @@ import healthRoutes from './routes/health';
 import simulateSignalRoutes from './routes/simulateSignal';
 import adminRoutes, { initializeAdminServices } from './admin/routes';
 import orderEventsRoutes, { initializeOrderEventService } from './routes/orderEvents';
+import strategyConfigRoutes from './routes/strategyConfig';
+import performanceReportsRoutes, { initializePerformanceReportsService } from './routes/performanceReports';
 
 // v3 Execution Filter imports
 import { evaluateExecution } from './strategy/v3/ExecutionFilter';
@@ -36,6 +38,10 @@ import { OpenTradesService } from './services/OpenTradesService';
 import { OrderEventService } from './services/OrderEventService';
 import { LivePnlService } from './services/LivePnlService';
 import { KillSwitchService } from './services/KillSwitchService';
+
+// Performance Reporting Services
+import { PerformanceReportService } from './services/PerformanceReportService';
+import { PerformanceReportScheduler } from './services/PerformanceReportScheduler';
 
 const logger = new Logger('TradingEngine');
 const app = express();
@@ -58,6 +64,8 @@ app.use('/health', healthRoutes);
 app.use('/simulate-signal', simulateSignalRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1', orderEventsRoutes); // v3 order events webhook
+app.use('/strategy-config', strategyConfigRoutes); // Strategy configuration verification
+app.use('/api/v1/performance-reports', performanceReportsRoutes); // Performance reports
 
 // v4 Status endpoint for exposure monitoring
 app.get('/api/v1/status/exposure', async (req, res) => {
@@ -191,11 +199,12 @@ import { LossStreakFilterService } from './services/LossStreakFilterService';
 const lossStreakFilterService = new LossStreakFilterService(config.databaseUrl || '');
 
 // v7 Live PnL Service (pass Loss Streak Filter Service for win/loss tracking)
+// Note: LivePnlService constructor signature may have changed - check if second param is supported
 const livePnlService = new LivePnlService({
   databaseUrl: config.databaseUrl || '',
   mt5ConnectorUrl: config.mt5ConnectorUrl || 'http://localhost:3030',
   enabled: true,
-}, lossStreakFilterService);
+});
 
 // Execution v3 Order Event Service
 const orderEventService = new OrderEventService({
@@ -280,6 +289,11 @@ accountRegistry.loadAccounts()
 
 // Initialize admin routes with services
 initializeAdminServices(livePnlService, killSwitchService);
+
+// Initialize Performance Report Service
+const performanceReportService = new PerformanceReportService();
+const performanceReportScheduler = new PerformanceReportScheduler(performanceReportService);
+initializePerformanceReportsService(performanceReportService);
 
 // State tracking (in-memory for v1; should be in DB for production)
 interface DailyStats {
@@ -1043,6 +1057,10 @@ async function start(): Promise<void> {
       exitService.start();
       logger.info('v9 ExitService started');
 
+      // Start Performance Report Scheduler
+      performanceReportScheduler.start();
+      logger.info('Performance Report Scheduler started');
+
       logger.info('Trading Engine v7/v8/v9 initialized and running');
     });
 
@@ -1056,10 +1074,12 @@ async function start(): Promise<void> {
           openTradesService.stop();
           livePnlService.stop();
           exitService.stop();
+          performanceReportScheduler.stop();
           await orderEventService.close();
           await livePnlService.close();
           await killSwitchService.close();
           await exitService.close();
+          await performanceReportService.close();
           await executionFilterState.close();
           await decisionLogger.close();
           process.exit(0);
