@@ -59,6 +59,7 @@ import { MarketDataService } from '../services/MarketDataService';
 import { CandleStore } from '../marketData/CandleStore';
 import { BacktestNewsGuardrail } from './BacktestNewsGuardrail';
 import { getConfig } from '../config';
+import { StrategyAdapter } from '../strategies/StrategyAdapter';
 
 const logger = new Logger('BacktestRunner');
 
@@ -246,9 +247,37 @@ export class BacktestRunner {
         drawdownPercent: 0,
       });
 
+      // Process strategies: either from profile or legacy strategies array
+      let strategiesToProcess: Array<{ key: string; displayName: string; strategy: 'low' | 'high' }> = [];
+      
+      if (this.config.strategyProfileKey) {
+        // Use strategy profile
+        logger.info(`[BacktestRunner] Using strategy profile: ${this.config.strategyProfileKey}`);
+        const { getStrategyByProfileKey } = await import('../strategies/StrategyRegistry');
+        const strategyInstance = await getStrategyByProfileKey(this.config.strategyProfileKey);
+        
+        // For now, map profile to 'low' strategy (can be enhanced later)
+        strategiesToProcess.push({
+          key: this.config.strategyProfileKey,
+          displayName: strategyInstance.displayName,
+          strategy: 'low', // Default mapping
+        });
+      } else {
+        // Use legacy strategies array (backward compatibility)
+        logger.info(`[BacktestRunner] Using legacy strategies: ${this.config.strategies.join(', ')}`);
+        for (const strategy of this.config.strategies) {
+          strategiesToProcess.push({
+            key: strategy,
+            displayName: strategy,
+            strategy,
+          });
+        }
+      }
+
       // Process each strategy
-      for (const strategy of this.config.strategies) {
-        logger.info(`[BacktestRunner] Running replay for strategy: ${strategy}`);
+      for (const strategyInfo of strategiesToProcess) {
+        const strategy = strategyInfo.strategy;
+        logger.info(`[BacktestRunner] Running replay for strategy: ${strategyInfo.displayName} (${strategy})`);
 
         // Reset services for new strategy run
         simulatedMT5.reset(this.config.initialBalance);
@@ -257,7 +286,7 @@ export class BacktestRunner {
         // Create replay engine for this strategy
         // Note: Each strategy shares the same MT5 adapter and risk service
         // so positions from one strategy affect the next
-        const replayEngine = new CandleReplayEngine({
+        const replayEngineConfig: any = {
           strategy,
           executionFilterState,
           openTradesService,
@@ -268,7 +297,21 @@ export class BacktestRunner {
           lastTradeTimestamps, // Share tracking across strategies
           overrideParamSet: this.config.overrideParamSet, // v11: Pass parameter overrides for optimization
           sourceTimeframe: 'M1', // SENIOR DEV FIX: Always M1 - we load real M1 data directly from MT5
-        });
+        };
+        
+        // If using strategy profile, inject the strategy instance
+        if (this.config.strategyProfileKey && strategyInfo.key === this.config.strategyProfileKey) {
+          const { getStrategyByProfileKey } = await import('../strategies/StrategyRegistry');
+          const strategyInstance = await getStrategyByProfileKey(this.config.strategyProfileKey);
+          // Create a MarketDataService that uses the CandleStore from replay engine
+          // We'll pass this to the adapter after replay engine is created
+          // For now, create a temporary one - it will be replaced in CandleReplayEngine
+          const tempMarketDataService = new MarketDataService();
+          const strategyAdapter = new StrategyAdapter(strategyInstance, tempMarketDataService);
+          replayEngineConfig.strategyAdapter = strategyAdapter; // Pass adapter to replay engine
+        }
+        
+        const replayEngine = new CandleReplayEngine(replayEngineConfig);
 
         // Replay candles
         let candleIndex = 0;

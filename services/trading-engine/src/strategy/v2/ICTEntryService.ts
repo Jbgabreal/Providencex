@@ -155,7 +155,7 @@ export class ICTEntryService {
     }
     
     // Step 3: M1 Entry Refinement
-    const entry = this.refineM1Entry(m1Candles, bias, setupZone);
+    const entry = this.refineM1Entry(m1Candles, m15Candles, bias, setupZone);
     if (ictLog && entry.isValid) {
       if (entry.m1ChoChIndex !== undefined) {
         logger.info(`[ICT] M1 CHoCH at index ${entry.m1ChoChIndex}`);
@@ -540,6 +540,7 @@ export class ICTEntryService {
    */
   private refineM1Entry(
     m1Candles: Candle[],
+    m15Candles: Candle[],
     bias: ICTBias,
     setupZone: ICTSetupZone
   ): ICTEntry {
@@ -576,7 +577,11 @@ export class ICTEntryService {
     
     const currentPrice = m1Candles[m1Candles.length - 1].close;
     
-    // 1. Check price is in M15 setup zone (relaxed: allow 10% buffer)
+    // Determine entry type based on strategy logic:
+    // - Buy Limit: Price needs to come DOWN to entry (entry < current price)
+    // - Sell Limit: Price needs to go UP to entry (entry > current price)  
+    // - Market: Entry is very close to current price (immediate execution)
+    // This will be set after entry price is calculated
     const zoneSize = setupZone.zoneHigh - setupZone.zoneLow;
     const zoneBuffer = zoneSize * 0.1; // 10% buffer
     const priceInZone = currentPrice >= (setupZone.zoneLow - zoneBuffer) && currentPrice <= (setupZone.zoneHigh + zoneBuffer);
@@ -673,38 +678,204 @@ export class ICTEntryService {
     }
     
     // Calculate entry price (limit order at OB open or 50% FVG)
+    // FALLBACK: Use setup zone if refinedOB is missing
     let entryPrice = 0;
     let entryType: 'limit' | 'market' = 'limit';
     
-    if (setupZone.fvg && setupZone.orderBlock) {
-      // Use OB open (ICT prefers OB over FVG for entry)
-      entryPrice = bias.direction === 'bullish' 
-        ? refinedOB.low // Bullish: enter at OB low
-        : refinedOB.high; // Bearish: enter at OB high
-    } else if (setupZone.fvg) {
-      // Use 50% of FVG
-      const fvgMid = (setupZone.fvg.high + setupZone.fvg.low) / 2;
-      entryPrice = fvgMid;
-    } else if (setupZone.orderBlock) {
-      entryPrice = bias.direction === 'bullish' 
-        ? refinedOB.low 
-        : refinedOB.high;
+    if (refinedOB) {
+      // PRIMARY: Use refined M1 OB for entry
+      if (setupZone.fvg && setupZone.orderBlock) {
+        // Use OB open (ICT prefers OB over FVG for entry)
+        entryPrice = bias.direction === 'bullish' 
+          ? refinedOB.low // Bullish: enter at OB low
+          : refinedOB.high; // Bearish: enter at OB high
+      } else if (setupZone.orderBlock) {
+        entryPrice = bias.direction === 'bullish' 
+          ? refinedOB.low 
+          : refinedOB.high;
+      } else if (setupZone.fvg) {
+        // Use 50% of FVG
+        const fvgMid = (setupZone.fvg.high + setupZone.fvg.low) / 2;
+        entryPrice = fvgMid;
+      }
+    } else {
+      // FALLBACK: Use setup zone midpoint or edge
+      if (setupZone.fvg) {
+        // Use 50% of FVG
+        const fvgMid = (setupZone.fvg.high + setupZone.fvg.low) / 2;
+        entryPrice = fvgMid;
+        reasons.push('Entry price fallback: Using FVG midpoint');
+      } else if (setupZone.orderBlock) {
+        // Use OB edge based on direction
+        entryPrice = bias.direction === 'bullish'
+          ? setupZone.orderBlock.low
+          : setupZone.orderBlock.high;
+        reasons.push('Entry price fallback: Using setup zone OB edge');
+      } else {
+        // Last resort: Use zone midpoint
+        entryPrice = (setupZone.zoneLow + setupZone.zoneHigh) / 2;
+        reasons.push('Entry price fallback: Using setup zone midpoint');
+      }
     }
     
-    // Calculate SL: under M1 OB for buys, above M1 OB for sells
-    // ICT: SL goes under/above the M1 OB that triggered entry
-    // For XAUUSD, use at least $1 buffer to avoid noise
+    // Validate entry price is valid
+    if (entryPrice <= 0) {
+      reasons.push(`Invalid entry price calculated: ${entryPrice}`);
+      return {
+        isValid: false,
+        direction: bias.direction as 'bullish' | 'bearish',
+        entryPrice: 0,
+        entryType: 'market',
+        stopLoss: 0,
+        takeProfit: 0,
+        riskRewardRatio: 0,
+        m1ChoChIndex,
+        refinedOB,
+        reasons,
+      };
+    }
+    
+    // Determine entry type based on strategy logic:
+    // - Buy Limit: Price needs to come DOWN to entry area (entry < current price)
+    // - Sell Limit: Price needs to go UP to entry area (entry > current price)
+    // - Market: Entry is very close to current price (within 0.05% for immediate execution)
+    const priceDiff = Math.abs(entryPrice - currentPrice);
+    const priceDiffPercent = (priceDiff / currentPrice) * 100;
+    
+    if (priceDiffPercent < 0.05) {
+      // Entry is very close to current price - use market order
+      entryType = 'market';
+      reasons.push(`Entry price (${entryPrice.toFixed(2)}) is very close to current price (${currentPrice.toFixed(2)}), using market order`);
+    } else if (bias.direction === 'bullish') {
+      // Bullish setup: Use Buy Limit if entry is below current price (price needs to come down)
+      // Use Buy Stop if entry is above current price (price needs to break up)
+      if (entryPrice < currentPrice) {
+        entryType = 'limit'; // Buy Limit: waiting for price to come down to entry
+        reasons.push(`Buy Limit: Entry (${entryPrice.toFixed(2)}) < Current (${currentPrice.toFixed(2)}), price should come down to entry`);
+      } else {
+        entryType = 'limit'; // Still use limit, but it's a Buy Stop (entry above current)
+        // Note: MT5 will handle this as Buy Stop based on entry > current ask
+        reasons.push(`Buy Stop: Entry (${entryPrice.toFixed(2)}) > Current (${currentPrice.toFixed(2)}), price should break up to entry`);
+      }
+    } else {
+      // Bearish setup: Use Sell Limit if entry is above current price (price needs to go up)
+      // Use Sell Stop if entry is below current price (price needs to break down)
+      if (entryPrice > currentPrice) {
+        entryType = 'limit'; // Sell Limit: waiting for price to go up to entry
+        reasons.push(`Sell Limit: Entry (${entryPrice.toFixed(2)}) > Current (${currentPrice.toFixed(2)}), price should go up to entry`);
+      } else {
+        entryType = 'limit'; // Still use limit, but it's a Sell Stop (entry below current)
+        // Note: MT5 will handle this as Sell Stop based on entry < current bid
+        reasons.push(`Sell Stop: Entry (${entryPrice.toFixed(2)}) < Current (${currentPrice.toFixed(2)}), price should break down to entry`);
+      }
+    }
+    
+    // Calculate SL: ALWAYS use M15 structural swing points (POI - Point of Interest)
+    // M1 OB is ONLY for entry price, NOT for SL
+    // For BUY: Find nearest M15 swing low BELOW entry (support/POI)
+    // For SELL: Find nearest M15 swing high ABOVE entry (resistance/POI)
     let stopLoss = 0;
-    const obSize = refinedOB.high - refinedOB.low;
     const symbolType = m1Candles[0]?.symbol || 'XAUUSD';
-    const minBuffer = symbolType === 'XAUUSD' || symbolType === 'GOLD' ? 1.0 : obSize * 0.5; // $1 minimum for gold
+    
+    // Calculate minimum buffer based on symbol
+    let minBuffer: number;
+    if (symbolType === 'XAUUSD' || symbolType === 'GOLD') {
+      minBuffer = 1.0; // $1 minimum for gold
+    } else if (symbolType.includes('USD') || symbolType === 'EURUSD' || symbolType === 'GBPUSD') {
+      minBuffer = 0.0001; // 1 pip for forex pairs
+    } else {
+      minBuffer = 0.5; // Default buffer for other symbols
+    }
+    
+    // PRIMARY: Use M15 structural swing points (POI)
+    // Get M15 structure to access swing points
+    const m15Structure = this.m15Structure.analyzeStructure(m15Candles, bias.direction);
+    const swingHighs = m15Structure.swingHighs || [];
+    const swingLows = m15Structure.swingLows || [];
     
     if (bias.direction === 'bullish') {
-      // Bullish: SL below M1 OB low
-      stopLoss = refinedOB.low - Math.max(obSize * 0.5, minBuffer);
+      // Bullish (BUY): Find nearest M15 swing low BELOW entry price (support/POI)
+      // Look for swing lows that are below the entry price
+      const supportLevels = swingLows
+        .filter(low => low < entryPrice)
+        .sort((a, b) => b - a); // Sort descending (highest first, but still below entry)
+      
+      if (supportLevels.length > 0) {
+        // Use the highest swing low below entry (nearest structural support/POI)
+        const nearestSupport = supportLevels[0];
+        stopLoss = nearestSupport - minBuffer; // Place SL below support with buffer
+        reasons.push(
+          `Stop loss calculated from M15 structural swing low (POI): ${nearestSupport.toFixed(2)}`
+        );
+        logger.info(
+          `[ICT] ${symbolType}: Using M15 structural swing low for SL. ` +
+          `Entry=${entryPrice.toFixed(2)}, Support=${nearestSupport.toFixed(2)}, SL=${stopLoss.toFixed(2)}`
+        );
+      } else {
+        // FALLBACK: No M15 swing low found - use setup zone low
+        stopLoss = setupZone.zoneLow - minBuffer;
+        reasons.push(
+          `Stop loss fallback: No M15 swing support found below entry, using zone low (${setupZone.zoneLow.toFixed(2)}) minus buffer`
+        );
+        logger.warn(
+          `[ICT] ${symbolType}: No M15 swing support below entry, using zone low as fallback. ` +
+          `Entry=${entryPrice.toFixed(2)}, SL=${stopLoss.toFixed(2)}, Zone=[${setupZone.zoneLow.toFixed(2)}, ${setupZone.zoneHigh.toFixed(2)}]`
+        );
+      }
     } else {
-      // Bearish: SL above M1 OB high
-      stopLoss = refinedOB.high + Math.max(obSize * 0.5, minBuffer);
+      // Bearish (SELL): Find nearest M15 swing high ABOVE entry price (resistance/POI)
+      // Look for swing highs that are above the entry price
+      const resistanceLevels = swingHighs
+        .filter(high => high > entryPrice)
+        .sort((a, b) => a - b); // Sort ascending (lowest first, but still above entry)
+      
+      if (resistanceLevels.length > 0) {
+        // Use the lowest swing high above entry (nearest structural resistance/POI)
+        const nearestResistance = resistanceLevels[0];
+        stopLoss = nearestResistance + minBuffer; // Place SL above resistance with buffer
+        reasons.push(
+          `Stop loss calculated from M15 structural swing high (POI): ${nearestResistance.toFixed(2)}`
+        );
+        logger.info(
+          `[ICT] ${symbolType}: Using M15 structural swing high for SL. ` +
+          `Entry=${entryPrice.toFixed(2)}, Resistance=${nearestResistance.toFixed(2)}, SL=${stopLoss.toFixed(2)}`
+        );
+      } else {
+        // FALLBACK: No M15 swing high found - use setup zone high
+        stopLoss = setupZone.zoneHigh + minBuffer;
+        reasons.push(
+          `Stop loss fallback: No M15 swing resistance found above entry, using zone high (${setupZone.zoneHigh.toFixed(2)}) plus buffer`
+        );
+        logger.warn(
+          `[ICT] ${symbolType}: No M15 swing resistance above entry, using zone high as fallback. ` +
+          `Entry=${entryPrice.toFixed(2)}, SL=${stopLoss.toFixed(2)}, Zone=[${setupZone.zoneLow.toFixed(2)}, ${setupZone.zoneHigh.toFixed(2)}]`
+        );
+      }
+    }
+    
+    // Validate stop loss is valid (not zero, not same as entry, and in correct direction)
+    const slDistance = Math.abs(entryPrice - stopLoss);
+    const isSlValid = stopLoss > 0 && 
+                     slDistance >= minBuffer && 
+                     ((bias.direction === 'bullish' && stopLoss < entryPrice) || 
+                      (bias.direction === 'bearish' && stopLoss > entryPrice));
+    
+    if (!isSlValid) {
+      const errorMsg = `Invalid stop loss calculated: ${stopLoss.toFixed(2)} (entry: ${entryPrice.toFixed(2)}, direction: ${bias.direction})`;
+      reasons.push(errorMsg);
+      logger.error(`[ICT] ${symbolType}: ${errorMsg}`);
+      return {
+        isValid: false,
+        direction: bias.direction as 'bullish' | 'bearish',
+        entryPrice,
+        entryType,
+        stopLoss: 0,
+        takeProfit: 0,
+        riskRewardRatio: 0,
+        m1ChoChIndex,
+        refinedOB,
+        reasons,
+      };
     }
     
     // Calculate TP: SL × risk-reward ratio (default 1:3)

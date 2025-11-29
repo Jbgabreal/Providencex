@@ -6,14 +6,15 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import MetaTrader5 as mt5
 from .config import MT5Config
 from .mt5_client import MT5Client
 from .models import (
     OpenTradeRequest, CloseTradeRequest, TradeResponse, HealthResponse,
     OpenPositionsResponse, OpenPosition, AccountSummaryResponse,
-    ModifyTradeRequest, PartialCloseRequest
+    ModifyTradeRequest, PartialCloseRequest,
+    PendingOrdersResponse, PendingOrder, CancelOrderRequest
 )
 from .order_event_emitter import OrderEventEmitter
 from .orderflow_accumulator import get_accumulator
@@ -245,7 +246,27 @@ async def open_trade(request: OpenTradeRequest):
             detail="MT5 client not initialized"
         )
     
-    logger.info(f"Received open trade request: {request.symbol} {request.direction} {request.lot_size} lots")
+    logger.info(
+        f"Received open trade request: {request.symbol} {request.direction} {request.lot_size} lots, "
+        f"SL={request.stop_loss}, TP={request.take_profit}, entry={request.entry_price}"
+    )
+    
+    # Validate stop loss is provided (safety check - ExecutionService should have already validated)
+    # Note: stop_loss_price is automatically mapped to stop_loss by Pydantic validator
+    if request.stop_loss is None or request.stop_loss <= 0:
+        error_msg = f"Stop Loss is required but was not provided or invalid (SL={request.stop_loss}). Trade rejected for safety."
+        logger.error(error_msg)
+        raise HTTPException(
+            status_code=400,
+            detail=error_msg
+        )
+    
+    # Log if stop loss will need adjustment (for market orders, execution price may differ from signal.entry)
+    if request.order_kind == 'market':
+        logger.debug(
+            f"Market order: Stop loss will be validated/adjusted against actual execution price, "
+            f"not signal entry ({request.entry_price})"
+        )
     
     # Convert request to dictionary for mt5_client
     # Note: Pydantic validators have already normalized the field names
@@ -259,6 +280,8 @@ async def open_trade(request: OpenTradeRequest):
         'take_profit': request.take_profit,
         'strategy': request.strategy,
     }
+    
+    logger.info(f"Trade request dict: SL={request_dict['stop_loss']}, TP={request_dict['take_profit']}")
     
     # Execute trade
     result = mt5_client.open_trade(request_dict)
@@ -297,7 +320,8 @@ async def open_trade(request: OpenTradeRequest):
         )
     else:
         # Return 400 Bad Request for client errors, 500 for server errors
-        error_msg = result.get('error', 'Unknown error')
+        # Check both 'error' and 'error_message' keys for compatibility
+        error_msg = result.get('error') or result.get('error_message', 'Unknown error')
         
         # Check if it's a validation error (client error) vs connection error (server error)
         if 'connection' in error_msg.lower() or 'initialize' in error_msg.lower():
@@ -752,11 +776,144 @@ async def get_open_positions():
         )
 
 
+@app.get("/api/v1/pending-orders", response_model=PendingOrdersResponse)
+async def get_pending_orders():
+    """
+    Get all pending orders from MT5 (limit/stop orders)
+    
+    Returns a list of all currently pending orders with their details.
+    """
+    global mt5_client
+    
+    if mt5_client is None:
+        return PendingOrdersResponse(
+            success=False,
+            orders=[],
+            error="MT5 client not initialized"
+        )
+    
+    try:
+        logger.debug("Received pending orders request")
+        
+        # Ensure MT5 is connected
+        try:
+            init_success, init_msg = mt5_client.ensure_initialized()
+            if not init_success:
+                logger.warning(f"MT5 connection failed for pending orders: {init_msg}")
+                return PendingOrdersResponse(
+                    success=False,
+                    orders=[],
+                    error=f"MT5 connection failed: {init_msg}"
+                )
+        except Exception as conn_error:
+            logger.error(f"MT5 connection error in pending orders endpoint: {conn_error}")
+            return PendingOrdersResponse(
+                success=False,
+                orders=[],
+                error=f"MT5 connection error: {str(conn_error)}"
+            )
+        
+        try:
+            result = mt5_client.get_pending_orders()
+            
+            if result['success']:
+                orders = result.get('orders', [])
+                logger.debug(f"Retrieved {len(orders)} pending orders from MT5")
+                
+                # Convert to PendingOrder models
+                pending_orders = [
+                    PendingOrder(
+                        symbol=order['symbol'],
+                        ticket=order['ticket'],
+                        direction=order['direction'],
+                        order_kind=order['order_kind'],
+                        volume=order['volume'],
+                        entry_price=order['entry_price'],
+                        sl=order.get('sl'),
+                        tp=order.get('tp'),
+                        setup_time=order['setup_time']
+                    )
+                    for order in orders
+                ]
+                
+                return PendingOrdersResponse(
+                    success=True,
+                    orders=pending_orders
+                )
+            else:
+                error_msg = result.get('error', 'Unknown error')
+                logger.error(f"Failed to get pending orders: {error_msg}")
+                return PendingOrdersResponse(
+                    success=False,
+                    orders=[],
+                    error=error_msg
+                )
+        except Exception as pos_error:
+            logger.exception(f"Exception getting pending orders from MT5: {pos_error}")
+            return PendingOrdersResponse(
+                success=False,
+                orders=[],
+                error=f"Exception: {str(pos_error)}"
+            )
+    except Exception as e:
+        logger.exception(f"Unexpected error in pending orders endpoint: {e}")
+        return PendingOrdersResponse(
+            success=False,
+            orders=[],
+            error=str(e)
+        )
+
+
+@app.post("/api/v1/trades/cancel", response_model=TradeResponse)
+async def cancel_order(request: CancelOrderRequest):
+    """
+    Cancel a pending order by ticket ID
+    
+    Finds the pending order and cancels it.
+    """
+    global mt5_client
+    
+    if mt5_client is None:
+        raise HTTPException(
+            status_code=500,
+            detail="MT5 client not initialized"
+        )
+    
+    ticket = request.ticket
+    if request.mt5_ticket and ticket != request.mt5_ticket:
+        ticket = request.mt5_ticket
+    
+    logger.info(f"Received cancel order request: ticket {ticket}")
+    
+    # Execute cancel
+    result = mt5_client.cancel_order(ticket)
+    
+    if result['success']:
+        return TradeResponse(success=True, ticket=ticket)
+    else:
+        error_msg = result.get('error', 'Unknown error')
+        
+        # Order not found is a client error, connection issues are server errors
+        if 'not found' in error_msg.lower():
+            status_code = 404
+        elif 'connection' in error_msg.lower():
+            status_code = 500
+        else:
+            status_code = 400
+        
+        raise HTTPException(
+            status_code=status_code,
+            detail=error_msg
+        )
+
+
 @app.get("/api/v1/history")
 async def get_history(
     symbol: str = Query(..., description="Trading symbol (e.g., XAUUSD, EURUSD)"),
     timeframe: str = Query("M1", description="Timeframe (M1, M5, M15, H1, etc.)"),
-    days: int = Query(None, description="Number of days of history (default from config)")
+    days: int = Query(None, description="Number of days of history (default from config)"),
+    startDate: str = Query(None, description="Start date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS). If provided, overrides 'days' parameter"),
+    endDate: str = Query(None, description="End date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS). If not provided, uses current broker time")
 ):
     """
     Get historical candle data for a symbol
@@ -767,7 +924,12 @@ async def get_history(
     Args:
         symbol: Trading symbol (required)
         timeframe: Timeframe identifier (default: M1)
-        days: Number of days of history (default: from HISTORICAL_BACKFILL_DEFAULT_DAYS env)
+        days: Number of days of history (default: from HISTORICAL_BACKFILL_DEFAULT_DAYS env).
+              Ignored if startDate is provided.
+        startDate: Start date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS).
+                   If provided, fetches historical data for the exact date range.
+        endDate: End date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS).
+                 If not provided when startDate is set, uses current broker time.
     
     Returns:
         JSON array of candles: [{"time": "ISO8601", "open": float, "high": float, "low": float, "close": float, "volume": int}, ...]
@@ -838,49 +1000,102 @@ async def get_history(
         # Calculate date range
         # MT5 copy_rates_range expects naive datetime objects (no timezone, no microseconds)
         # Use UTC time for consistency and remove microseconds
-        try:
-            broker_tick = mt5.symbol_info_tick(resolved_symbol)
-            if broker_tick and broker_tick.time:
-                # MT5 tick.time is Unix timestamp in seconds
-                # Create naive UTC datetime (MT5 expects naive datetime, no timezone)
-                end_time = datetime.utcfromtimestamp(broker_tick.time).replace(microsecond=0)
-                logger.debug(f"Using broker time for {resolved_symbol}: {end_time} (UTC, naive)")
-            else:
+        use_historical_dates = startDate is not None
+        
+        if use_historical_dates:
+            # Parse startDate and endDate for historical data requests
+            try:
+                # Parse ISO format dates (support both YYYY-MM-DD and YYYY-MM-DDTHH:MM:SS)
+                def parse_date(date_str: str) -> datetime:
+                    """Parse date string to naive UTC datetime"""
+                    if 'T' in date_str:
+                        # Has time component - parse as ISO format
+                        # Replace Z with +00:00 for proper timezone parsing
+                        date_str_normalized = date_str.replace('Z', '+00:00')
+                        dt = datetime.fromisoformat(date_str_normalized)
+                        # Convert to UTC if timezone-aware, then make naive
+                        if dt.tzinfo:
+                            # Convert to UTC, then remove timezone info
+                            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                        return dt.replace(microsecond=0)
+                    else:
+                        # Date only - parse and set to start of day UTC
+                        return datetime.strptime(date_str, '%Y-%m-%d').replace(microsecond=0)
+                
+                start_time = parse_date(startDate)
+                
+                if endDate:
+                    end_time = parse_date(endDate)
+                    # If endDate is date-only, add 23:59:59 to include the full day
+                    if 'T' not in endDate:
+                        end_time = end_time.replace(hour=23, minute=59, second=59)
+                else:
+                    # If endDate not provided, use current broker time
+                    try:
+                        broker_tick = mt5.symbol_info_tick(resolved_symbol)
+                        if broker_tick and broker_tick.time:
+                            end_time = datetime.utcfromtimestamp(broker_tick.time).replace(microsecond=0)
+                        else:
+                            end_time = datetime.utcnow().replace(microsecond=0)
+                    except Exception:
+                        end_time = datetime.utcnow().replace(microsecond=0)
+                
+                logger.info(f"Using historical date range: {start_time} to {end_time} (UTC, naive)")
+            except ValueError as date_error:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid date format. Use ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS): {str(date_error)}"
+                )
+        else:
+            # Legacy behavior: use days parameter (last N days from current broker time)
+            try:
+                broker_tick = mt5.symbol_info_tick(resolved_symbol)
+                if broker_tick and broker_tick.time:
+                    # MT5 tick.time is Unix timestamp in seconds
+                    # Create naive UTC datetime (MT5 expects naive datetime, no timezone)
+                    end_time = datetime.utcfromtimestamp(broker_tick.time).replace(microsecond=0)
+                    logger.debug(f"Using broker time for {resolved_symbol}: {end_time} (UTC, naive)")
+                else:
+                    end_time = datetime.utcnow().replace(microsecond=0)
+                    logger.debug(f"Broker time not available, using UTC now: {end_time}")
+            except Exception as tick_error:
                 end_time = datetime.utcnow().replace(microsecond=0)
-                logger.debug(f"Broker time not available, using UTC now: {end_time}")
-        except Exception as tick_error:
-            end_time = datetime.utcnow().replace(microsecond=0)
-            logger.warning(f"Could not get broker time, using UTC now: {tick_error}")
+                logger.warning(f"Could not get broker time, using UTC now: {tick_error}")
+            
+            start_time = (end_time - timedelta(days=days)).replace(microsecond=0)
         
-        start_time = (end_time - timedelta(days=days)).replace(microsecond=0)
-        
-        # Use copy_rates_from_pos first (more reliable - doesn't depend on date calculations)
-        # Calculate approximate number of candles needed
-        candles_per_day_map = {
-            'M1': 24 * 60,      # 1440 candles per day
-            'M5': 24 * 12,      # 288 candles per day  
-            'M15': 24 * 4,      # 96 candles per day
-            'H1': 24,           # 24 candles per day
-            'H4': 6,            # 6 candles per day
-        }
-        candles_per_day = candles_per_day_map.get(timeframe.upper(), 1440)
-        requested_count = days * candles_per_day
-        
-        # MT5 typically allows up to 100k candles, but be conservative
-        # For 90 days of M1: 90 * 1440 = 129,600 candles (exceeds limit)
-        # Limit to 50k candles (~35 days of M1) to be safe
-        count = min(50000, max(100, requested_count))
-        
-        logger.info(f"Fetching history for {resolved_symbol}: {timeframe}, requesting last {count} candles (≈{count/candles_per_day:.1f} days)")
-        
-        # Fetch using copy_rates_from_pos (position 0 = current bar, count = number of bars to retrieve backwards)
-        rates = mt5.copy_rates_from_pos(resolved_symbol, mt5_timeframe, 0, count)
-        
-        # If copy_rates_from_pos fails or returns None, try copy_rates_range as fallback
-        if rates is None or len(rates) == 0:
-            logger.warning(f"copy_rates_from_pos returned no data, trying fallback: copy_rates_range...")
-            logger.info(f"Fallback date range: {start_time} to {end_time}")
+        if use_historical_dates:
+            # For historical date ranges, use copy_rates_range directly
+            logger.info(f"Fetching historical data for {resolved_symbol}: {timeframe}, date range: {start_time} to {end_time}")
             rates = mt5.copy_rates_range(resolved_symbol, mt5_timeframe, start_time, end_time)
+        else:
+            # Legacy behavior: use copy_rates_from_pos first (more reliable - doesn't depend on date calculations)
+            # Calculate approximate number of candles needed
+            candles_per_day_map = {
+                'M1': 24 * 60,      # 1440 candles per day
+                'M5': 24 * 12,      # 288 candles per day  
+                'M15': 24 * 4,      # 96 candles per day
+                'H1': 24,           # 24 candles per day
+                'H4': 6,            # 6 candles per day
+            }
+            candles_per_day = candles_per_day_map.get(timeframe.upper(), 1440)
+            requested_count = days * candles_per_day
+            
+            # MT5 typically allows up to 100k candles, but be conservative
+            # For 90 days of M1: 90 * 1440 = 129,600 candles (exceeds limit)
+            # Limit to 50k candles (~35 days of M1) to be safe
+            count = min(50000, max(100, requested_count))
+            
+            logger.info(f"Fetching history for {resolved_symbol}: {timeframe}, requesting last {count} candles (≈{count/candles_per_day:.1f} days)")
+            
+            # Fetch using copy_rates_from_pos (position 0 = current bar, count = number of bars to retrieve backwards)
+            rates = mt5.copy_rates_from_pos(resolved_symbol, mt5_timeframe, 0, count)
+            
+            # If copy_rates_from_pos fails or returns None, try copy_rates_range as fallback
+            if rates is None or len(rates) == 0:
+                logger.warning(f"copy_rates_from_pos returned no data, trying fallback: copy_rates_range...")
+                logger.info(f"Fallback date range: {start_time} to {end_time}")
+                rates = mt5.copy_rates_range(resolved_symbol, mt5_timeframe, start_time, end_time)
         
         if rates is None:
             error_code, error_desc = mt5.last_error()
@@ -916,9 +1131,10 @@ async def get_history(
         # Sort by time (ascending - oldest first) to ensure chronological order
         candles.sort(key=lambda x: x['time'])
         
-        # Filter to keep only the most recent N days worth of candles
-        # Calculate cutoff time (N days ago from the newest candle)
-        if len(candles) > 0:
+        # Filter candles to the requested date range
+        if len(candles) > 0 and not use_historical_dates:
+            # Legacy behavior: filter to keep only the most recent N days worth of candles
+            # Calculate cutoff time (N days ago from the newest candle)
             newest_time = datetime.fromisoformat(candles[-1]['time'].replace('Z', '+00:00'))
             cutoff_time = newest_time - timedelta(days=days)
             
@@ -932,6 +1148,21 @@ async def get_history(
                 logger.debug(
                     f"Filtered {len(candles)} candles to {len(filtered_candles)} candles "
                     f"within {days} days for {resolved_symbol}"
+                )
+            
+            candles = filtered_candles
+        elif use_historical_dates and len(candles) > 0:
+            # For historical dates, filter to exact date range
+            filtered_candles = []
+            for c in candles:
+                candle_time = datetime.fromisoformat(c['time'].replace('Z', '+00:00')).replace(tzinfo=None)
+                if start_time <= candle_time <= end_time:
+                    filtered_candles.append(c)
+            
+            if len(filtered_candles) < len(candles):
+                logger.debug(
+                    f"Filtered {len(candles)} candles to {len(filtered_candles)} candles "
+                    f"within historical range {start_time} to {end_time} for {resolved_symbol}"
                 )
             
             candles = filtered_candles

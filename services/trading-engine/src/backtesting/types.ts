@@ -60,6 +60,9 @@ export interface BacktestConfig {
   };
   // v11 SMC v2 parameter overrides (optional)
   overrideParamSet?: import('../optimization/OptimizationTypes').SMC_V2_ParamSet;
+  // Strategy profile key (e.g., "first_successful_strategy_from_god")
+  // If provided, uses strategy profile instead of legacy strategies array
+  strategyProfileKey?: string;
 }
 
 /**

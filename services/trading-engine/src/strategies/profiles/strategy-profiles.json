@@ -1,0 +1,30 @@
+[
+  {
+    "id": "first_successful_strategy_from_god",
+    "key": "first_successful_strategy_from_god",
+    "displayName": "First Successful Strategy from GOD",
+    "description": "Frozen snapshot of the first profitable SMC configuration using ICT model. This strategy uses H4 bias, M15 setup zone, and M1 entry timing with M15 structural swing points for SL and risk-reward ratio for TP.",
+    "implementationKey": "GOD_SMC_V1",
+    "version": 1,
+    "createdAt": "2025-01-25T00:00:00.000Z",
+    "updatedAt": "2025-01-25T00:00:00.000Z",
+    "isDefault": true,
+    "isArchived": false,
+    "config": {
+      "useICTModel": true,
+      "riskRewardRatio": 3,
+      "smcRiskReward": 3,
+      "htfTimeframe": "H4",
+      "itfTimeframe": "M15",
+      "ltfTimeframe": "M1",
+      "minH4Candles": 10,
+      "minM15Candles": 20,
+      "minM1Candles": 20,
+      "slFromM15SwingPoints": true,
+      "tpFromRiskReward": true,
+      "entryTypeDetermination": "strategy",
+      "note": "This is a frozen snapshot. Do not modify the implementation (GodSmcStrategy). All future changes must use new implementations."
+    }
+  }
+]
+

@@ -11,7 +11,7 @@
       "riskPercent": 1.0,
       "maxDailyLoss": 200,
       "maxWeeklyLoss": 800,
-      "maxConcurrentTrades": 3,
+      "maxConcurrentTrades": 10,
       "maxDailyRisk": 500
     },
     "killSwitch": {
@@ -23,7 +23,7 @@
       "maxExposure": 1000
     },
     "executionFilter": {
-      "maxTradesPerDay": 5,
+      "maxTradesPerDay": 10,
       "cooldownMinutes": 30,
       "minSpreadPips": 0.5,
       "sessionWindows": ["london", "newyork"]

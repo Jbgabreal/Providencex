@@ -1810,6 +1810,11 @@ export class SMCStrategyV2 {
     // Convert direction
     const direction = entry.direction === 'bullish' ? 'buy' : 'sell';
 
+    // Map entryType to orderKind for execution
+    // entryType 'limit' means price needs to come to entry area (use limit/stop order)
+    // entryType 'market' means immediate execution (use market order)
+    const orderKind: 'market' | 'limit' | 'stop' = entry.entryType === 'market' ? 'market' : 'limit';
+    
     // Build signal with ICT-specific metadata
     const signal: EnhancedRawSignalV2 = {
       symbol,
@@ -1817,6 +1822,8 @@ export class SMCStrategyV2 {
       entry: entry.entryPrice,
       stopLoss: entry.stopLoss,
       takeProfit: entry.takeProfit,
+      // @ts-ignore - orderKind is defined in EnhancedRawSignalV2 but TypeScript may not see it if shared-types isn't rebuilt
+      orderKind, // Strategy-determined: limit if price needs to come to entry, market if immediate
       
       // Multi-timeframe structure
       htfTrend: ictResult.bias.direction === 'sideways' ? 'sideways' : (ictResult.bias.direction === 'bullish' ? 'bullish' : 'bearish'),

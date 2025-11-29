@@ -68,12 +68,15 @@ export interface TrendlineLiquidity {
 
 // All types and interfaces are already exported above, no need for duplicate exports
 
+export type OrderKind = 'market' | 'limit' | 'stop';
+
 export interface EnhancedRawSignalV2 {
   symbol: string;
   direction: 'buy' | 'sell';
   entry: number;
   stopLoss: number;
   takeProfit: number;
+  orderKind?: OrderKind; // Strategy-determined order type: limit (price comes to entry) or market (immediate)
   
   // Multi-timeframe structure
   htfTrend: TrendDirection;

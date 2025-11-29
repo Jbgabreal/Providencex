@@ -124,18 +124,79 @@ export async function analyzeScreenshot(screenshotBuffer: Buffer): Promise<NewsW
       jsonStr = jsonStr.replace(/^```(?:json)?\n/, '').replace(/\n```$/, '');
     }
 
-    const events = JSON.parse(jsonStr) as Array<{
+    const rawEvents = JSON.parse(jsonStr) as Array<{
       event_name: string;
       currency: 'USD' | 'EUR' | 'GBP';
       impact: 'high' | 'medium' | 'low';
       time: string;
       is_critical: boolean;
-      risk_score: number;
-      avoid_before_minutes: number;
-      avoid_after_minutes: number;
+      risk_score?: number;
+      avoid_before_minutes?: number;
+      avoid_after_minutes?: number;
       reason: string;
       detailed_description: string;
     }>;
+
+    // Sanitize and validate events to avoid NaN / invalid unit errors
+    const events = rawEvents
+      .map((event, index) => {
+        // Parse time safely (HH:MM)
+        const [hoursStr, minutesStr] = (event.time || '').split(':');
+        const hours = Number(hoursStr);
+        const minutes = Number(minutesStr);
+
+        if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+          logger.warn(
+            `[OpenAIService] Skipping event with invalid time at index ${index}:`,
+            event
+          );
+          return null;
+        }
+
+        // Default / clamp risk score
+        let riskScore = typeof event.risk_score === 'number' ? event.risk_score : 0;
+        if (!Number.isFinite(riskScore)) {
+          riskScore = 0;
+        }
+        riskScore = Math.max(0, Math.min(100, riskScore));
+
+        // Default avoid window minutes (prevent NaN that breaks Luxon)
+        let avoidBefore = typeof event.avoid_before_minutes === 'number'
+          ? event.avoid_before_minutes
+          : 0;
+        let avoidAfter = typeof event.avoid_after_minutes === 'number'
+          ? event.avoid_after_minutes
+          : 0;
+
+        if (!Number.isFinite(avoidBefore)) avoidBefore = 0;
+        if (!Number.isFinite(avoidAfter)) avoidAfter = 0;
+
+        // Clamp to reasonable bounds (0–240 minutes)
+        avoidBefore = Math.max(0, Math.min(240, avoidBefore));
+        avoidAfter = Math.max(0, Math.min(240, avoidAfter));
+
+        return {
+          ...event,
+          time: `${hours.toString().padStart(2, '0')}:${minutes
+            .toString()
+            .padStart(2, '0')}`,
+          risk_score: riskScore,
+          avoid_before_minutes: avoidBefore,
+          avoid_after_minutes: avoidAfter,
+        };
+      })
+      .filter((e): e is {
+        event_name: string;
+        currency: 'USD' | 'EUR' | 'GBP';
+        impact: 'high' | 'medium' | 'low';
+        time: string;
+        is_critical: boolean;
+        risk_score: number;
+        avoid_before_minutes: number;
+        avoid_after_minutes: number;
+        reason: string;
+        detailed_description: string;
+      } => e !== null);
 
     // Convert events to NewsWindow format with avoid windows
     const windows: NewsWindow[] = [];
@@ -143,8 +204,13 @@ export async function analyzeScreenshot(screenshotBuffer: Buffer): Promise<NewsW
 
     for (const event of events) {
       const [hours, minutes] = event.time.split(':').map(Number);
-      const eventTime = todayDate.set({ hour: hours, minute: minutes, second: 0, millisecond: 0 });
-      
+      const eventTime = todayDate.set({
+        hour: hours,
+        minute: minutes,
+        second: 0,
+        millisecond: 0,
+      });
+
       // Create window using model-based avoid minutes
       const startTime = eventTime.minus({ minutes: event.avoid_before_minutes });
       const endTime = eventTime.plus({ minutes: event.avoid_after_minutes });

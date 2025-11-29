@@ -88,6 +88,7 @@ function parseArgs(): {
   csvPath?: string;
   initialBalance: number;
   outputDir?: string;
+  strategyProfileKey?: string; // New: strategy profile key
 } {
   const args = process.argv.slice(2);
   
@@ -97,8 +98,9 @@ function parseArgs(): {
   let to = '2024-12-31';
   let dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' = 'mock';
   let csvPath: string | undefined;
-  let initialBalance = 1000;
+  let initialBalance = 100;
   let outputDir: string | undefined;
+  let strategyProfileKey: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -168,6 +170,13 @@ function parseArgs(): {
         i++;
         break;
 
+      case '--strategy-profile':
+        if (nextArg) {
+          strategyProfileKey = nextArg;
+        }
+        i++;
+        break;
+
       case '--help':
       case '-h':
         printHelp();
@@ -185,6 +194,7 @@ function parseArgs(): {
     csvPath,
     initialBalance,
     outputDir,
+    strategyProfileKey,
   };
 }
 
@@ -201,6 +211,9 @@ Usage:
 Options:
   --symbol, -s <SYMBOL>          Trading symbol(s) (e.g., XAUUSD or XAUUSD,EURUSD)
   --strategy <STRATEGY>          Strategy to test: low, high, or low,high (default: low)
+                                 [DEPRECATED: Use --strategy-profile instead]
+  --strategy-profile <KEY>       Strategy profile key (e.g., first_successful_strategy_from_god)
+                                 If provided, uses strategy profile instead of legacy strategies
   --from, -f <DATE>              Start date (YYYY-MM-DD) (default: 2024-01-01)
   --to, -t <DATE>                End date (YYYY-MM-DD) (default: 2024-12-31)
   --data-source <SOURCE>         Data source: csv, postgres, mt5, or mock (default: mock)
@@ -227,6 +240,9 @@ Examples:
 
   # Run backtest with multiple strategies
   pnpm backtest --symbol XAUUSD --strategy low,high
+
+  # Run backtest with strategy profile (recommended)
+  pnpm backtest --symbol XAUUSD --strategy-profile first_successful_strategy_from_god
 
   # Run backtest with multiple symbols
   pnpm backtest --symbol XAUUSD,EURUSD,GBPUSD
@@ -287,16 +303,30 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    // Validate: cannot use both --strategy and --strategy-profile
+    if (args.strategyProfileKey && args.strategies.length > 0) {
+      logger.error('[BacktestCLI] Cannot use both --strategy and --strategy-profile. Use --strategy-profile only.');
+      process.exit(1);
+    }
+    
+    // If strategy profile is provided, use it; otherwise use legacy strategies
+    if (args.strategyProfileKey) {
+      logger.info(`[BacktestCLI] Using strategy profile: ${args.strategyProfileKey}`);
+    } else {
+      logger.info(`[BacktestCLI] Using legacy strategies: ${args.strategies.join(', ')}`);
+    }
+
     // Build backtest config
     const config: BacktestConfig = {
       symbol: args.symbol,
-      strategies: args.strategies,
+      strategies: args.strategies, // Still required for backward compatibility, but ignored if strategyProfileKey is set
       startDate: args.from,
       endDate: args.to,
       timeframe: 'M5',
       initialBalance: args.initialBalance,
       dataSource: args.dataSource,
       csvPath: args.csvPath,
+      strategyProfileKey: args.strategyProfileKey, // New: strategy profile key
     };
 
     // Build data loader config

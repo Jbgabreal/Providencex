@@ -163,5 +163,31 @@ export class AccountRegistry {
   updateConnectionStatus(accountId: string, isConnected: boolean): void {
     this.updateRuntimeState(accountId, { isConnected });
   }
+
+  /**
+   * Check if account exists in registry
+   */
+  hasAccount(accountId: string): boolean {
+    return this.accounts.has(accountId);
+  }
+
+  /**
+   * Register an account dynamically (for DB-backed accounts)
+   */
+  registerAccount(accountId: string, account: AccountInfo): void {
+    this.accounts.set(accountId, account);
+    if (!this.runtimeState.has(accountId)) {
+      this.runtimeState.set(accountId, {
+        accountId,
+        paused: false,
+        lastError: null,
+        lastErrorTime: null,
+        lastTradeTime: null,
+        lastTradeSymbol: null,
+        isConnected: true,
+      });
+    }
+    logger.info(`[AccountRegistry] Registered account: ${accountId} (${account.name})`);
+  }
 }
 

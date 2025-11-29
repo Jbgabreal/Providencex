@@ -594,6 +594,8 @@ export class StrategyService {
       entry: v2Signal.entry,
       stopLoss: v2Signal.stopLoss,
       takeProfit: v2Signal.takeProfit,
+      // @ts-ignore - orderKind is defined in EnhancedRawSignalV2 but TypeScript may not see it if shared-types isn't rebuilt
+      orderKind: v2Signal.orderKind || 'market', // Pass through strategy-determined order type (default to market)
       reason: `SMC v2: ${v2Signal.confluenceReasons.join('; ')}`,
       meta: {
         htfTrend: v2Signal.htfTrend,

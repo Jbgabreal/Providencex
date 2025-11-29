@@ -117,7 +117,8 @@ export class DistributedExecutionOrchestrator {
         this.riskService,
         this.killSwitch,
         this.priceFeed,
-        this.candleStore
+        this.candleStore,
+        undefined // Legacy mode: no StrategyProfileRiskConfig
       );
 
       return engine.execute(signal, baseContext, guardrailMode, strategy);

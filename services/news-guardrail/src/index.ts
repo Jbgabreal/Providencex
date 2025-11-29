@@ -13,8 +13,9 @@ const config = getNewsGuardrailConfig();
 app.use(express.json());
 app.use('/', routes);
 
-// Cron job: Run daily at 08:00 NY time (Monday-Friday)
-const cronSchedule = config.cronSchedule || '0 8 * * 1-5'; // 08:00 Mon-Fri
+// Cron job: Run daily at 01:00 NY time (Monday–Friday)
+// Default: 1 AM Monday–Friday in America/New_York, overridable via config.cronSchedule
+const cronSchedule = config.cronSchedule || '0 1 * * 1-5'; // 01:00 Mon–Fri
 
 // Schedule cron job
 // Note: node-cron v3 uses server timezone by default
@@ -32,7 +33,7 @@ const cronTask = cron.schedule(
   },
   {
     scheduled: true, // Enable the job
-    timezone: config.timezone || 'America/New_York', // Run at 08:00 NY time
+    timezone: config.timezone || 'America/New_York', // Run at 01:00 NY time by default
   }
 );
 

@@ -43,6 +43,11 @@ export interface TradingEngineConfig {
   
   // v10 SMC v2 Strategy feature flag
   useSMCV2: boolean;
+  
+  // Privy Authentication
+  privyAppId: string | null;
+  privyJwksUrl: string | null;
+  authDevMode: boolean;
 }
 
 export function getConfig(): TradingEngineConfig {
@@ -60,9 +65,9 @@ export function getConfig(): TradingEngineConfig {
     
     // Risk Limits - from env or defaults
     lowRiskMaxDailyLoss: parseFloat(process.env.LOW_RISK_MAX_DAILY_LOSS || '1.0'),
-    lowRiskMaxTrades: parseInt(process.env.LOW_RISK_MAX_TRADES || '2', 10),
+    lowRiskMaxTrades: parseInt(process.env.LOW_RISK_MAX_TRADES || '10', 10),
     highRiskMaxDailyLoss: parseFloat(process.env.HIGH_RISK_MAX_DAILY_LOSS || '3.0'),
-    highRiskMaxTrades: parseInt(process.env.HIGH_RISK_MAX_TRADES || '4', 10),
+    highRiskMaxTrades: parseInt(process.env.HIGH_RISK_MAX_TRADES || '10', 10),
     
     // Risk Per Trade
     defaultLowRiskPerTrade: parseFloat(process.env.DEFAULT_LOW_RISK_PER_TRADE || '0.5'),
@@ -111,6 +116,31 @@ export function getConfig(): TradingEngineConfig {
     
     // v10 SMC v2 Strategy feature flag (default: false, must be explicitly enabled)
     useSMCV2: process.env.USE_SMC_V2 === 'true',
+    
+    // Privy Authentication
+    privyAppId: process.env.PRIVY_APP_ID || null,
+    privyJwksUrl: process.env.PRIVY_JWKS_URL || null,
+    authDevMode: process.env.AUTH_DEV_MODE === 'true',
   };
+}
+
+// Validate Privy config on startup
+export function validatePrivyConfig(config: TradingEngineConfig): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  if (isProduction) {
+    if (!config.privyAppId || !config.privyJwksUrl) {
+      throw new Error(
+        'PRIVY_APP_ID and PRIVY_JWKS_URL are required in production. ' +
+        'Set AUTH_DEV_MODE=true for local development without Privy.'
+      );
+    }
+  } else {
+    if (!config.privyAppId || !config.privyJwksUrl) {
+      console.warn(
+        '[Config] Privy credentials not set. Auth will only work in dev mode (AUTH_DEV_MODE=true).'
+      );
+    }
+  }
 }
 

@@ -58,6 +58,7 @@ export interface AccountInfo {
   killSwitch: AccountKillSwitchConfig;
   executionFilter?: AccountExecutionFilterConfig; // Optional per-account filter overrides
   enabled?: boolean; // Whether account is enabled (default: true)
+  metadata?: Record<string, any>; // Optional metadata (e.g., userId, mt5AccountId, strategyProfileId for multi-tenant)
 }
 
 /**

@@ -14,6 +14,8 @@ import { PerAccountExecutionFilter } from './PerAccountExecutionFilter';
 import { RawSignal, ExecutionDecision, ExecutionFilterContext } from '../strategy/v3/types';
 import { TradeRequest, TradeResponse } from '@providencex/shared-types';
 import { PriceFeedClient, CandleStore } from '../marketData';
+import { StrategyProfileRiskConfig } from '../risk/RiskConfigFromProfile';
+import { TradeHistoryRepository } from '../db/TradeHistoryRepository';
 
 const logger = new Logger('AccountExecutionEngine');
 
@@ -43,6 +45,8 @@ export class AccountExecutionEngine {
   private executionFilter: PerAccountExecutionFilter;
   private priceFeed?: PriceFeedClient;
   private candleStore?: CandleStore;
+  private profileRiskConfig?: StrategyProfileRiskConfig;
+  private tradeHistoryRepo?: TradeHistoryRepository;
 
   constructor(
     account: AccountInfo,
@@ -50,7 +54,9 @@ export class AccountExecutionEngine {
     riskService: PerAccountRiskService,
     killSwitch: PerAccountKillSwitch,
     priceFeed?: PriceFeedClient,
-    candleStore?: CandleStore
+    candleStore?: CandleStore,
+    profileRiskConfig?: StrategyProfileRiskConfig,
+    tradeHistoryRepo?: TradeHistoryRepository
   ) {
     this.account = account;
     this.accountRegistry = accountRegistry;
@@ -59,6 +65,8 @@ export class AccountExecutionEngine {
     this.executionFilter = new PerAccountExecutionFilter();
     this.priceFeed = priceFeed;
     this.candleStore = candleStore;
+    this.profileRiskConfig = profileRiskConfig;
+    this.tradeHistoryRepo = tradeHistoryRepo;
   }
 
   /**
@@ -144,7 +152,12 @@ export class AccountExecutionEngine {
       guardrailMode: guardrailMode as any,
     };
 
-    const riskCheck = this.riskService.canTakeNewTrade(this.account, riskContext);
+    // NOTE: profile-driven risk can be injected via StrategyProfileRiskConfig in future
+    const riskCheck = this.riskService.canTakeNewTrade(
+      this.account,
+      riskContext,
+      this.profileRiskConfig
+    );
 
     if (!riskCheck.allowed) {
       return {
@@ -184,7 +197,8 @@ export class AccountExecutionEngine {
       riskContext,
       stopLossPips,
       currentPrice,
-      signal.symbol
+      signal.symbol,
+      this.profileRiskConfig
     );
 
     // Step 4.5: Check if market is open (weekend/market hours check)
@@ -263,6 +277,38 @@ export class AccountExecutionEngine {
 
         // Record successful trade
         this.accountRegistry.recordTrade(this.account.id, signal.symbol);
+
+        // Persist trade to history if this is a multi-tenant account
+        if (this.tradeHistoryRepo && this.account.metadata) {
+          const metadata = this.account.metadata;
+          try {
+            await this.tradeHistoryRepo.recordTradeOpened({
+              userId: metadata.userId,
+              mt5AccountId: metadata.mt5AccountId,
+              strategyProfileId: metadata.strategyProfileId,
+              assignmentId: metadata.assignmentId,
+              mt5Ticket: typeof response.data.mt5_ticket === 'string'
+                ? parseInt(response.data.mt5_ticket, 10)
+                : response.data.mt5_ticket,
+              mt5OrderId: (response.data as any).mt5_order_id || undefined,
+              symbol: signal.symbol,
+              direction: signal.direction.toUpperCase() as 'BUY' | 'SELL',
+              lotSize,
+              entryPrice: signal.entryPrice,
+              stopLossPrice: signal.sl || undefined,
+              takeProfitPrice: signal.tp || undefined,
+              entryReason: signal.smcMetadata?.entryReason || 'SMC signal',
+              metadata: {
+                strategy,
+                account_id: this.account.id,
+              },
+            });
+            logger.debug(`[${this.account.id}] Trade persisted to history: ticket ${response.data.mt5_ticket}`);
+          } catch (error) {
+            logger.error(`[${this.account.id}] Failed to persist trade to history`, error);
+            // Don't fail the trade execution if history persistence fails
+          }
+        }
 
         return {
           accountId: this.account.id,

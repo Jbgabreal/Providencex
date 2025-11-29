@@ -48,7 +48,30 @@ export class GuardrailService {
         reason_summary,
       };
     } catch (error) {
-      logger.error('Failed to get guardrail decision', error);
+      // Log concise error message instead of full error object
+      if (axios.isAxiosError(error)) {
+        const errorCode = error.code || 'UNKNOWN';
+        const errorMessage = error.message || 'Unknown error';
+        
+        // Only log detailed error on first failure or if it's not a connection error
+        if (errorCode === 'ECONNREFUSED' || errorCode === 'ETIMEDOUT' || errorCode === 'ENOTFOUND') {
+          // Connection errors: log once per minute (approximate) to reduce noise
+          // Use a simple approach - log with reduced detail
+          logger.warn(
+            `Guardrail service unavailable (${errorCode}): ${this.newsGuardrailUrl} - blocking trades for safety`
+          );
+        } else {
+          // Other errors: log with more detail
+          logger.error(
+            `Failed to get guardrail decision: ${errorCode} - ${errorMessage}`,
+            { url: `${this.newsGuardrailUrl}/can-i-trade-now`, strategy }
+          );
+        }
+      } else {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to get guardrail decision: ${errorMessage}`);
+      }
+      
       // Fail-safe: if guardrail is down, default to blocked mode for safety
       return {
         can_trade: false,

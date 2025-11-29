@@ -7,6 +7,7 @@
 import { Logger } from '@providencex/shared-utils';
 import { AccountInfo, AccountRiskConfig } from './AccountConfig';
 import { Pool } from 'pg';
+import { StrategyProfileRiskConfig } from '../risk/RiskConfigFromProfile';
 
 const logger = new Logger('PerAccountRiskService');
 
@@ -67,15 +68,21 @@ export class PerAccountRiskService {
    */
   canTakeNewTrade(
     account: AccountInfo,
-    context: AccountRiskContext
+    context: AccountRiskContext,
+    profileRiskConfig?: StrategyProfileRiskConfig
   ): AccountRiskCheckResult {
-    const riskConfig = account.risk;
+    // Build runtime risk config: profile-driven if provided, otherwise static account.risk
+    const runtimeRisk: AccountRiskConfig = this.buildRuntimeRiskConfig(
+      account,
+      context,
+      profileRiskConfig
+    );
 
     // Check daily loss limit
-    if (context.todayRealizedPnL <= -riskConfig.maxDailyLoss) {
+    if (runtimeRisk.maxDailyLoss > 0 && context.todayRealizedPnL <= -runtimeRisk.maxDailyLoss) {
       return {
         allowed: false,
-        reason: `Daily loss limit reached: ${context.todayRealizedPnL.toFixed(2)} <= ${-riskConfig.maxDailyLoss} (${account.id})`,
+        reason: `Daily loss limit reached: ${context.todayRealizedPnL.toFixed(2)} <= ${-runtimeRisk.maxDailyLoss} (${account.id})`,
       };
     }
 
@@ -83,26 +90,26 @@ export class PerAccountRiskService {
     // TODO: Implement weekly tracking
 
     // Check max concurrent trades
-    if (riskConfig.maxConcurrentTrades && context.concurrentTrades >= riskConfig.maxConcurrentTrades) {
+    if (runtimeRisk.maxConcurrentTrades && context.tradesTakenToday >= runtimeRisk.maxConcurrentTrades) {
       return {
         allowed: false,
-        reason: `Max concurrent trades reached: ${context.concurrentTrades}/${riskConfig.maxConcurrentTrades} (${account.id})`,
+        reason: `Max trades per day reached: ${context.tradesTakenToday}/${runtimeRisk.maxConcurrentTrades} (${account.id})`,
       };
     }
 
-    // Check max daily risk
-    if (riskConfig.maxDailyRisk && context.currentExposure >= riskConfig.maxDailyRisk) {
+    // Check max daily risk (absolute)
+    if (runtimeRisk.maxDailyRisk && context.currentExposure >= runtimeRisk.maxDailyRisk) {
       return {
         allowed: false,
-        reason: `Max daily risk reached: ${context.currentExposure.toFixed(2)} >= ${riskConfig.maxDailyRisk} (${account.id})`,
+        reason: `Max daily risk reached: ${context.currentExposure.toFixed(2)} >= ${runtimeRisk.maxDailyRisk} (${account.id})`,
       };
     }
 
-    // Check max exposure
-    if (riskConfig.maxExposure && context.currentExposure >= riskConfig.maxExposure) {
+    // Check max exposure (absolute)
+    if (runtimeRisk.maxExposure && context.currentExposure >= runtimeRisk.maxExposure) {
       return {
         allowed: false,
-        reason: `Max exposure reached: ${context.currentExposure.toFixed(2)} >= ${riskConfig.maxExposure} (${account.id})`,
+        reason: `Max exposure reached: ${context.currentExposure.toFixed(2)} >= ${runtimeRisk.maxExposure} (${account.id})`,
       };
     }
 
@@ -115,7 +122,7 @@ export class PerAccountRiskService {
     }
 
     // Calculate adjusted risk percent
-    let adjustedRiskPercent = riskConfig.riskPercent;
+    let adjustedRiskPercent = runtimeRisk.riskPercent;
     if (context.guardrailMode === 'reduced') {
       adjustedRiskPercent = adjustedRiskPercent * 0.5;
     }
@@ -134,32 +141,104 @@ export class PerAccountRiskService {
     context: AccountRiskContext,
     stopLossPips: number,
     currentPrice: number,
-    symbol: string
+    symbol: string,
+    profileRiskConfig?: StrategyProfileRiskConfig
   ): number {
-    const riskConfig = account.risk;
-    
+    const runtimeRisk = this.buildRuntimeRiskConfig(
+      account,
+      context,
+      profileRiskConfig
+    );
+
     // Get adjusted risk percent
     const riskPercent = context.guardrailMode === 'reduced'
-      ? riskConfig.riskPercent * 0.5
-      : riskConfig.riskPercent;
+      ? runtimeRisk.riskPercent * 0.5
+      : runtimeRisk.riskPercent;
 
     const riskAmount = (riskPercent / 100) * context.accountEquity;
 
-    // Simplified lot size calculation
-    // TODO: Implement proper pip value calculation per symbol
+    // Lot size calculation per symbol type
     const pipValue = this.getPipValue(symbol, currentPrice);
-    const lotSize = riskAmount / (stopLossPips * pipValue * 100000); // Standard lot = 100k units
+    const contractSize = this.getContractSize(symbol);
+    
+    // Formula: riskAmount = lotSize * stopLossPips * pipValue * contractSize
+    // Solving for lotSize: lotSize = riskAmount / (stopLossPips * pipValue * contractSize)
+    let lotSize: number;
+    
+    if (symbol.toUpperCase() === 'US30' || symbol.toUpperCase() === 'US30CASH' || symbol.toUpperCase() === 'DOW') {
+      // For indices: contractSize is $ per point, pipValue is 1.0
+      // Risk = lotSize * stopLossPoints * contractSizePerPoint
+      lotSize = riskAmount / (stopLossPips * contractSize);
+    } else {
+      // For forex/metals: contractSize is units per lot, pipValue is pip size
+      // Risk = lotSize * stopLossPips * pipValue * contractSize
+      lotSize = riskAmount / (stopLossPips * pipValue * contractSize);
+    }
 
-    // Round to 2 decimal places (0.01 minimum)
-    const roundedLotSize = Math.max(0.01, Math.round(lotSize * 100) / 100);
+    // Round to 2 decimal places
+    let roundedLotSize = Math.round(lotSize * 100) / 100;
+
+    // Apply symbol-specific minimum lot size (broker requirement)
+    const minLotSize = this.getMinLotSize(symbol);
+    if (roundedLotSize < minLotSize) {
+      logger.warn(
+        `[${account.id}] Calculated lot size ${roundedLotSize} below broker minimum ${minLotSize} for ${symbol}. ` +
+        `Using minimum ${minLotSize} lots.`
+      );
+      roundedLotSize = minLotSize;
+    }
 
     logger.debug(
       `[${account.id}] Lot size calculation: risk_percent=${riskPercent}%, ` +
       `risk_amount=${riskAmount.toFixed(2)}, stop_loss_pips=${stopLossPips}, ` +
-      `lot_size=${roundedLotSize}`
+      `calculated_lot_size=${lotSize.toFixed(4)}, rounded=${roundedLotSize}, min_lot_size=${minLotSize}`
     );
 
     return roundedLotSize;
+  }
+
+  /**
+   * Get minimum lot size for symbol (broker-specific)
+   * TODO: Fetch from MT5 connector symbol info API in future
+   */
+  private getMinLotSize(symbol: string): number {
+    symbol = symbol.toUpperCase();
+
+    // Known broker minimums (should be fetched from MT5 connector in production)
+    const minLotSizes: Record<string, number> = {
+      'US30': 0.1,        // US30Cash typically requires 0.1 minimum
+      'US30CASH': 0.1,
+      'DOW': 0.1,
+      'XAUUSD': 0.01,    // Gold typically allows 0.01
+      'GOLD': 0.01,
+      'EURUSD': 0.01,    // Forex typically allows 0.01
+      'GBPUSD': 0.01,
+    };
+
+    return minLotSizes[symbol] || 0.01; // Default to 0.01 if unknown
+  }
+
+  /**
+   * Get contract size per lot for symbol
+   * For forex: 100,000 units per standard lot
+   * For indices: Contract size per point (e.g., $5-10 per point for US30)
+   * TODO: Fetch from MT5 connector symbol info API in future
+   */
+  private getContractSize(symbol: string): number {
+    symbol = symbol.toUpperCase();
+
+    // Contract sizes (should be fetched from MT5 connector in production)
+    const contractSizes: Record<string, number> = {
+      'US30': 5.0,        // US30Cash: typically $5 per point per lot (varies by broker)
+      'US30CASH': 5.0,
+      'DOW': 5.0,
+      'XAUUSD': 100,      // Gold: 100 oz per standard lot
+      'GOLD': 100,
+      'EURUSD': 100000,   // Forex: 100,000 units per standard lot
+      'GBPUSD': 100000,
+    };
+
+    return contractSizes[symbol] || 100000; // Default to forex standard
   }
 
   /**
@@ -179,12 +258,56 @@ export class PerAccountRiskService {
     }
 
     // US30: 1 point = 1.0
-    if (symbol === 'US30' || symbol === 'DOW') {
+    if (symbol === 'US30' || symbol === 'DOW' || symbol === 'US30CASH') {
       return 1.0;
     }
 
     // Default: assume forex-like
     return 0.0001;
+  }
+
+  /**
+   * Build runtime risk config from strategy profile (preferred) or static account config (legacy)
+   */
+  private buildRuntimeRiskConfig(
+    account: AccountInfo,
+    context: AccountRiskContext,
+    profileRiskConfig?: StrategyProfileRiskConfig
+  ): AccountRiskConfig {
+    if (!profileRiskConfig) {
+      return account.risk;
+    }
+
+    const equity = context.accountEquity;
+
+    // Convert percentage-based limits to absolute currency amounts
+    const maxDailyLoss =
+      (profileRiskConfig.maxDailyDrawdownPercent / 100) * equity;
+
+    const maxDailyRisk =
+      (profileRiskConfig.maxOpenRiskPercent / 100) * equity;
+
+    // Weekly drawdown could be implemented when we track weekly stats; for now, keep same as daily
+    const maxWeeklyLoss =
+      (profileRiskConfig.maxWeeklyDrawdownPercent / 100) * equity;
+
+    const runtime: AccountRiskConfig = {
+      riskPercent: profileRiskConfig.riskPerTradePercent,
+      maxDailyLoss,
+      maxWeeklyLoss,
+      maxConcurrentTrades: profileRiskConfig.maxTradesPerDay,
+      maxDailyRisk,
+      maxExposure: maxDailyRisk,
+    };
+
+    logger.debug(
+      `[PerAccountRiskService] Runtime risk for account ${account.id} from profile: ` +
+        `risk=${runtime.riskPercent}%, maxDailyLoss=${runtime.maxDailyLoss.toFixed(
+          2
+        )}, maxDailyRisk=${runtime.maxDailyRisk}, maxTradesPerDay=${runtime.maxConcurrentTrades}`
+    );
+
+    return runtime;
   }
 
   /**

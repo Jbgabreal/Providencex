@@ -15,6 +15,9 @@ export interface Candle {
   volume: number;
 }
 
+// Order Types
+export type OrderKind = "market" | "limit" | "stop" | "stop_limit";
+
 // Strategy Types
 export interface TradeSignal {
   symbol: string;
@@ -23,6 +26,8 @@ export interface TradeSignal {
   stopLoss: number;
   takeProfit: number;
   reason: string;
+  orderKind?: OrderKind; // Optional: defaults to 'market' for backward compatibility
+  stopLimitPrice?: number; // For stop_limit orders: the stop price that triggers the limit order
   meta?: Record<string, any>;
 }
 

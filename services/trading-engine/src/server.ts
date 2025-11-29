@@ -21,6 +21,11 @@ import { getNowInPXTimezone } from '@providencex/shared-utils';
 import healthRoutes from './routes/health';
 import simulateSignalRoutes from './routes/simulateSignal';
 import adminRoutes, { initializeAdminServices } from './admin/routes';
+import createAdminStrategyProfilesRouter from './routes/adminStrategyProfiles';
+import createUserRouter from './routes/user';
+import createUserAnalyticsRouter from './routes/userAnalytics';
+import createAuthRouter from './routes/auth';
+import { validatePrivyConfig } from './config';
 import orderEventsRoutes, { initializeOrderEventService } from './routes/orderEvents';
 import strategyConfigRoutes from './routes/strategyConfig';
 import performanceReportsRoutes, { initializePerformanceReportsService } from './routes/performanceReports';
@@ -47,13 +52,24 @@ const logger = new Logger('TradingEngine');
 const app = express();
 const config = getConfig();
 
+// Validate Privy config on startup
+try {
+  validatePrivyConfig(config);
+  logger.info('[Server] Privy authentication configuration validated');
+} catch (error) {
+  logger.error('[Server] Privy configuration validation failed', error);
+  if (process.env.NODE_ENV === 'production') {
+    throw error;
+  }
+}
+
 app.use(express.json());
 
 // CORS middleware for admin dashboard
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-privy-token, x-user-id, x-user-role');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -63,6 +79,10 @@ app.use((req, res, next) => {
 app.use('/health', healthRoutes);
 app.use('/simulate-signal', simulateSignalRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/admin/strategy-profiles', createAdminStrategyProfilesRouter(config));
+app.use('/api/user', createUserRouter(config)); // Multi-tenant user API
+app.use('/api/user/analytics', createUserAnalyticsRouter(config)); // User analytics API
+app.use('/api/auth', createAuthRouter(config)); // Authentication API
 app.use('/api/v1', orderEventsRoutes); // v3 order events webhook
 app.use('/strategy-config', strategyConfigRoutes); // Strategy configuration verification
 app.use('/api/v1/performance-reports', performanceReportsRoutes); // Performance reports
@@ -194,6 +214,16 @@ const openTradesService = new OpenTradesService({
   defaultRiskPerTrade: 75.0, // Conservative default risk per trade if no SL
 });
 
+// Avoid Window Manager Service - Handles pending orders and positions during avoid windows
+// Uses scheduled timers based on avoid window times from database (no polling)
+import { AvoidWindowManagerService } from './services/AvoidWindowManagerService';
+const avoidWindowManager = new AvoidWindowManagerService({
+  mt5BaseUrl: config.mt5ConnectorUrl || 'http://localhost:3030',
+  databaseUrl: config.databaseUrl || '',
+  strategy: 'low', // Default strategy, can be made configurable
+  refreshIntervalHours: 1, // Refresh windows from DB every hour (catches updates)
+});
+
 // v15 Loss Streak Filter Service
 import { LossStreakFilterService } from './services/LossStreakFilterService';
 const lossStreakFilterService = new LossStreakFilterService(config.databaseUrl || '');
@@ -255,6 +285,10 @@ import { ExecutionFilterContext } from './strategy/v3/types';
 
 // v14 Order Flow Service
 import { OrderFlowService } from './services/OrderFlowService';
+import { TenantRepository } from './db/TenantRepository';
+import { TradeHistoryRepository } from './db/TradeHistoryRepository';
+import { TradeHistoryService } from './services/TradeHistoryService';
+import { UserAssignmentOrchestrator } from './multiaccount/UserAssignmentOrchestrator';
 
 const accountRegistry = new AccountRegistry();
 const perAccountRiskService = new PerAccountRiskService(config.databaseUrl);
@@ -267,6 +301,32 @@ const distributedOrchestrator = new DistributedExecutionOrchestrator(
   priceFeed,
   candleStore
 );
+
+// Multi-tenant orchestrator (disabled by default; can be enabled via env flag)
+const multiTenantEnabled =
+  (process.env.MULTI_TENANT_MODE || '').toLowerCase() === 'true';
+const tenantRepository = new TenantRepository(config.databaseUrl);
+const tradeHistoryRepository = new TradeHistoryRepository(config.databaseUrl);
+const tradeHistoryService = new TradeHistoryService(tradeHistoryRepository);
+
+// Wire OrderEventService → TradeHistoryService callback
+orderEventService.setTradeHistoryCallback((event) => tradeHistoryService.processPositionClosed(event));
+
+const userAssignmentOrchestrator = new UserAssignmentOrchestrator(
+  tenantRepository,
+  perAccountRiskService,
+  perAccountKillSwitch,
+  accountRegistry,
+  priceFeed,
+  candleStore,
+  tradeHistoryRepository
+);
+
+if (multiTenantEnabled) {
+  logger.info('[Server] Multi-tenant mode ENABLED - using UserAssignmentOrchestrator');
+} else {
+  logger.info('[Server] Multi-tenant mode DISABLED - using legacy account registry');
+}
 
 // Load accounts (backward compatible - works even if no accounts.json)
 accountRegistry.loadAccounts()
@@ -757,9 +817,8 @@ async function processTradingDecision(
       decisionLog.execution_filter_reasons = [];
       logger.debug(`[${symbol}] v3 Execution Filter PASSED`);
 
-      // Step 5.5: v12 Multi-Account Execution (if enabled)
-      if (accountRegistry.isMultiAccountMode()) {
-        // Use distributed orchestrator for multi-account execution
+      // Step 5.5: Multi-Account / Multi-Tenant Execution
+      if (accountRegistry.isMultiAccountMode() || multiTenantEnabled) {
         const executionContext: ExecutionFilterContext = {
           guardrailMode: guardrailDecision.mode,
           spreadPips,
@@ -770,59 +829,90 @@ async function processTradingDecision(
           currentPrice,
         };
 
-        const aggregatedResult = await distributedOrchestrator.execute(
-          rawSignal,
-          executionContext,
-          guardrailDecision.mode,
-          strategy
-        );
+        if (multiTenantEnabled) {
+          // Multi-tenant mode: process all active user assignments
+          logger.info(
+            `[MultiTenant] Processing user strategy assignments for symbol=${symbol}, strategy=${strategy}`
+          );
+          await userAssignmentOrchestrator.processAssignmentsForSignal(
+            rawSignal,
+            executionContext,
+            guardrailDecision.mode,
+            strategy
+          );
 
-        // Log aggregated results
-        decisionLog.kill_switch_active = false;
-        decisionLog.kill_switch_reasons = [];
-
-        if (aggregatedResult.tradedAccounts.length > 0) {
+          // In multi-tenant mode, trades are executed per-assignment as side effects.
+          // We treat the core decision as "trade" once filters pass.
           decisionLog.decision = 'trade';
-          decisionLog.execution_result = {
-            success: true,
-            ticket: aggregatedResult.tradedAccounts.length > 0 ? undefined : undefined, // Multiple tickets - stored per account
-          };
-          (decisionLog as any).multiAccountResult = aggregatedResult;
-          
-          // Update stats
-          updateDailyStats(strategy, aggregatedResult.tradedAccounts.length, 0);
-
-          // Store exit plans for successful trades
-          for (const result of aggregatedResult.results) {
-            if (result.success && result.ticket) {
-              try {
-                const exitPlan: import('@providencex/shared-types').ExitPlan = {
-                  symbol,
-                  entry_price: rawSignal.entryPrice,
-                  stop_loss_initial: rawSignal.sl,
-                  tp1: rawSignal.tp,
-                  break_even_trigger: 20,
-                  partial_close_percent: 50,
-                  trail_mode: 'fixed_pips',
-                  trail_value: 20,
-                  time_limit_seconds: 5400, // v15: 90 minutes (5400 seconds)
-                };
-                // TODO: Map account decision to decision_id for exit plan storage
-                // For now, exit plans will be stored per account in v12
-              } catch (error) {
-                logger.error(`[MultiAccount] Failed to store exit plan for account ${result.accountId}`, error);
-              }
-            }
-          }
-        } else {
-          // All accounts skipped/failed
-          const allReasons = aggregatedResult.skippedAccounts.map((a: { accountId: string; reason: string }) => `${a.accountId}: ${a.reason}`);
-          decisionLog.risk_reason = `Multi-account execution: ${allReasons.join('; ')}`;
-          decisionLog.decision = 'skip';
+          decisionLog.execution_result = { success: true };
+          await decisionLogger.logDecision(decisionLog);
+          return decisionLog;
         }
 
-        const decisionId = await decisionLogger.logDecision(decisionLog);
-        return decisionLog;
+        // Legacy v12 multi-account mode with accounts.json
+        if (accountRegistry.isMultiAccountMode()) {
+          const aggregatedResult = await distributedOrchestrator.execute(
+            rawSignal,
+            executionContext,
+            guardrailDecision.mode,
+            strategy
+          );
+
+          // Log aggregated results
+          decisionLog.kill_switch_active = false;
+          decisionLog.kill_switch_reasons = [];
+
+          if (aggregatedResult.tradedAccounts.length > 0) {
+            decisionLog.decision = 'trade';
+            decisionLog.execution_result = {
+              success: true,
+              ticket:
+                aggregatedResult.tradedAccounts.length > 0 ? undefined : undefined,
+            };
+            (decisionLog as any).multiAccountResult = aggregatedResult;
+
+            // Update stats
+            updateDailyStats(strategy, aggregatedResult.tradedAccounts.length, 0);
+
+            // Store exit plans for successful trades
+            for (const result of aggregatedResult.results) {
+              if (result.success && result.ticket) {
+                try {
+                  const exitPlan: import('@providencex/shared-types').ExitPlan = {
+                    symbol,
+                    entry_price: rawSignal.entryPrice,
+                    stop_loss_initial: rawSignal.sl,
+                    tp1: rawSignal.tp,
+                    break_even_trigger: 20,
+                    partial_close_percent: 50,
+                    trail_mode: 'fixed_pips',
+                    trail_value: 20,
+                    time_limit_seconds: 5400,
+                  };
+                  // TODO: Map account decision to decision_id for exit plan storage
+                } catch (error) {
+                  logger.error(
+                    `[MultiAccount] Failed to store exit plan for account ${result.accountId}`,
+                    error
+                  );
+                }
+              }
+            }
+          } else {
+            // All accounts skipped/failed
+            const allReasons = aggregatedResult.skippedAccounts.map(
+              (a: { accountId: string; reason: string }) =>
+                `${a.accountId}: ${a.reason}`
+            );
+            decisionLog.risk_reason = `Multi-account execution: ${allReasons.join(
+              '; '
+            )}`;
+            decisionLog.decision = 'skip';
+          }
+
+          await decisionLogger.logDecision(decisionLog);
+          return decisionLog;
+        }
       }
 
       // Step 5.5: v8 Kill Switch (after execution filter passes) - single-account mode
@@ -1048,6 +1138,10 @@ async function start(): Promise<void> {
       // Start v4 Open Trades Service
       openTradesService.start();
       logger.info('v4 OpenTradesService started');
+      
+      // Start Avoid Window Manager
+      avoidWindowManager.start();
+      logger.info('AvoidWindowManagerService started');
 
       // Start v7 Live PnL Service
       livePnlService.start();
@@ -1072,6 +1166,9 @@ async function start(): Promise<void> {
             orderFlowService.stop();
           }
           openTradesService.stop();
+          
+          // Stop Avoid Window Manager
+          avoidWindowManager.stop();
           livePnlService.stop();
           exitService.stop();
           performanceReportScheduler.stop();

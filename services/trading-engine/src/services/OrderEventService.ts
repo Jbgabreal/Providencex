@@ -21,6 +21,7 @@ export class OrderEventService {
   private pool: Pool | null = null;
   private useDatabase: boolean = false;
   private livePnlServiceCallback: ((event: OrderEvent) => Promise<void>) | null = null;
+  private tradeHistoryCallback: ((event: OrderEvent) => Promise<void>) | null = null;
 
   constructor(config: OrderEventServiceConfig) {
     this.useDatabase = config.enabled && !!config.databaseUrl;
@@ -143,6 +144,13 @@ export class OrderEventService {
   }
 
   /**
+   * Register callback for TradeHistoryRepository to be notified of position_closed events
+   */
+  setTradeHistoryCallback(callback: (event: OrderEvent) => Promise<void>): void {
+    this.tradeHistoryCallback = callback;
+  }
+
+  /**
    * Process an order event from MT5 Connector webhook
    */
   async processEvent(event: OrderEvent): Promise<void> {
@@ -177,6 +185,17 @@ export class OrderEventService {
         logger.debug(`[OrderEventService] Notified LivePnlService of position_closed event for ticket ${event.ticket}`);
       } catch (error) {
         logger.error('[OrderEventService] Failed to notify LivePnlService', error);
+        // Continue - don't throw
+      }
+    }
+
+    // Notify TradeHistoryRepository if this is a position_closed event
+    if (event.event_type === 'position_closed' && this.tradeHistoryCallback) {
+      try {
+        await this.tradeHistoryCallback(event);
+        logger.debug(`[OrderEventService] Notified TradeHistoryRepository of position_closed event for ticket ${event.ticket}`);
+      } catch (error) {
+        logger.error('[OrderEventService] Failed to notify TradeHistoryRepository', error);
         // Continue - don't throw
       }
     }

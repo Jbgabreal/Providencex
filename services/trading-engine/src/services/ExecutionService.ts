@@ -60,13 +60,75 @@ export class ExecutionService {
         `Opening trade: ${signal.symbol} ${signal.direction} @ ${signal.entry}, lot_size: ${lotSize}`
       );
 
+      // CRITICAL: Validate stop loss is set before executing trade
+      if (!signal.stopLoss || signal.stopLoss <= 0) {
+        const errorMsg = `Cannot execute trade: Stop Loss is not set or invalid (${signal.stopLoss}). Trade rejected for safety.`;
+        logger.error(errorMsg, {
+          symbol: signal.symbol,
+          direction: signal.direction,
+          entry: signal.entry,
+          stopLoss: signal.stopLoss,
+          takeProfit: signal.takeProfit,
+        });
+        return {
+          success: false,
+          error: errorMsg,
+        };
+      }
+
+      // Validate take profit is set (optional but recommended)
+      if (!signal.takeProfit || signal.takeProfit <= 0) {
+        logger.warn(
+          `Take Profit is not set for ${signal.symbol} trade. Proceeding without TP, but this is not recommended.`,
+          {
+            symbol: signal.symbol,
+            direction: signal.direction,
+            entry: signal.entry,
+            stopLoss: signal.stopLoss,
+            takeProfit: signal.takeProfit,
+          }
+        );
+      }
+
+      // Use strategy-determined order kind if provided, otherwise fallback to intelligent selection
+      // Note: MT5 connector supports 'market', 'limit', 'stop' (not 'stop_limit' yet)
+      let orderKind: 'market' | 'limit' | 'stop' = 'market';
+      
+      // Priority 1: Use strategy's orderKind if provided (strategy knows best)
+      if (signal.orderKind && signal.orderKind !== 'stop_limit') {
+        orderKind = signal.orderKind;
+        logger.info(`[ExecutionService] Using strategy-determined order type: ${orderKind.toUpperCase()}`);
+      } else if (latestTick) {
+        // Priority 2: Intelligent fallback if strategy didn't specify
+        const currentPrice = signal.direction === 'buy' ? latestTick.ask : latestTick.bid;
+        const priceDiff = Math.abs(signal.entry - currentPrice);
+        const priceDiffPercent = (priceDiff / currentPrice) * 100;
+        
+        if (signal.direction === 'buy' && signal.entry < currentPrice) {
+          orderKind = 'limit'; // Buy Limit: entry below current ask
+          logger.info(`[ExecutionService] Fallback: Using BUY LIMIT order: entry=${signal.entry} < current_ask=${currentPrice}`);
+        } else if (signal.direction === 'sell' && signal.entry > currentPrice) {
+          orderKind = 'limit'; // Sell Limit: entry above current bid
+          logger.info(`[ExecutionService] Fallback: Using SELL LIMIT order: entry=${signal.entry} > current_bid=${currentPrice}`);
+        } else if (signal.direction === 'buy' && signal.entry > currentPrice) {
+          orderKind = 'stop'; // Buy Stop: entry above current ask
+          logger.info(`[ExecutionService] Fallback: Using BUY STOP order: entry=${signal.entry} > current_ask=${currentPrice}`);
+        } else if (signal.direction === 'sell' && signal.entry < currentPrice) {
+          orderKind = 'stop'; // Sell Stop: entry below current bid
+          logger.info(`[ExecutionService] Fallback: Using SELL STOP order: entry=${signal.entry} < current_bid=${currentPrice}`);
+        } else {
+          orderKind = 'market';
+          logger.info(`[ExecutionService] Fallback: Using MARKET order: entry=${signal.entry} ≈ current_price=${currentPrice} (diff=${priceDiffPercent.toFixed(3)}%)`);
+        }
+      }
+
       // Build TradeRequest payload
       const tradeRequest: TradeRequest = {
         symbol: signal.symbol,
         direction: signal.direction.toUpperCase() as 'BUY' | 'SELL',
-        entry_type: 'MARKET', // Legacy field
-        order_kind: 'market', // Market execution for now
-        entry_price: signal.entry, // May be ignored for market orders
+        entry_type: orderKind === 'market' ? 'MARKET' : orderKind === 'limit' ? 'LIMIT' : 'STOP', // Legacy field
+        order_kind: orderKind,
+        entry_price: signal.entry, // Required for limit/stop orders, ignored for market
         lot_size: lotSize,
         stop_loss_price: signal.stopLoss,
         take_profit_price: signal.takeProfit,
@@ -74,9 +136,16 @@ export class ExecutionService {
         metadata: {
           signal_reason: signal.reason,
           strategy,
+          order_kind: orderKind, // Include in metadata for tracking
           ...signal.meta,
         },
       };
+
+      // Log the trade request to verify SL is included
+      logger.info(
+        `[ExecutionService] Sending trade request to MT5: ${signal.symbol} ${signal.direction} @ ${signal.entry}, ` +
+        `SL=${tradeRequest.stop_loss_price}, TP=${tradeRequest.take_profit_price}, lots=${lotSize}`
+      );
 
       // Call MT5 Connector API
       const response = await axios.post<TradeResponse>(

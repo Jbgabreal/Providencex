@@ -140,6 +140,7 @@ class OpenPosition(BaseModel):
     sl: Optional[float] = Field(None, description="Stop loss price")
     tp: Optional[float] = Field(None, description="Take profit price")
     open_time: datetime = Field(..., description="Position open time (ISO 8601)")
+    profit: Optional[float] = Field(None, description="Current profit/loss in account currency")
 
 
 class OpenPositionsResponse(BaseModel):
@@ -147,6 +148,41 @@ class OpenPositionsResponse(BaseModel):
     success: bool = Field(..., description="Whether the operation succeeded")
     positions: List[OpenPosition] = Field(default_factory=list, description="List of open positions")
     error: Optional[str] = Field(None, description="Error message if operation failed")
+
+
+class PendingOrder(BaseModel):
+    """Model for a pending order"""
+    symbol: str = Field(..., description="Trading symbol (e.g., 'XAUUSD')")
+    ticket: int = Field(..., description="MT5 order ticket ID")
+    direction: Literal['buy', 'sell'] = Field(..., description="Order direction")
+    order_kind: Literal['limit', 'stop'] = Field(..., description="Order type: limit or stop")
+    volume: float = Field(..., description="Lot size (e.g., 0.10)")
+    entry_price: float = Field(..., description="Pending order price")
+    sl: Optional[float] = Field(None, description="Stop loss price")
+    tp: Optional[float] = Field(None, description="Take profit price")
+    setup_time: str = Field(..., description="Order setup time (ISO 8601)")
+
+
+class PendingOrdersResponse(BaseModel):
+    """Response model for pending orders endpoint"""
+    success: bool = Field(..., description="Whether the operation succeeded")
+    orders: List[PendingOrder] = Field(default_factory=list, description="List of pending orders")
+    error: Optional[str] = Field(None, description="Error message if operation failed")
+
+
+class CancelOrderRequest(BaseModel):
+    """Request model for canceling a pending order"""
+    ticket: int = Field(..., description="MT5 order ticket ID")
+    mt5_ticket: Optional[int] = Field(None, description="Alternative field name for ticket")
+    
+    @model_validator(mode='after')
+    def validate_ticket(self):
+        """Validate and normalize ticket field"""
+        if (self.ticket == 0 or self.ticket is None) and self.mt5_ticket is not None:
+            self.ticket = self.mt5_ticket
+        if self.ticket is None or self.ticket <= 0:
+            raise ValueError('ticket must be a positive integer (or provide mt5_ticket)')
+        return self
 
 
 class AccountSummaryResponse(BaseModel):

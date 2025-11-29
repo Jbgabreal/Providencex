@@ -254,8 +254,9 @@ class MT5Client:
         """
         return {
             "success": False,
+            "error": error_message,  # Use 'error' key to match main.py expectation
             "error_code": error_code,
-            "error_message": error_message,
+            "error_message": error_message,  # Keep for backward compatibility
             "context": {
                 "symbol": symbol,
                 "direction": direction,
@@ -685,6 +686,29 @@ class MT5Client:
                     
                     if result is None:
                         error_code, error_desc = mt5.last_error()
+                        # If market is closed (10018), don't retry with different filling modes
+                        if error_code == 10018:
+                            error_msg = (
+                                f"Market is closed (code: {error_code} - TRADE_RETCODE_MARKET_CLOSED). "
+                                f"{error_desc or 'Trading is not allowed at this time'}. "
+                                f"Please wait for market to open before placing orders."
+                            )
+                            log_mt5_error("order_send", error_code, error_desc or "Market closed", {
+                                'symbol': symbol,
+                                'direction': direction,
+                                'order_kind': order_kind,
+                                'lot_size': lot_size,
+                                'filling_mode': filling_mode if action == mt5.TRADE_ACTION_DEAL else None,
+                            })
+                            return self._make_error_response(
+                                error_code=error_code,
+                                error_message=error_msg,
+                                symbol=actual_symbol,
+                                direction=direction,
+                                order_kind=order_kind,
+                                volume=normalized_volume,
+                            )
+                        
                         if action == mt5.TRADE_ACTION_DEAL:
                             last_error = f"OrderSend failed: {error_desc} (code: {error_code}, filling_mode: {filling_mode})"
                             logger.debug(f"Filling mode {filling_mode} failed, trying next...")
@@ -836,6 +860,30 @@ class MT5Client:
                             'details': error_details
                         }
                     
+                    elif result.retcode == 10018:  # TRADE_RETCODE_MARKET_CLOSED
+                        # Market is closed - don't retry with different filling modes, return immediately
+                        error_msg = (
+                            f"Market is closed (code: {result.retcode} - TRADE_RETCODE_MARKET_CLOSED). "
+                            f"{result.comment or 'Trading is not allowed at this time'}. "
+                            f"Please wait for market to open before placing orders."
+                        )
+                        error_details = result._asdict() if hasattr(result, '_asdict') else {}
+                        log_mt5_error("order_send", result.retcode, result.comment or "Market closed", {
+                            'symbol': symbol,
+                            'direction': direction,
+                            'order_kind': order_kind,
+                            'lot_size': lot_size,
+                            'retcode': result.retcode,
+                        })
+                        return self._make_error_response(
+                            error_code=result.retcode,
+                            error_message=error_msg,
+                            symbol=actual_symbol,
+                            direction=direction,
+                            order_kind=order_kind,
+                            volume=normalized_volume,
+                        )
+                    
                     else:
                         # Other error - don't retry with different filling mode for non-filling errors
                         error_msg = f"OrderSend failed: {result.comment} (code: {result.retcode})"
@@ -869,18 +917,36 @@ class MT5Client:
             if 'result' in locals() and result is not None and hasattr(result, '_asdict'):
                 error_details = result._asdict()
             
+            # Check if the underlying error is market closed (10018)
+            is_market_closed = False
+            if 'result' in locals() and result is not None:
+                if result.retcode == 10018:
+                    is_market_closed = True
+                elif last_error and ('10018' in last_error or 'Market closed' in last_error or 'market closed' in last_error):
+                    is_market_closed = True
+            
             if action == mt5.TRADE_ACTION_DEAL:
                 # Market order failed
+                if is_market_closed:
+                    # Market closed is the real issue, not filling modes
+                    error_msg = (
+                        f"Market is closed (code: 10018 - TRADE_RETCODE_MARKET_CLOSED). "
+                        f"Trading is not allowed at this time. Please wait for market to open before placing orders."
+                    )
+                else:
+                    error_msg = f"OrderSend failed: No supported filling mode found for {symbol}. Tried modes: {', '.join(tried_modes) if tried_modes else 'none'}. Last error: {last_error or 'Unknown error'}"
+                
                 log_mt5_error("order_send", 0, f"All attempts failed. Tried modes: {', '.join(tried_modes) if tried_modes else 'none'}. Last error: {last_error}", {
                     'symbol': symbol,
                     'direction': direction,
                     'order_kind': order_kind,
                     'lot_size': lot_size,
                     'tried_modes': tried_modes,
+                    'is_market_closed': is_market_closed,
                 })
                 return {
                     'success': False,
-                    'error': f"OrderSend failed: No supported filling mode found for {symbol}. Tried modes: {', '.join(tried_modes) if tried_modes else 'none'}. Last error: {last_error or 'Unknown error'}",
+                    'error': error_msg,
                     'details': error_details
                 }
             else:
@@ -1361,8 +1427,17 @@ class MT5Client:
             if dir_lower == "buy":
                 # For BUY: SL must be < entry_price
                 if requested_sl >= entry_price:
+                    # CRITICAL FIX: If SL is >= entry, it means the SL was calculated for a different entry price
+                    # (e.g., signal.entry vs actual execution price). 
+                    # Try to preserve the risk distance: calculate SL distance from original entry and apply to new entry
+                    # But ensure it's at least min_stop_distance below entry for safety
+                    # For now, use a conservative approach: place SL at min_stop_distance below entry
+                    # This ensures the trade has protection, even if the risk is slightly different
+                    adjusted_sl = entry_price - min_stop_distance_price_with_buffer
                     logger.warning(
-                        f"Stop loss ignored: requested={requested_sl} is >= entry_price={entry_price} for BUY order"
+                        f"Stop loss adjusted for BUY: requested={requested_sl} >= entry={entry_price}. "
+                        f"Adjusted to {adjusted_sl} (min_stop_distance={min_stop_distance_price_with_buffer} below entry). "
+                        f"This may occur when execution price differs from signal entry price."
                     )
                 else:
                     # SL must be below entry by at least min_stop_distance (with safety buffer)
@@ -1378,8 +1453,17 @@ class MT5Client:
             else:  # sell
                 # For SELL: SL must be > entry_price
                 if requested_sl <= entry_price:
+                    # CRITICAL FIX: If SL is <= entry, it means the SL was calculated for a different entry price
+                    # (e.g., signal.entry vs actual execution price).
+                    # Try to preserve the risk distance: calculate SL distance from original entry and apply to new entry
+                    # But ensure it's at least min_stop_distance above entry for safety
+                    # For now, use a conservative approach: place SL at min_stop_distance above entry
+                    # This ensures the trade has protection, even if the risk is slightly different
+                    adjusted_sl = entry_price + min_stop_distance_price_with_buffer
                     logger.warning(
-                        f"Stop loss ignored: requested={requested_sl} is <= entry_price={entry_price} for SELL order"
+                        f"Stop loss adjusted for SELL: requested={requested_sl} <= entry={entry_price}. "
+                        f"Adjusted to {adjusted_sl} (min_stop_distance={min_stop_distance_price_with_buffer} above entry). "
+                        f"This may occur when execution price differs from signal entry price."
                     )
                 else:
                     # SL must be above entry by at least min_stop_distance (with safety buffer)
@@ -1578,6 +1662,9 @@ class MT5Client:
                 # For now, keep as-is but could normalize like in validate_symbol
                 symbol = pos.symbol
                 
+                # Get current profit for the position (MT5 provides this directly)
+                current_profit = getattr(pos, 'profit', 0.0) or 0.0
+                
                 position_dict = {
                     'symbol': symbol,
                     'ticket': pos.ticket,
@@ -1587,6 +1674,7 @@ class MT5Client:
                     'sl': pos.sl if pos.sl > 0 else None,
                     'tp': pos.tp if pos.tp > 0 else None,
                     'open_time': open_time_dt.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    'profit': float(current_profit),  # Current profit/loss in account currency
                 }
                 position_list.append(position_dict)
             
@@ -1604,5 +1692,191 @@ class MT5Client:
                 'success': False,
                 'error': error_msg,
                 'positions': []
+            }
+    
+    def get_pending_orders(self) -> Dict[str, Any]:
+        """
+        Get all pending orders from MT5 (limit/stop orders)
+        
+        Returns:
+            Dictionary with 'success', 'orders' (list of order dicts), or 'error'
+        """
+        # Ensure MT5 is connected
+        init_success, init_msg = self.ensure_initialized()
+        if not init_success:
+            return {
+                'success': False,
+                'error': f"MT5 connection failed: {init_msg}",
+                'orders': []
+            }
+        
+        try:
+            # Get all pending orders (orders that haven't been filled yet)
+            orders = mt5.orders_get()
+            
+            if orders is None:
+                error_code, error_desc = mt5.last_error()
+                if error_code == mt5.RES_S_OK or error_code == 0:
+                    # No orders is OK, return empty list
+                    return {
+                        'success': True,
+                        'orders': []
+                    }
+                log_mt5_error("orders_get", error_code, error_desc)
+                return {
+                    'success': False,
+                    'error': f"Failed to get orders: {error_code} - {error_desc}",
+                    'orders': []
+                }
+            
+            # Convert MT5 orders to our format
+            from datetime import datetime
+            order_list = []
+            
+            for order in orders:
+                # Map MT5 order type to our order kind
+                order_kind = None
+                direction = None
+                
+                if order.type == mt5.ORDER_TYPE_BUY_LIMIT:
+                    order_kind = 'limit'
+                    direction = 'buy'
+                elif order.type == mt5.ORDER_TYPE_SELL_LIMIT:
+                    order_kind = 'limit'
+                    direction = 'sell'
+                elif order.type == mt5.ORDER_TYPE_BUY_STOP:
+                    order_kind = 'stop'
+                    direction = 'buy'
+                elif order.type == mt5.ORDER_TYPE_SELL_STOP:
+                    order_kind = 'stop'
+                    direction = 'sell'
+                else:
+                    # Skip non-pending orders (shouldn't happen with orders_get, but be safe)
+                    continue
+                
+                # Convert time from MT5 timestamp to datetime
+                raw_time = (
+                    getattr(order, 'time_setup', None)
+                    or getattr(order, 'time', None)
+                    or getattr(order, 'time_msc', None)
+                )
+                if raw_time:
+                    seconds = raw_time / 1000 if raw_time > 10**11 else raw_time
+                    setup_time_dt = datetime.fromtimestamp(seconds)
+                else:
+                    setup_time_dt = datetime.now()
+                
+                symbol = order.symbol
+                
+                order_dict = {
+                    'symbol': symbol,
+                    'ticket': order.ticket,
+                    'direction': direction,
+                    'order_kind': order_kind,
+                    'volume': order.volume,
+                    'entry_price': order.price_open,  # Pending order price
+                    'sl': order.sl if order.sl > 0 else None,
+                    'tp': order.tp if order.tp > 0 else None,
+                    'setup_time': setup_time_dt.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                }
+                order_list.append(order_dict)
+            
+            logger.debug(f"Retrieved {len(order_list)} pending orders from MT5")
+            
+            return {
+                'success': True,
+                'orders': order_list
+            }
+            
+        except Exception as e:
+            error_msg = f"Exception during get_pending_orders: {str(e)}"
+            logger.exception(error_msg)
+            return {
+                'success': False,
+                'error': error_msg,
+                'orders': []
+            }
+    
+    def cancel_order(self, ticket: int) -> Dict[str, Any]:
+        """
+        Cancel a pending order by ticket ID
+        
+        Args:
+            ticket: MT5 order ticket ID
+        
+        Returns:
+            Dictionary with 'success' and optionally 'error'
+        """
+        # Ensure MT5 is connected
+        init_success, init_msg = self.ensure_initialized()
+        if not init_success:
+            return {
+                'success': False,
+                'error': f"MT5 connection failed: {init_msg}"
+            }
+        
+        try:
+            # Get order by ticket
+            orders = mt5.orders_get(ticket=ticket)
+            
+            if orders is None or len(orders) == 0:
+                error_msg = f"Order with ticket {ticket} not found"
+                logger.warning(error_msg)
+                return {
+                    'success': False,
+                    'error': error_msg
+                }
+            
+            order = orders[0]
+            
+            # Cancel the order by sending a delete request
+            request = {
+                'action': mt5.TRADE_ACTION_REMOVE,
+                'order': ticket,
+                'symbol': order.symbol,
+            }
+            
+            result = mt5.order_send(request)
+            
+            if result is None:
+                error_code, error_desc = mt5.last_error()
+                log_mt5_error("order_send", error_code, error_desc, {
+                    'symbol': order.symbol,
+                    'ticket': ticket,
+                    'action': 'TRADE_ACTION_REMOVE'
+                })
+                return {
+                    'success': False,
+                    'error': f"Failed to cancel order: {error_code} - {error_desc}"
+                }
+            
+            if result.retcode != mt5.TRADE_RETCODE_DONE:
+                error_msg = f"Order cancellation failed: {result.comment} (code: {result.retcode})"
+                log_mt5_error("order_send", result.retcode, result.comment or "Unknown error", {
+                    'symbol': order.symbol,
+                    'ticket': ticket,
+                    'action': 'TRADE_ACTION_REMOVE'
+                })
+                return {
+                    'success': False,
+                    'error': error_msg
+                }
+            
+            logger.info(f"Successfully canceled pending order: ticket {ticket}, symbol {order.symbol}")
+            log_trade_success("cancel_order", ticket, {
+                'symbol': order.symbol,
+                'order_type': order.type
+            })
+            
+            return {
+                'success': True
+            }
+            
+        except Exception as e:
+            error_msg = f"Exception during cancel_order: {str(e)}"
+            logger.exception(error_msg)
+            return {
+                'success': False,
+                'error': error_msg
             }
 

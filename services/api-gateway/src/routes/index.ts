@@ -1,9 +1,9 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import axios from 'axios';
 import { getAPIGatewayConfig } from '@providencex/shared-config';
 import { Logger } from '@providencex/shared-utils';
 
-const router = Router();
+const router: Router = express.Router();
 const logger = new Logger('APIGatewayRoutes');
 const config = getAPIGatewayConfig();
 

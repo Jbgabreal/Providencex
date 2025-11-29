@@ -89,3 +89,4 @@ The live engine uses the MT5 demo account and will:
 
 **YES** - The live demo account is using the **exact same ICT strategy** as the backtest. When conditions are met and the news guardrail allows, trades will execute automatically on your demo account.
 
+

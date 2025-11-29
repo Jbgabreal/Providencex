@@ -251,15 +251,15 @@ export class HistoricalDataLoader {
     }
 
     try {
-      // Calculate number of days to request (add 1 day buffer for safety)
-      const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-      const days = Math.max(1, daysDiff); // Ensure at least 1 day
+      // Format dates as ISO strings (YYYY-MM-DD format for MT5)
+      const startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD
+      const endDateStr = endDate.toISOString().split('T')[0]; // YYYY-MM-DD
       
       logger.info(
-        `[DataLoader] Fetching MT5 history for ${symbol}: ${timeframe}, ${days} days (${startDate.toISOString()} to ${endDate.toISOString()})`
+        `[DataLoader] Fetching MT5 history for ${symbol}: ${timeframe}, date range: ${startDateStr} to ${endDateStr}`
       );
 
-      // Call MT5 connector history endpoint
+      // Call MT5 connector history endpoint with startDate and endDate
       const url = `${mt5BaseUrl}/api/v1/history`;
       const response = await axios.get<Array<{
         time: string;  // ISO 8601 string
@@ -272,7 +272,8 @@ export class HistoricalDataLoader {
         params: {
           symbol,
           timeframe: timeframe.toUpperCase(),
-          days: days,
+          startDate: startDateStr,
+          endDate: endDateStr,
         },
         timeout: 60000, // 60 second timeout for large requests
       });
@@ -283,6 +284,87 @@ export class HistoricalDataLoader {
       }
 
       const rawCandles = response.data;
+      
+      // Check if MT5 returned empty data
+      if (!rawCandles || rawCandles.length === 0) {
+        const now = new Date();
+        const isFutureDate = startDate > now;
+        const isPastDate = endDate < now;
+        
+        let errorMsg = `MT5 connector returned no historical data for ${symbol} (timeframe: ${timeframe})`;
+        errorMsg += `\n  Requested date range: ${startDate.toISOString()} to ${endDate.toISOString()}`;
+        
+        if (isFutureDate) {
+          errorMsg += `\n  ⚠️  Start date is in the future (current time: ${now.toISOString()})`;
+        } else if (!isPastDate) {
+          errorMsg += `\n  ⚠️  End date extends into the future (current time: ${now.toISOString()})`;
+        }
+        
+        // Try to query MT5 for available date range to provide helpful diagnostics
+        // Use 'days' parameter instead of date range to avoid MT5 connector bugs with large ranges
+        let availableRangeInfo = '';
+        try {
+          const mt5BaseUrl = this.config.mt5BaseUrl || process.env.MT5_CONNECTOR_URL || 'http://localhost:3030';
+          
+          // Query with 'days' parameter to get what MT5 actually has available
+          // Try a large number of days (365) to see the full range
+          const diagnosticResponse = await axios.get<Array<{ time: string }>>(
+            `${mt5BaseUrl}/api/v1/history`,
+            {
+              params: {
+                symbol,
+                timeframe: timeframe.toUpperCase(),
+                days: 365, // Query last year to see what's available
+              },
+              timeout: 15000,
+            }
+          );
+          
+          if (diagnosticResponse.data && diagnosticResponse.data.length > 0) {
+            // Sort by time to get earliest and latest
+            const sortedCandles = [...diagnosticResponse.data].sort((a, b) => 
+              new Date(a.time).getTime() - new Date(b.time).getTime()
+            );
+            const firstCandle = new Date(sortedCandles[0].time);
+            const lastCandle = new Date(sortedCandles[sortedCandles.length - 1].time);
+            availableRangeInfo = `\n  📅 MT5 available date range: ${firstCandle.toISOString().split('T')[0]} to ${lastCandle.toISOString().split('T')[0]}`;
+            availableRangeInfo += `\n     (${diagnosticResponse.data.length} total candles available)`;
+            
+            // Check if requested dates are outside available range
+            if (startDate < firstCandle) {
+              errorMsg += `\n  ⚠️  Start date (${startDate.toISOString().split('T')[0]}) is before MT5's earliest data (${firstCandle.toISOString().split('T')[0]})`;
+            }
+            if (endDate > lastCandle) {
+              errorMsg += `\n  ⚠️  End date (${endDate.toISOString().split('T')[0]}) is after MT5's latest data (${lastCandle.toISOString().split('T')[0]})`;
+            }
+            if (startDate >= firstCandle && endDate <= lastCandle) {
+              errorMsg += `\n  ℹ️  Requested range is within MT5's available range, but no data returned`;
+              errorMsg += `\n     This may indicate: MT5 terminal needs history download, or symbol was unavailable during this period`;
+            }
+          } else {
+            availableRangeInfo = `\n  ⚠️  MT5 connector returned no data even for recent dates - check MT5 terminal connection`;
+          }
+        } catch (diagError) {
+          // Silently fail diagnostic query - don't break the main error message
+          logger.debug(`[DataLoader] Could not query MT5 for available date range: ${diagError}`);
+        }
+        
+        errorMsg += availableRangeInfo;
+        errorMsg += `\n  Possible reasons:`;
+        errorMsg += `\n    1. MT5 terminal doesn't have historical data for this date range`;
+        errorMsg += `\n    2. Symbol ${symbol} was not available during this period`;
+        errorMsg += `\n    3. MT5 history synchronization is incomplete`;
+        errorMsg += `\n    4. Date range is outside MT5's available history`;
+        errorMsg += `\n  Suggestions:`;
+        errorMsg += `\n    - Use a date range within MT5's available history (see above)`;
+        errorMsg += `\n    - Try a more recent date range (e.g., last 30-90 days from today)`;
+        errorMsg += `\n    - Check if MT5 terminal has history enabled for ${symbol}`;
+        errorMsg += `\n    - Verify the symbol name matches MT5's symbol format`;
+        errorMsg += `\n    - Use 'postgres' data source if you have historical data stored`;
+        
+        logger.error(`[DataLoader] ${errorMsg}`);
+        throw new Error(errorMsg);
+      }
       
       // Log date range of returned candles for debugging
       if (rawCandles.length > 0) {

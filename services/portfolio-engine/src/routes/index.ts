@@ -1,6 +1,6 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 
-const router = Router();
+const router: Router = express.Router();
 
 // GET /health
 router.get('/health', (req, res) => {

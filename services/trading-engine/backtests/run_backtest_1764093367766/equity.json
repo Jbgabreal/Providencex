@@ -1,0 +1,275 @@
+[
+  {
+    "timestamp": "2025-11-01T00:00:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T15:45:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T16:35:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T17:12:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T17:25:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T18:15:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T20:07:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T20:31:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T20:57:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T21:47:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T22:37:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T22:48:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-24T23:27:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T00:17:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T01:05:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T01:07:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T01:57:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T02:47:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T03:22:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T03:37:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T04:27:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T05:17:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T05:39:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T06:07:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T06:57:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T07:47:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T07:56:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T08:37:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T09:27:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T10:13:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T10:17:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T11:07:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T11:57:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T12:30:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T12:47:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T13:37:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T14:27:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T14:47:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  },
+  {
+    "timestamp": "2025-11-25T14:56:00.000Z",
+    "balance": 100,
+    "equity": 100,
+    "drawdown": 0,
+    "drawdownPercent": 0
+  }
+]

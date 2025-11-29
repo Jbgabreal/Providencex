@@ -61,6 +61,8 @@ export interface ReplayEngineConfig {
   overrideParamSet?: import('../optimization/OptimizationTypes').SMC_V2_ParamSet;
   // Source timeframe of historical data (default: 'M5')
   sourceTimeframe?: string;
+  // Strategy adapter (if using strategy profile instead of StrategyService)
+  strategyAdapter?: import('../strategies/StrategyAdapter').StrategyAdapter;
 }
 
 /**
@@ -105,13 +107,23 @@ export class CandleReplayEngine {
     
     // Pass CandleStore to MarketDataService so it can read from it
     this.marketDataService = new MarketDataService(this.candleStore);
-    // v11: Pass parameter overrides to StrategyService for optimization
-    this.strategyService = new StrategyService(
-      this.marketDataService,
-      config.overrideParamSet
-    );
     
-    logger.info(`[Replay] Initialized for strategy: ${config.strategy}`);
+    // Use strategy adapter if provided (strategy profile), otherwise use StrategyService
+    if (config.strategyAdapter) {
+      // Strategy profile mode: use adapter
+      // Update adapter's marketDataService to use the CandleStore
+      (config.strategyAdapter as any).marketDataService = this.marketDataService;
+      this.strategyService = config.strategyAdapter as any; // Cast to StrategyService-compatible interface
+      logger.info(`[Replay] Initialized with strategy profile adapter for strategy: ${config.strategy}`);
+    } else {
+      // Legacy mode: use StrategyService
+      // v11: Pass parameter overrides to StrategyService for optimization
+      this.strategyService = new StrategyService(
+        this.marketDataService,
+        config.overrideParamSet
+      );
+      logger.info(`[Replay] Initialized for strategy: ${config.strategy}`);
+    }
   }
 
   /**

@@ -33,7 +33,7 @@ export interface AdminDecisionsResponse {
   pagination: {
     limit: number;
     offset: number;
-    total?: number;
+    total: number;
   };
 }
 
