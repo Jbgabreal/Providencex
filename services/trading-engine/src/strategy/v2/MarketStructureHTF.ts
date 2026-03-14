@@ -31,17 +31,21 @@ export class MarketStructureHTF {
   private chochService: ChochService;
   private useStructuralSwings: boolean; // Toggle between structural and fractal swings
 
-  constructor(lookbackPeriod: number = 50, useStructuralSwings: boolean = true) {
+  constructor(lookbackPeriod: number = 50, useStructuralSwings: boolean = false) {
     this.lookbackPeriod = lookbackPeriod;
+    // H4 should use fractal/hybrid swings by default — structural swings (3-impulse rule)
+    // are too strict for 4-hour candles where doji/neutral candles break impulse chains.
+    // Structural swings work better on lower timeframes (M15, M5).
     this.useStructuralSwings = useStructuralSwings;
-    
+
     // Initialize SMC core services with HTF-appropriate config
+    // Use wider pivot window for H4 to detect more significant swings
     this.swingService = new SwingService({
       method: 'hybrid',
-      pivotLeft: 3,
-      pivotRight: 3,
-      lookbackHigh: 20,
-      lookbackLow: 20,
+      pivotLeft: 2,
+      pivotRight: 2,
+      lookbackHigh: 10,
+      lookbackLow: 10,
     });
     
     // Structural swing service with 3-candle rule

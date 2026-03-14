@@ -209,7 +209,10 @@ export class TrendService {
         }
       }
     }
-    if (isBullish && lastBosDirection === 'bullish') {
+    // HH-HL pattern is sufficient for bullish trend. BOS direction confirms but is not required —
+    // the structural pattern itself is the primary evidence. Requiring BOS creates a chicken-and-egg
+    // problem where no BOS → sideways → no signals, even with clear directional swings.
+    if (isBullish && (lastBosDirection === 'bullish' || lastBosDirection === null)) {
       return 'bullish';
     }
 
@@ -229,7 +232,7 @@ export class TrendService {
         }
       }
     }
-    if (isBearish && lastBosDirection === 'bearish') {
+    if (isBearish && (lastBosDirection === 'bearish' || lastBosDirection === null)) {
       return 'bearish';
     }
 

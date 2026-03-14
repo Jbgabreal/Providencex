@@ -145,18 +145,40 @@ export class ChochService {
               state.lastConfirmedSwingHigh = brokenSwing;
             }
           }
-          
+
           // Set initial bias or maintain bullish
           if (state.currentBias === 'unknown') {
             state.currentBias = 'bullish';
-            // CRITICAL FIX: Ensure anchor swing is set from available swings before this BOS
-            // Find the most recent swing low before this BOS
             const lowsBefore = swingsBefore.filter(s => s.type === 'low');
             if (lowsBefore.length > 0) {
-              state.anchorSwing = lowsBefore[lowsBefore.length - 1]; // Most recent low
+              state.anchorSwing = lowsBefore[lowsBefore.length - 1];
               state.lastConfirmedSwingLow = state.anchorSwing;
+            } else if (state.lastConfirmedSwingLow) {
+              state.anchorSwing = state.lastConfirmedSwingLow;
             } else {
-              // No swing low yet, use last confirmed or null
+              // No swing low in window at all — use the lowest candle seen so far as anchor.
+              // Without an anchor, CHoCH can never fire; this gives a valid starting reference.
+              const candlesUpToHere = candleData.slice(0, idx + 1);
+              const lowestCandle = candlesUpToHere.reduce(
+                (min, c) => (c.low < min.low ? c : min),
+                candlesUpToHere[0]
+              );
+              if (lowestCandle) {
+                state.anchorSwing = {
+                  type: 'low',
+                  price: lowestCandle.low,
+                  index: candleData.indexOf(lowestCandle),
+                  timestamp: lowestCandle.timestamp,
+                };
+                state.lastConfirmedSwingLow = state.anchorSwing;
+              }
+            }
+          } else if (state.currentBias === 'bullish') {
+            // Continuation bullish BOS: advance the anchor to the most recent swing low (HL).
+            // Without this update, the anchor stays at the original low forever and no CHoCH
+            // can ever fire in a rising market.
+            if (state.lastConfirmedSwingLow &&
+                (!state.anchorSwing || state.lastConfirmedSwingLow.index > state.anchorSwing.index)) {
               state.anchorSwing = state.lastConfirmedSwingLow;
             }
           }
@@ -168,18 +190,37 @@ export class ChochService {
               state.lastConfirmedSwingLow = brokenSwing;
             }
           }
-          
+
           // Set initial bias or maintain bearish
           if (state.currentBias === 'unknown') {
             state.currentBias = 'bearish';
-            // CRITICAL FIX: Ensure anchor swing is set from available swings before this BOS
-            // Find the most recent swing high before this BOS
             const highsBefore = swingsBefore.filter(s => s.type === 'high');
             if (highsBefore.length > 0) {
-              state.anchorSwing = highsBefore[highsBefore.length - 1]; // Most recent high
+              state.anchorSwing = highsBefore[highsBefore.length - 1];
               state.lastConfirmedSwingHigh = state.anchorSwing;
+            } else if (state.lastConfirmedSwingHigh) {
+              state.anchorSwing = state.lastConfirmedSwingHigh;
             } else {
-              // No swing high yet, use last confirmed or null
+              // No swing high in window at all — use the highest candle seen so far as anchor.
+              const candlesUpToHere = candleData.slice(0, idx + 1);
+              const highestCandle = candlesUpToHere.reduce(
+                (max, c) => (c.high > max.high ? c : max),
+                candlesUpToHere[0]
+              );
+              if (highestCandle) {
+                state.anchorSwing = {
+                  type: 'high',
+                  price: highestCandle.high,
+                  index: candleData.indexOf(highestCandle),
+                  timestamp: highestCandle.timestamp,
+                };
+                state.lastConfirmedSwingHigh = state.anchorSwing;
+              }
+            }
+          } else if (state.currentBias === 'bearish') {
+            // Continuation bearish BOS: advance the anchor to the most recent swing high (LH).
+            if (state.lastConfirmedSwingHigh &&
+                (!state.anchorSwing || state.lastConfirmedSwingHigh.index > state.anchorSwing.index)) {
               state.anchorSwing = state.lastConfirmedSwingHigh;
             }
           }

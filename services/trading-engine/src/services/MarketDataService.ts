@@ -59,6 +59,9 @@ export class MarketDataService {
     } else if (timeframe === 'M5') {
       candlesPerBucket = 5;
       maxM1CandlesNeeded = limit * candlesPerBucket + candlesPerBucket; // Add buffer for incomplete window
+    } else if (timeframe === 'M3') {
+      candlesPerBucket = 3;
+      maxM1CandlesNeeded = limit * candlesPerBucket + candlesPerBucket; // Add buffer for incomplete window
     } else {
       // M1 or other
       candlesPerBucket = 1;

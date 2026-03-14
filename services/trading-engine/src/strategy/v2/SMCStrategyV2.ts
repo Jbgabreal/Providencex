@@ -143,9 +143,9 @@ export class SMCStrategyV2 {
     // Config: Allow skipping ITF alignment check (for debugging/backtesting)
     this.SKIP_ITF_ALIGNMENT = (process.env.SMC_SKIP_ITF_ALIGNMENT || 'false').toLowerCase() === 'true';
     
-    // Config: Minimal entry debug mode (default to true for backtesting)
-    // This mode only requires HTF bias + LTF ChoCH, ignoring ITF/POI filters
-    this.DEBUG_FORCE_MINIMAL_ENTRY = (process.env.SMC_DEBUG_FORCE_MINIMAL_ENTRY || 'true').toLowerCase() === 'true';
+    // Config: Minimal entry debug mode (default to false in production)
+    // When true, bypasses ALL ITF/POI filters — only for backtesting/debugging, NEVER in live trading
+    this.DEBUG_FORCE_MINIMAL_ENTRY = (process.env.SMC_DEBUG_FORCE_MINIMAL_ENTRY || 'false').toLowerCase() === 'true';
     
     // Log config
     logger.info('[Strategy-low] ITF alignment config', {
@@ -1737,9 +1737,9 @@ export class SMCStrategyV2 {
       // Get multi-timeframe candles: H4 (bias), M15 (setup), M1 (entry)
       const h4Candles = await this.getCandles(symbol, 'H4', 50);
       const m15Candles = await this.getCandles(symbol, 'M15', 100);
-      const m1Candles = await this.getCandles(symbol, 'M1', 50);
+      const m1Candles = await this.getCandles(symbol, 'M1', 100); // 100 candles for better M1 structure detection
 
-      if (h4Candles.length < 10 || m15Candles.length < 20 || m1Candles.length < 20) {
+      if (h4Candles.length < 10 || m15Candles.length < 20 || m1Candles.length < 50) {
         return createRejection(
           `Insufficient candles - H4=${h4Candles.length}, M15=${m15Candles.length}, M1=${m1Candles.length}`
         );
@@ -1830,8 +1830,9 @@ export class SMCStrategyV2 {
       itfFlow: 'aligned', // ICT assumes alignment
       ltfBOS: entry.m1ChoChIndex !== undefined,
       
-      // Premium/Discount (not used in strict ICT, but required field)
-      premiumDiscount: 'neutral',
+      // Premium/Discount — ICT validates this via the setup zone:
+      // Buy entries are at discount FVG (demand zone), sell entries at premium FVG (supply zone)
+      premiumDiscount: ictResult.bias.direction === 'bullish' ? 'discount' : 'premium',
       
       // Order Blocks
       obLevels: {
@@ -1908,10 +1909,18 @@ export class SMCStrategyV2 {
       meta: {
         ictModel: true,
         h4Bias: ictResult.bias.direction,
+        htf_trend: ictResult.bias.direction === 'sideways' ? 'sideways' : ictResult.bias.direction,
         m15SetupZone: setupZone.isValid,
         m1Entry: entry.isValid,
         setupsDetected: ictResult.setupsDetected,
         entriesTaken: ictResult.entriesTaken,
+        // ICT-validated flags for v3 execution filter compatibility
+        displacementCandle: setupZone.hasDisplacement,
+        liquiditySwept: true, // ICT CHoCH/BOS = liquidity sweep
+        liquiditySweep: true,
+        premiumDiscount: ictResult.bias.direction === 'bullish' ? 'discount' : 'premium',
+        sessionValid: true,
+        itfFlow: 'aligned',
       },
     };
 

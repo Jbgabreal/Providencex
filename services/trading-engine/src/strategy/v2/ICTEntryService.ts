@@ -85,8 +85,9 @@ export class ICTEntryService {
     // H4 bias service (uses 3-candle pivot)
     this.h4BiasService = new ICTH4BiasService();
     
-    // M15 structure service for CHoCH detection
-    this.m15Structure = new MarketStructureITF(50, true);
+    // M15 structure service for CHoCH detection + swing points for SL
+    // Use fractal/hybrid swings (not strict 3-impulse) to detect more swing points for SL placement
+    this.m15Structure = new MarketStructureITF(50, false);
     
     // M15 services for setup zone
     this.m15FvgService = new FairValueGapService(0.0001, 100);
@@ -110,7 +111,25 @@ export class ICTEntryService {
     m1Candles: Candle[]
   ): ICTEntryResult {
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
-    
+
+    // Session filter: only trade during London (08:00-12:00 UTC) and NY (13:00-17:00 UTC) killzones
+    // These are the times when institutional order flow is highest and ICT setups are most reliable
+    if (m1Candles.length > 0) {
+      const lastCandle = m1Candles[m1Candles.length - 1];
+      const candleHourUTC = lastCandle.startTime.getUTCHours();
+      const isLondonKZ = candleHourUTC >= 7 && candleHourUTC <= 11;  // London killzone 07:00-11:00 UTC
+      const isNYKZ = candleHourUTC >= 12 && candleHourUTC <= 16;     // NY killzone 12:00-16:00 UTC
+      if (!isLondonKZ && !isNYKZ) {
+        return {
+          bias: { direction: 'sideways' },
+          setupZone: null,
+          entry: null,
+          setupsDetected: 0,
+          entriesTaken: 0,
+        };
+      }
+    }
+
     // Step 1: Determine H4 Bias
     const bias = this.determineH4Bias(h4Candles);
     if (ictLog) {
@@ -187,16 +206,34 @@ export class ICTEntryService {
     if (h4Candles.length < 10) {
       return { direction: 'sideways' };
     }
-    
-    // Use ICT H4 bias service (uses 3-candle pivot)
-    const h4Bias = this.h4BiasService.determineH4Bias(h4Candles);
-    
+
+    // Use MarketStructureHTF for consistent H4 bias determination
+    // This uses fractal/hybrid swings + BOS + CHoCH + TrendService — the same
+    // analysis that produces correct results in the backtest stats.
+    const htfAnalysis = new MarketStructureHTF(50);
+    const structure = htfAnalysis.analyzeStructure(h4Candles);
+
     return {
-      direction: h4Bias.direction,
-      lastChoCh: h4Bias.lastChoCh,
-      lastBOS: h4Bias.lastBOS,
-      swingHigh: h4Bias.swingHigh,
-      swingLow: h4Bias.swingLow,
+      direction: structure.trend,
+      lastChoCh: structure.bosEvents?.filter(e => e.type === 'CHoCH').pop()
+        ? {
+            index: structure.bosEvents!.filter(e => e.type === 'CHoCH').pop()!.index,
+            fromTrend: 'sideways' as any,
+            toTrend: structure.trend as any,
+            level: structure.bosEvents!.filter(e => e.type === 'CHoCH').pop()!.price,
+          }
+        : undefined,
+      lastBOS: structure.lastBOS
+        ? {
+            index: structure.lastBOS.index,
+            direction: structure.lastBOS.type === 'BOS'
+              ? (structure.trend === 'bullish' ? 'bullish' : 'bearish')
+              : (structure.trend === 'bullish' ? 'bullish' : 'bearish'),
+            level: structure.lastBOS.price,
+          }
+        : undefined,
+      swingHigh: structure.swingHigh,
+      swingLow: structure.swingLow,
     };
   }
 
@@ -225,65 +262,55 @@ export class ICTEntryService {
       };
     }
     
-    // Step 1: Detect M15 CHoCH or BOS (relaxed for initial testing)
-    // For bullish setup: need bearish CHoCH or BOS down
-    // For bearish setup: need bullish CHoCH or BOS up
+    // Step 1: Detect M15 structure event for setup zone
+    // Priority: CHoCH (strongest) > MSB > BOS in bias direction (displacement-based)
     const m15Structure = this.m15Structure.analyzeStructure(m15Candles, bias.direction);
-    
-    // Find CHoCH or BOS event opposite to bias (relaxed: accept BOS if no CHoCH)
+
     let chochIndex: number | undefined;
-    let useBOSInstead = false;
-    
+    let setupSource: string = 'none';
+
     if (m15Structure.bosEvents && m15Structure.bosEvents.length > 0) {
-      // First try to find CHoCH
-      const oppositeChoCh = m15Structure.bosEvents
+      // Priority 1: CHoCH or MSB — strongest signal (structural reversal confirmed)
+      const chochOrMsb = m15Structure.bosEvents
         .filter(e => e.type === 'CHoCH' || e.type === 'MSB')
-        .sort((a, b) => b.index - a.index)[0]; // Most recent
-      
-      if (oppositeChoCh) {
-        chochIndex = oppositeChoCh.index;
+        .sort((a, b) => b.index - a.index)[0];
+
+      if (chochOrMsb) {
+        chochIndex = chochOrMsb.index;
+        setupSource = chochOrMsb.type;
         if (ictLog) {
-          logger.info(`[ICT] M15 CHoCH detected at index ${chochIndex} for ${bias.direction} setup`);
+          logger.info(`[ICT] M15 ${setupSource} detected at index ${chochIndex} for ${bias.direction} setup`);
         }
-      } else {
-        // No CHoCH found - try BOS as fallback (relaxed requirement)
-        // Get BOS events - check direction by comparing candle price to previous swing
-        // For bullish setup: want bearish BOS (price breaks below swing low)
-        // For bearish setup: want bullish BOS (price breaks above swing high)
-        const oppositeBOS = m15Structure.bosEvents
-          .filter(e => e.type === 'BOS')
-          .sort((a, b) => b.index - a.index)
-          .find(e => {
-            if (e.index < 2 || e.index >= m15Candles.length) return false;
-            const candle = m15Candles[e.index];
-            const prevCandle = m15Candles[e.index - 1];
-            if (!candle || !prevCandle) return false;
-            
-            // Simple heuristic: if close < open, it's likely bearish BOS
-            // If close > open, it's likely bullish BOS
-            const isBearishBOS = candle.close < candle.open && candle.close < prevCandle.close;
-            const isBullishBOS = candle.close > candle.open && candle.close > prevCandle.close;
-            
-            // For bullish setup, want bearish BOS
-            // For bearish setup, want bullish BOS
-            if (bias.direction === 'bullish' && isBearishBOS) return true;
-            if (bias.direction === 'bearish' && isBullishBOS) return true;
+      }
+
+      // Priority 2: BOS in the SAME direction as H4 bias
+      // This represents a displacement leg — price moved strongly in the bias direction,
+      // leaving FVG/OB behind. The setup zone is the FVG/OB that price will return to.
+      if (chochIndex === undefined) {
+        const biasAlignedBos = m15Structure.bosEvents
+          .filter(e => {
+            if (e.type !== 'BOS') return false;
+            // For bullish H4 bias: we want bullish BOS (price broke above swing high = displacement up)
+            // For bearish H4 bias: we want bearish BOS (price broke below swing low = displacement down)
+            if (bias.direction === 'bullish') return true; // Any BOS can set up a zone
+            if (bias.direction === 'bearish') return true;
             return false;
-          });
-        
-        if (oppositeBOS) {
-          chochIndex = oppositeBOS.index;
-          useBOSInstead = true;
+          })
+          .sort((a, b) => b.index - a.index)[0];
+
+        if (biasAlignedBos) {
+          chochIndex = biasAlignedBos.index;
+          setupSource = 'BOS-displacement';
           if (ictLog) {
-            logger.info(`[ICT] M15 BOS detected at index ${chochIndex} (using as CHoCH substitute for ${bias.direction} setup)`);
+            logger.info(`[ICT] M15 BOS-displacement setup at index ${chochIndex} (${biasAlignedBos.type} ${bias.direction})`);
           }
         }
       }
     }
-    
+
     if (chochIndex === undefined) {
       const reason = m15Structure.bosEvents && m15Structure.bosEvents.length > 0
-        ? 'No M15 CHoCH or opposite BOS detected (required for displacement leg)'
+        ? `No M15 structural event for setup zone (${m15Structure.bosEvents.length} BOS events, but none usable)`
         : 'No M15 BOS events found at all';
       reasons.push(reason);
       if (ictLog) {
@@ -312,20 +339,41 @@ export class ICTEntryService {
       };
     }
     
+    // ICT liquidity sweep model:
+    // 1. M15 shows a liquidity sweep AGAINST the bias (bullish sweep in bearish market = CHoCH/BOS up)
+    // 2. After the sweep, displacement candle fires IN THE BIAS DIRECTION (bearish displacement)
+    // 3. This displacement leaves FVG/OB behind = the entry zone
+    //
+    // So displacement is ALWAYS in the bias direction (confirming smart money took liquidity
+    // and is now pushing price back in the trend direction).
+    //
+    // The findDisplacementCandleAfterCHoCH function uses setupDirection to determine which
+    // candle direction to look for:
+    //   setupDirection='bullish' → looks for bearish displacement
+    //   setupDirection='bearish' → looks for bullish displacement
+    // So we FLIP the bias to get the right displacement direction from the function.
+    const displacementDirection = (bias.direction === 'bullish' ? 'bearish' : 'bullish') as 'bullish' | 'bearish';
+
     const displacementCandleIndex = this.findDisplacementCandleAfterCHoCH(
       m15Candles,
       chochIndex,
-      bias.direction as 'bullish' | 'bearish'
+      displacementDirection
     );
     const hasDisplacement = displacementCandleIndex !== -1;
-    
+
     if (!hasDisplacement) {
-      // Relaxed: Log but don't block - can still use FVG/OB setup
-      reasons.push('No displacement candle found after CHoCH (body must be > previous × 1.5) - proceeding without displacement');
+      reasons.push(`No displacement candle found after ${setupSource} (body must be > previous × 1.2)`);
       if (ictLog) {
-        logger.info(`[ICT] ⚠️  No displacement detected, but continuing with setup zone detection`);
+        logger.info(`[ICT] No displacement detected after ${setupSource} — rejecting M15 setup`);
       }
-      // Don't return early - continue to check for FVG/OB
+      return {
+        isValid: false,
+        direction: bias.direction,
+        hasDisplacement: false,
+        zoneLow: 0,
+        zoneHigh: 0,
+        reasons,
+      };
     }
     
     if (ictLog) {
@@ -333,12 +381,14 @@ export class ICTEntryService {
     }
     
     // Step 4: Detect FVG created DURING displacement leg (between CHoCH and displacement end)
-    // For bullish setup: bearish FVG created during bearish displacement
-    // For bearish setup: bullish FVG created during bullish displacement
+    // Displacement is in the bias direction (bearish displacement for bearish bias).
+    // The FVG from this displacement is the entry zone:
+    //   Bearish bias → bearish displacement → premium FVG (supply zone to sell into)
+    //   Bullish bias → bullish displacement → discount FVG (demand zone to buy into)
     const fvgs = this.m15FvgService.detectFVGs(
       m15Candles.slice(chochIndex, displacementCandleIndex + 5), // Look during displacement leg
       'ITF',
-      bias.direction === 'bullish' ? 'discount' : 'premium' // FVG opposite to displacement direction
+      bias.direction === 'bullish' ? 'discount' : 'premium' // FVG matches bias direction
     );
     
     // Filter FVG by symbol-aware size
@@ -430,20 +480,21 @@ export class ICTEntryService {
       };
     }
     
-    // Check if price has returned into zone or is near zone (relaxed requirement)
+    // Note price distance from zone (for logging only - price-in-zone is checked in M1 entry)
     const currentPrice = m15Candles[m15Candles.length - 1].close;
-    const zoneSize = zoneHigh - zoneLow;
-    const zoneBuffer = zoneSize * 0.1; // Allow 10% buffer outside zone
-    
-    const priceInZone = currentPrice >= (zoneLow - zoneBuffer) && currentPrice <= (zoneHigh + zoneBuffer);
-    
-    if (!priceInZone) {
-      reasons.push(`Price ${currentPrice.toFixed(2)} not near zone [${zoneLow.toFixed(2)}, ${zoneHigh.toFixed(2)}] (buffer: ±${zoneBuffer.toFixed(2)})`);
+    if (ictLog) {
+      const distanceFromZone = currentPrice < zoneLow
+        ? (zoneLow - currentPrice).toFixed(2) + ' below zone'
+        : currentPrice > zoneHigh
+          ? (currentPrice - zoneHigh).toFixed(2) + ' above zone'
+          : 'inside zone';
+      logger.info(`[ICT] M15 zone [${zoneLow.toFixed(2)}, ${zoneHigh.toFixed(2)}], current price ${currentPrice.toFixed(2)} (${distanceFromZone})`);
     }
-    
-    // RELAXED: Don't require displacement for setup validation - displacement is nice-to-have
-    // Setup is valid if we have FVG or OB and price is in/near zone
-    const isValid = (validFvg || validOB) && priceInZone;
+
+    // Setup is valid when: displacement confirmed + (FVG or OB present).
+    // Price-in-zone is checked at M1 entry time (not here) — this allows the zone to be
+    // "live" and checked every M1 tick until price returns to the zone or invalidates it.
+    const isValid = !!(validFvg || validOB);
     
     return {
       isValid,
@@ -481,8 +532,8 @@ export class ICTEntryService {
       const candleBody = Math.abs(candle.close - candle.open);
       const prevBody = Math.abs(prevCandle.close - prevCandle.open);
       
-      // Displacement: body must be > previous × 1.5
-      if (prevBody > 0 && candleBody > prevBody * 1.5) {
+      // Displacement: body must be > previous × 1.2 (relaxed from 1.5)
+      if (prevBody > 0 && candleBody > prevBody * 1.2) {
         // Check direction
         const isBullishDisplacement = candle.close > candle.open;
         const isBearishDisplacement = candle.close < candle.open;
@@ -574,87 +625,115 @@ export class ICTEntryService {
         reasons: ['H4 bias is sideways - cannot determine entry direction'],
       };
     }
-    
+
     const currentPrice = m1Candles[m1Candles.length - 1].close;
-    
-    // Determine entry type based on strategy logic:
-    // - Buy Limit: Price needs to come DOWN to entry (entry < current price)
-    // - Sell Limit: Price needs to go UP to entry (entry > current price)  
-    // - Market: Entry is very close to current price (immediate execution)
-    // This will be set after entry price is calculated
+
+    // ── Premium/Discount zone filter using M15 structural range (fib retracement) ──
+    // ICT rule: only BUY in discount (below 50% of M15 range), only SELL in premium (above 50%)
+    // The M15 structural range is defined by the recent swing high and swing low on M15
+    const recentM15ForPD = m15Candles.slice(-30);
+    const m15RangeHigh = Math.max(...recentM15ForPD.map(c => c.high));
+    const m15RangeLow = Math.min(...recentM15ForPD.map(c => c.low));
+    const m15Equilibrium = (m15RangeHigh + m15RangeLow) / 2; // 50% fib level
+    const m15FibOTE = m15RangeLow + (m15RangeHigh - m15RangeLow) * 0.705; // 70.5% OTE level
+
+    const isInDiscount = currentPrice < m15Equilibrium;
+    const isInPremium = currentPrice > m15Equilibrium;
+
+    if (bias.direction === 'bullish' && !isInDiscount) {
+      const pdMsg = `BUY rejected: price ${currentPrice.toFixed(2)} is NOT in discount zone (equilibrium: ${m15Equilibrium.toFixed(2)}, range: ${m15RangeLow.toFixed(2)}-${m15RangeHigh.toFixed(2)})`;
+      reasons.push(pdMsg);
+      if (process.env.ICT_DEBUG === 'true') {
+        logger.info(`[ICT] ${pdMsg}`);
+      }
+      return {
+        isValid: false,
+        direction: bias.direction as 'bullish' | 'bearish',
+        entryPrice: 0, entryType: 'market', stopLoss: 0, takeProfit: 0, riskRewardRatio: 0, reasons,
+      };
+    }
+    if (bias.direction === 'bearish' && !isInPremium) {
+      const pdMsg = `SELL rejected: price ${currentPrice.toFixed(2)} is NOT in premium zone (equilibrium: ${m15Equilibrium.toFixed(2)}, range: ${m15RangeLow.toFixed(2)}-${m15RangeHigh.toFixed(2)})`;
+      reasons.push(pdMsg);
+      if (process.env.ICT_DEBUG === 'true') {
+        logger.info(`[ICT] ${pdMsg}`);
+      }
+      return {
+        isValid: false,
+        direction: bias.direction as 'bullish' | 'bearish',
+        entryPrice: 0, entryType: 'market', stopLoss: 0, takeProfit: 0, riskRewardRatio: 0, reasons,
+      };
+    }
+
+    if (process.env.ICT_DEBUG === 'true') {
+      logger.info(`[ICT] PD check passed: ${bias.direction} @ ${currentPrice.toFixed(2)}, EQ=${m15Equilibrium.toFixed(2)}, OTE=${m15FibOTE.toFixed(2)}, range=${m15RangeLow.toFixed(2)}-${m15RangeHigh.toFixed(2)}`);
+    }
+
+    // ── Zone proximity check ──
     const zoneSize = setupZone.zoneHigh - setupZone.zoneLow;
-    const zoneBuffer = zoneSize * 0.1; // 10% buffer
+    const priceScale = currentPrice * 0.005; // 0.5% of price (~$25 for gold at $5000)
+    const zoneBuffer = Math.max(zoneSize * 2.0, priceScale);
     const priceInZone = currentPrice >= (setupZone.zoneLow - zoneBuffer) && currentPrice <= (setupZone.zoneHigh + zoneBuffer);
     if (!priceInZone) {
-      reasons.push(`Price ${currentPrice.toFixed(2)} not near M15 zone [${setupZone.zoneLow.toFixed(2)}, ${setupZone.zoneHigh.toFixed(2)}]`);
+      reasons.push(`Price ${currentPrice.toFixed(2)} not near M15 zone [${setupZone.zoneLow.toFixed(2)}, ${setupZone.zoneHigh.toFixed(2)}] (buffer: ±${zoneBuffer.toFixed(2)})`);
     }
-    
-    // 2. Detect M1 CHoCH
+
+    // 2. Detect M1 CHoCH or BOS in the bias direction (structure confirmation)
     const m1Structure = this.m1Structure.analyzeStructure(m1Candles, bias.direction);
     let m1ChoChIndex: number | undefined;
-    
+    let m1BosIndex: number | undefined;
+
     if (m1Structure.bosEvents) {
+      // First try CHoCH (stronger confirmation)
       const chochEvent = m1Structure.bosEvents
         .filter(e => e.type === 'CHoCH')
         .sort((a, b) => b.index - a.index)[0]; // Most recent CHoCH
-      
+
       if (chochEvent) {
         m1ChoChIndex = chochEvent.index;
       }
-    }
-    
-    // RELAXED: Try BOS if no CHoCH found
-    if (!m1ChoChIndex && m1Structure.bosEvents) {
-      // Find most recent BOS event that matches bias direction
-      // Check direction by comparing candle close to open
-      const bosEvent = m1Structure.bosEvents
-        .filter(e => {
-          if (e.type !== 'BOS') return false;
-          const candle = m1Candles[e.index];
-          if (!candle || e.index < 1) return false;
-          
-          // Simple heuristic: bullish BOS = close > open, bearish BOS = close < open
-          const isBullish = candle.close > candle.open;
-          const isBearish = candle.close < candle.open;
-          
-          return (bias.direction === 'bullish' && isBullish) || 
-                 (bias.direction === 'bearish' && isBearish);
-        })
-        .sort((a, b) => b.index - a.index)[0];
-      
-      if (bosEvent) {
-        m1ChoChIndex = bosEvent.index;
-        reasons.push('Using M1 BOS instead of CHoCH (relaxed requirement)');
+
+      // Fallback: accept BOS in the bias direction
+      if (!m1ChoChIndex) {
+        const bosEvent = m1Structure.bosEvents
+          .filter(e => e.type === 'BOS')
+          .sort((a, b) => b.index - a.index)[0]; // Most recent BOS
+        if (bosEvent) {
+          m1BosIndex = bosEvent.index;
+          reasons.push('Using M1 BOS as confirmation (no CHoCH detected)');
+        }
       }
     }
-    
-    if (!m1ChoChIndex) {
-      reasons.push('No M1 CHoCH or BOS detected');
+
+    const hasStructureChange = m1ChoChIndex !== undefined || m1BosIndex !== undefined;
+
+    if (!hasStructureChange) {
+      reasons.push('No M1 CHoCH or BOS detected — entry rejected (structure confirmation required)');
     }
-    
+
     // 3. Detect refined M1 OB in direction of H4 bias
     const m1OrderBlocks = this.m1ObService.detectOrderBlocks(
       m1Candles,
       'LTF',
       bias.direction
     );
-    
+
     // Find most recent valid OB (unmitigated)
     const refinedOB = m1OrderBlocks
       .filter(ob => !ob.mitigated)
       .sort((a, b) => b.candleIndex - a.candleIndex)[0];
-    
+
     if (!refinedOB) {
       reasons.push('No refined M1 OB found in bias direction');
     }
-    
-    // Validate all requirements
-    // RELAXED: Entry is valid if price is in zone AND (CHoCH/BOS OR refined OB)
-    // Don't require both CHoCH and OB - either is enough
-    const hasStructureChange = m1ChoChIndex !== undefined;
+
+    // M1 entry requires:
+    // 1. Price in/near the M15 zone (confirmed POI reaction)
+    // 2. M1 CHoCH or BOS — confirmation that the zone is holding
+    // 3. Refined M1 OB — preferred for entry precision (if not present, enter at zone midpoint)
     const hasRefinedOB = refinedOB !== undefined;
-    
-    const isValid = priceInZone && (hasStructureChange || hasRefinedOB);
+
+    const isValid = priceInZone && hasStructureChange;
     
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
     if (ictLog && !isValid) {
@@ -770,94 +849,98 @@ export class ICTEntryService {
       }
     }
     
-    // Calculate SL: ALWAYS use M15 structural swing points (POI - Point of Interest)
-    // M1 OB is ONLY for entry price, NOT for SL
-    // For BUY: Find nearest M15 swing low BELOW entry (support/POI)
-    // For SELL: Find nearest M15 swing high ABOVE entry (resistance/POI)
+    // Calculate SL: Use M15 structural swing low/high as the SL level
+    // ICT model: SL goes beyond the most recent M15 swing point that invalidates the setup
+    //   BUY: SL below the nearest M15 swing LOW below entry (if price breaks this, setup is invalid)
+    //   SELL: SL above the nearest M15 swing HIGH above entry (if price breaks this, setup is invalid)
     let stopLoss = 0;
     const symbolType = m1Candles[0]?.symbol || 'XAUUSD';
-    
-    // Calculate minimum buffer based on symbol
-    let minBuffer: number;
+
+    // Buffer beyond the swing point (gives room for wicks without invalidating)
+    let slBuffer: number;
+    let minSlDistance: number; // Minimum SL distance to avoid instant SL hits
+    let maxSlDistance: number; // Maximum SL distance to avoid oversized risk
     if (symbolType === 'XAUUSD' || symbolType === 'GOLD') {
-      minBuffer = 1.0; // $1 minimum for gold
+      slBuffer = 2.0;       // $2 buffer beyond M15 swing for gold
+      minSlDistance = 15.0;  // Minimum $15 SL distance — gold needs room for wicks
+      maxSlDistance = 50.0;  // Maximum $50 SL distance
     } else if (symbolType.includes('USD') || symbolType === 'EURUSD' || symbolType === 'GBPUSD') {
-      minBuffer = 0.0001; // 1 pip for forex pairs
+      slBuffer = 0.0003;    // 3 pips buffer for forex
+      minSlDistance = 0.001; // 10 pips minimum
+      maxSlDistance = 0.005; // 50 pips maximum
     } else {
-      minBuffer = 0.5; // Default buffer for other symbols
+      slBuffer = 1.0;
+      minSlDistance = 5.0;
+      maxSlDistance = 30.0;
     }
-    
-    // PRIMARY: Use M15 structural swing points (POI)
-    // Get M15 structure to access swing points
-    const m15Structure = this.m15Structure.analyzeStructure(m15Candles, bias.direction);
-    const swingHighs = m15Structure.swingHighs || [];
-    const swingLows = m15Structure.swingLows || [];
-    
+
+    // Use M15 structural swing highs/lows for SL placement
+    // These are the proper swing points from the MarketStructureITF analysis
+    const m15StructureForSL = this.m15Structure.analyzeStructure(m15Candles, bias.direction);
+    const m15SwingHighs = m15StructureForSL.swingHighs || [];
+    const m15SwingLows = m15StructureForSL.swingLows || [];
+
     if (bias.direction === 'bullish') {
-      // Bullish (BUY): Find nearest M15 swing low BELOW entry price (support/POI)
-      // Look for swing lows that are below the entry price
-      const supportLevels = swingLows
-        .filter(low => low < entryPrice)
-        .sort((a, b) => b - a); // Sort descending (highest first, but still below entry)
-      
+      // BUY: SL below the nearest M15 structural swing low below entry
+      const supportLevels = m15SwingLows
+        .filter(l => l < entryPrice)
+        .sort((a, b) => b - a); // Nearest first (highest swing low below entry)
+
       if (supportLevels.length > 0) {
-        // Use the highest swing low below entry (nearest structural support/POI)
-        const nearestSupport = supportLevels[0];
-        stopLoss = nearestSupport - minBuffer; // Place SL below support with buffer
-        reasons.push(
-          `Stop loss calculated from M15 structural swing low (POI): ${nearestSupport.toFixed(2)}`
-        );
-        logger.info(
-          `[ICT] ${symbolType}: Using M15 structural swing low for SL. ` +
-          `Entry=${entryPrice.toFixed(2)}, Support=${nearestSupport.toFixed(2)}, SL=${stopLoss.toFixed(2)}`
-        );
+        stopLoss = supportLevels[0] - slBuffer;
+        reasons.push(`SL from M15 swing low: ${supportLevels[0].toFixed(2)} - buffer ${slBuffer}`);
       } else {
-        // FALLBACK: No M15 swing low found - use setup zone low
-        stopLoss = setupZone.zoneLow - minBuffer;
-        reasons.push(
-          `Stop loss fallback: No M15 swing support found below entry, using zone low (${setupZone.zoneLow.toFixed(2)}) minus buffer`
-        );
-        logger.warn(
-          `[ICT] ${symbolType}: No M15 swing support below entry, using zone low as fallback. ` +
-          `Entry=${entryPrice.toFixed(2)}, SL=${stopLoss.toFixed(2)}, Zone=[${setupZone.zoneLow.toFixed(2)}, ${setupZone.zoneHigh.toFixed(2)}]`
-        );
+        // Fallback: use the absolute low of recent M15 candles
+        const absLow = Math.min(...m15Candles.slice(-30).map(c => c.low));
+        stopLoss = absLow - slBuffer;
+        reasons.push(`SL fallback: M15 absolute low ${absLow.toFixed(2)} - buffer ${slBuffer}`);
+      }
+
+      // Enforce min/max SL distance
+      const slDist = entryPrice - stopLoss;
+      if (slDist < minSlDistance) {
+        stopLoss = entryPrice - minSlDistance;
+        reasons.push(`SL adjusted to minimum: $${minSlDistance}`);
+      } else if (slDist > maxSlDistance) {
+        stopLoss = entryPrice - maxSlDistance;
+        reasons.push(`SL capped at maximum: $${maxSlDistance}`);
       }
     } else {
-      // Bearish (SELL): Find nearest M15 swing high ABOVE entry price (resistance/POI)
-      // Look for swing highs that are above the entry price
-      const resistanceLevels = swingHighs
-        .filter(high => high > entryPrice)
-        .sort((a, b) => a - b); // Sort ascending (lowest first, but still above entry)
-      
+      // SELL: SL above the nearest M15 structural swing high above entry
+      const resistanceLevels = m15SwingHighs
+        .filter(h => h > entryPrice)
+        .sort((a, b) => a - b); // Nearest first (lowest swing high above entry)
+
       if (resistanceLevels.length > 0) {
-        // Use the lowest swing high above entry (nearest structural resistance/POI)
-        const nearestResistance = resistanceLevels[0];
-        stopLoss = nearestResistance + minBuffer; // Place SL above resistance with buffer
-        reasons.push(
-          `Stop loss calculated from M15 structural swing high (POI): ${nearestResistance.toFixed(2)}`
-        );
-        logger.info(
-          `[ICT] ${symbolType}: Using M15 structural swing high for SL. ` +
-          `Entry=${entryPrice.toFixed(2)}, Resistance=${nearestResistance.toFixed(2)}, SL=${stopLoss.toFixed(2)}`
-        );
+        stopLoss = resistanceLevels[0] + slBuffer;
+        reasons.push(`SL from M15 swing high: ${resistanceLevels[0].toFixed(2)} + buffer ${slBuffer}`);
       } else {
-        // FALLBACK: No M15 swing high found - use setup zone high
-        stopLoss = setupZone.zoneHigh + minBuffer;
-        reasons.push(
-          `Stop loss fallback: No M15 swing resistance found above entry, using zone high (${setupZone.zoneHigh.toFixed(2)}) plus buffer`
-        );
-        logger.warn(
-          `[ICT] ${symbolType}: No M15 swing resistance above entry, using zone high as fallback. ` +
-          `Entry=${entryPrice.toFixed(2)}, SL=${stopLoss.toFixed(2)}, Zone=[${setupZone.zoneLow.toFixed(2)}, ${setupZone.zoneHigh.toFixed(2)}]`
-        );
+        // Fallback: use the absolute high of recent M15 candles
+        const absHigh = Math.max(...m15Candles.slice(-30).map(c => c.high));
+        stopLoss = absHigh + slBuffer;
+        reasons.push(`SL fallback: M15 absolute high ${absHigh.toFixed(2)} + buffer ${slBuffer}`);
       }
+
+      // Enforce min/max SL distance
+      const slDist = stopLoss - entryPrice;
+      if (slDist < minSlDistance) {
+        stopLoss = entryPrice + minSlDistance;
+        reasons.push(`SL adjusted to minimum: $${minSlDistance}`);
+      } else if (slDist > maxSlDistance) {
+        stopLoss = entryPrice + maxSlDistance;
+        reasons.push(`SL capped at maximum: $${maxSlDistance}`);
+      }
+    }
+
+    if (process.env.ICT_DEBUG === 'true') {
+      logger.info(`[ICT] ${symbolType}: SL=${stopLoss.toFixed(2)}, Entry=${entryPrice.toFixed(2)}, Distance=${Math.abs(entryPrice - stopLoss).toFixed(2)}, Direction=${bias.direction}`);
     }
     
     // Validate stop loss is valid (not zero, not same as entry, and in correct direction)
     const slDistance = Math.abs(entryPrice - stopLoss);
-    const isSlValid = stopLoss > 0 && 
-                     slDistance >= minBuffer && 
-                     ((bias.direction === 'bullish' && stopLoss < entryPrice) || 
+    const isSlValid = stopLoss > 0 &&
+                     slDistance >= slBuffer &&
+                     ((bias.direction === 'bullish' && stopLoss < entryPrice) ||
                       (bias.direction === 'bearish' && stopLoss > entryPrice));
     
     if (!isSlValid) {

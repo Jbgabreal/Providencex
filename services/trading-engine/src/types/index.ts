@@ -2,7 +2,7 @@
 
 export type Strategy = "low" | "high";
 export type TrendDirection = "bullish" | "bearish" | "sideways";
-export type Timeframe = "M1" | "M5" | "M15" | "H1" | "H4";
+export type Timeframe = "M1" | "M3" | "M5" | "M15" | "H1" | "H4";
 export type GuardrailMode = "normal" | "reduced" | "blocked";
 
 // Market Data Types

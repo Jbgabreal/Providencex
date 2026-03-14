@@ -14,6 +14,7 @@ const logger = new Logger('CandleAggregator');
 function getM1CandlesPerTimeframe(timeframe: Timeframe): number {
   const map: Record<Timeframe, number> = {
     M1: 1,
+    M3: 3,
     M5: 5,
     M15: 15,
     H1: 60,
@@ -54,7 +55,10 @@ function groupCandlesByTimeframe(
     const time = candle.startTime;
     const windowStart = new Date(time);
     
-    if (tf === 'M5') {
+    if (tf === 'M3') {
+      // Round down to nearest 3-minute boundary
+      windowStart.setMinutes(Math.floor(time.getMinutes() / 3) * 3, 0, 0);
+    } else if (tf === 'M5') {
       // Round down to nearest 5-minute boundary
       windowStart.setMinutes(Math.floor(time.getMinutes() / 5) * 5, 0, 0);
     } else if (tf === 'M15') {

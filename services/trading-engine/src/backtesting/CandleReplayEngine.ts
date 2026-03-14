@@ -259,6 +259,15 @@ export class CandleReplayEngine {
     this.signalStats.signalsGenerated++;
     logger.info(`[Replay] ${symbol} @ ${candleTime}: ✅ Signal GENERATED [${this.signalStats.signalsGenerated}] - ${signal.direction.toUpperCase()} @ ${signal.entry.toFixed(2)} (SL: ${signal.stopLoss.toFixed(2)}, TP: ${signal.takeProfit.toFixed(2)})`);
 
+    // Prevent duplicate trades: skip if same direction + similar entry within 30 minutes
+    const cooldownKey = `cooldown-${symbol}-${signal.direction}`;
+    const lastExecutedAt = this.lastTradeTimestamps.get(cooldownKey) || 0;
+    const elapsed = historicalCandle.timestamp - lastExecutedAt;
+    const minCooldownMs = 30 * 60 * 1000; // 30 minutes between same-direction trades
+    if (elapsed < minCooldownMs && lastExecutedAt > 0) {
+      return; // Skip duplicate
+    }
+
     // Check risk constraints
     const riskContext: RiskContext = {
       strategy: this.config.strategy,
@@ -277,12 +286,13 @@ export class CandleReplayEngine {
     }
 
     // Convert to RawSignal v3
-    const htfTrend = (signal.meta?.htf_trend || 'bullish') as TrendDirection;
+    // Use htfTrend from signal (set by ICT/SMC strategy) or fall back to meta field
+    const htfTrend = ((signal as any).htfTrend || signal.meta?.htf_trend || (signal.direction === 'buy' ? 'bullish' : 'bearish')) as TrendDirection;
     const rawSignal = convertToRawSignal(
       signal,
       htfTrend,
-      'H1', // HTF timeframe (from config)
-      'M5'  // LTF timeframe (from config)
+      'H4', // HTF timeframe (ICT uses H4)
+      'M1'  // LTF timeframe (ICT uses M1)
     );
 
     // Get execution filter context
@@ -376,6 +386,8 @@ export class CandleReplayEngine {
     
     // Update last trade timestamp
     this.lastTradeTimestamps.set(tradeKey, historicalCandle.timestamp);
+    // Update cooldown timestamp for duplicate prevention
+    this.lastTradeTimestamps.set(`cooldown-${symbol}-${signal.direction}`, historicalCandle.timestamp);
 
     // Always log trade execution
     logger.info(

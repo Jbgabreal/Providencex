@@ -113,14 +113,16 @@ export class SwingService {
 
   /**
    * Approach 2: Rolling Lookback Detection
-   * 
+   *
    * At each candle i, define:
    * - rolling swing high: max high in [i - lookbackHigh + 1, ..., i]
    * - rolling swing low: min low in [i - lookbackLow + 1, ..., i]
-   * 
-   * When this max/min changes, treat it as a potential new swing.
-   * 
-   * No future knowledge: uses only past data (no repaint once printed).
+   *
+   * When the max/min index changes AND the old max/min is no longer in the window,
+   * treat the old one as a confirmed swing and start tracking the new one.
+   *
+   * This detects ALL swing highs and lows (including lower highs and higher lows),
+   * which is essential for HH/HL and LH/LL pattern detection.
    */
   private detectRollingSwings(candles: CandleData[]): SwingPoint[] {
     const swings: SwingPoint[] = [];
@@ -132,36 +134,40 @@ export class SwingService {
 
     let lastSwingHighIdx: number | null = null;
     let lastSwingLowIdx: number | null = null;
-    let lastMaxHigh = -Infinity;
-    let lastMinLow = Infinity;
+    // Track the previously confirmed swing index to avoid duplicates
+    const confirmedHighIndices = new Set<number>();
+    const confirmedLowIndices = new Set<number>();
 
     for (let i = 0; i < candles.length; i++) {
       // Detect swing highs
       if (i >= adaptiveLookbackHigh - 1) {
         let maxHigh = -Infinity;
         let maxIdx: number | null = null;
+        const windowStart = i - adaptiveLookbackHigh + 1;
 
-        // Find max high in [i - adaptiveLookbackHigh + 1, ..., i]
-        for (let j = i - adaptiveLookbackHigh + 1; j <= i; j++) {
+        // Find max high in [windowStart, ..., i]
+        for (let j = windowStart; j <= i; j++) {
           if (candles[j].high >= maxHigh) {
             maxHigh = candles[j].high;
             maxIdx = j;
           }
         }
 
-        // If the max index changed, it's a new swing high
+        // If the max index changed from our last tracked swing high
         if (maxIdx !== null && maxIdx !== lastSwingHighIdx) {
-          // Only add if it's actually higher than previous (or first swing)
-          if (maxHigh > lastMaxHigh || lastSwingHighIdx === null) {
+          // The previous swing high has rolled out of the window or been surpassed.
+          // Confirm the PREVIOUS swing high as a valid swing point (if it existed
+          // and is no longer in the current window or a new peak appeared).
+          if (lastSwingHighIdx !== null && !confirmedHighIndices.has(lastSwingHighIdx)) {
+            confirmedHighIndices.add(lastSwingHighIdx);
             swings.push({
-              index: maxIdx,
+              index: lastSwingHighIdx,
               type: 'high',
-              price: maxHigh,
-              timestamp: candles[maxIdx].timestamp,
+              price: candles[lastSwingHighIdx].high,
+              timestamp: candles[lastSwingHighIdx].timestamp,
             });
-            lastSwingHighIdx = maxIdx;
-            lastMaxHigh = maxHigh;
           }
+          lastSwingHighIdx = maxIdx;
         }
       }
 
@@ -169,30 +175,49 @@ export class SwingService {
       if (i >= adaptiveLookbackLow - 1) {
         let minLow = Infinity;
         let minIdx: number | null = null;
+        const windowStart = i - adaptiveLookbackLow + 1;
 
-        // Find min low in [i - adaptiveLookbackLow + 1, ..., i]
-        for (let j = i - adaptiveLookbackLow + 1; j <= i; j++) {
+        // Find min low in [windowStart, ..., i]
+        for (let j = windowStart; j <= i; j++) {
           if (candles[j].low <= minLow) {
             minLow = candles[j].low;
             minIdx = j;
           }
         }
 
-        // If the min index changed, it's a new swing low
+        // If the min index changed from our last tracked swing low
         if (minIdx !== null && minIdx !== lastSwingLowIdx) {
-          // Only add if it's actually lower than previous (or first swing)
-          if (minLow < lastMinLow || lastSwingLowIdx === null) {
+          // Confirm the PREVIOUS swing low as a valid swing point
+          if (lastSwingLowIdx !== null && !confirmedLowIndices.has(lastSwingLowIdx)) {
+            confirmedLowIndices.add(lastSwingLowIdx);
             swings.push({
-              index: minIdx,
+              index: lastSwingLowIdx,
               type: 'low',
-              price: minLow,
-              timestamp: candles[minIdx].timestamp,
+              price: candles[lastSwingLowIdx].low,
+              timestamp: candles[lastSwingLowIdx].timestamp,
             });
-            lastSwingLowIdx = minIdx;
-            lastMinLow = minLow;
           }
+          lastSwingLowIdx = minIdx;
         }
       }
+    }
+
+    // Confirm the last tracked swings (still in window at end of data)
+    if (lastSwingHighIdx !== null && !confirmedHighIndices.has(lastSwingHighIdx)) {
+      swings.push({
+        index: lastSwingHighIdx,
+        type: 'high',
+        price: candles[lastSwingHighIdx].high,
+        timestamp: candles[lastSwingHighIdx].timestamp,
+      });
+    }
+    if (lastSwingLowIdx !== null && !confirmedLowIndices.has(lastSwingLowIdx)) {
+      swings.push({
+        index: lastSwingLowIdx,
+        type: 'low',
+        price: candles[lastSwingLowIdx].low,
+        timestamp: candles[lastSwingLowIdx].timestamp,
+      });
     }
 
     // Sort by index

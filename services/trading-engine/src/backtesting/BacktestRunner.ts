@@ -620,7 +620,8 @@ export class BacktestRunner {
     const ltfStructure = new MarketStructureLTF(20);
 
     // Create a temporary CandleStore and MarketDataService for analysis
-    const candleStore = new CandleStore(1000);
+    // Must match replay engine capacity (12000) to produce enough H4 candles (50) for structure detection
+    const candleStore = new CandleStore(12000);
     const marketDataService = new MarketDataService(candleStore);
 
     // Analyze structure for each symbol periodically (every 10 candles to avoid performance issues)
@@ -628,16 +629,14 @@ export class BacktestRunner {
       const symbolCandles = allCandles.get(symbol);
       if (!symbolCandles || symbolCandles.length === 0) continue;
 
-      // Sample every 10th candle for swing analysis (to balance accuracy vs performance)
+      // Incremental build-up: add candles progressively and evaluate every 10th candle
+      // This is much faster than clearing and rebuilding from scratch each time
+      let lastAddedIndex = -1;
       for (let i = 9; i < symbolCandles.length; i += 10) {
-        // Clear candle store for each evaluation to start fresh
-        candleStore.clear(symbol);
-        
-        // Build up all candles up to current index (incremental build-up)
-        // This simulates how candles would accumulate in real-time
-        for (let j = 0; j <= i && j < symbolCandles.length; j++) {
+        // Add only the NEW candles since last evaluation
+        for (let j = lastAddedIndex + 1; j <= i && j < symbolCandles.length; j++) {
           const { candle } = symbolCandles[j];
-          
+
           // Convert to MarketData format
           const marketDataCandle = {
             symbol,
@@ -648,12 +647,13 @@ export class BacktestRunner {
             close: candle.close,
             volume: candle.volume,
             startTime: new Date(candle.timestamp),
-            endTime: new Date(candle.timestamp + (5 * 60 * 1000)),
+            endTime: new Date(candle.timestamp + (60 * 1000)),
           };
 
-          // Add to store (will maintain rolling window automatically)
+          // Add to store (rolling window maintains max capacity automatically)
           candleStore.addCandle(marketDataCandle);
         }
+        lastAddedIndex = i;
 
         // Get candles for each timeframe
         // ICT Model: Use H4 for HTF when enabled, otherwise M15

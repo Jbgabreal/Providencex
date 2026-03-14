@@ -39,6 +39,11 @@ export class BosService {
     // Sort swings by index
     const swingsSorted = swings.slice().sort((a, b) => a.index - b.index);
 
+    // Track which swings have already been broken to avoid redundant BOS events.
+    // Without this, every candle that closes beyond an already-broken swing generates
+    // another BOS — flooding the CHoCH state machine with noise.
+    const brokenSwingIndices = new Set<number>();
+
     // For each candle, check if it breaks any prior swing
     for (let i = 0; i < candleData.length; i++) {
       const candle = candleData[i];
@@ -48,8 +53,15 @@ export class BosService {
         s => s.index < i && s.index >= i - this.config.swingIndexLookback
       );
 
-      // Check each candidate swing
+      // Track best bullish and bearish BOS separately (a candle can break both directions)
+      let bestBullishBos: BosEvent | null = null;
+      let bestBearishBos: BosEvent | null = null;
+
+      // Check each candidate swing (most recent first for best match)
       for (const swing of candidateSwings) {
+        // Skip swings that have already been broken by a prior candle
+        if (brokenSwingIndices.has(swing.index)) continue;
+
         if (swing.type === 'high') {
           // Bullish BOS: break above a swing high
           const broken = this.config.strictClose
@@ -57,10 +69,9 @@ export class BosService {
             : candle.high > swing.price;
 
           if (broken) {
-            // Check if we already have a BOS for this candle (deduplicate)
-            const existingBos = bosEvents.find(b => b.index === i);
-            if (!existingBos) {
-              bosEvents.push({
+            // Prefer the most recent swing (closest to current candle)
+            if (!bestBullishBos || swing.index > bestBullishBos.brokenSwingIndex) {
+              bestBullishBos = {
                 index: i,
                 direction: 'bullish',
                 brokenSwingIndex: swing.index,
@@ -68,15 +79,9 @@ export class BosService {
                 level: swing.price,
                 timestamp: candle.timestamp,
                 strictClose: this.config.strictClose,
-              });
-            } else {
-              // If existing BOS, prefer the most recent swing (closest to current candle)
-              if (swing.index > existingBos.brokenSwingIndex) {
-                existingBos.brokenSwingIndex = swing.index;
-                existingBos.brokenSwingType = 'high';
-                existingBos.level = swing.price;
-              }
+              };
             }
+            brokenSwingIndices.add(swing.index);
           }
         } else if (swing.type === 'low') {
           // Bearish BOS: break below a swing low
@@ -85,10 +90,8 @@ export class BosService {
             : candle.low < swing.price;
 
           if (broken) {
-            // Check if we already have a BOS for this candle (deduplicate)
-            const existingBos = bosEvents.find(b => b.index === i);
-            if (!existingBos) {
-              bosEvents.push({
+            if (!bestBearishBos || swing.index > bestBearishBos.brokenSwingIndex) {
+              bestBearishBos = {
                 index: i,
                 direction: 'bearish',
                 brokenSwingIndex: swing.index,
@@ -96,18 +99,16 @@ export class BosService {
                 level: swing.price,
                 timestamp: candle.timestamp,
                 strictClose: this.config.strictClose,
-              });
-            } else {
-              // If existing BOS, prefer the most recent swing (closest to current candle)
-              if (swing.index > existingBos.brokenSwingIndex) {
-                existingBos.brokenSwingIndex = swing.index;
-                existingBos.brokenSwingType = 'low';
-                existingBos.level = swing.price;
-              }
+              };
             }
+            brokenSwingIndices.add(swing.index);
           }
         }
       }
+
+      // Add the best BOS for each direction (a candle can produce both bullish and bearish BOS)
+      if (bestBullishBos) bosEvents.push(bestBullishBos);
+      if (bestBearishBos) bosEvents.push(bestBearishBos);
     }
 
     // Sort by index
