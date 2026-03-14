@@ -628,45 +628,53 @@ export class ICTEntryService {
 
     const currentPrice = m1Candles[m1Candles.length - 1].close;
 
-    // ── Premium/Discount zone filter using M15 structural range (fib retracement) ──
-    // ICT rule: only BUY in discount (below 50% of M15 range), only SELL in premium (above 50%)
-    // The M15 structural range is defined by the recent swing high and swing low on M15
-    const recentM15ForPD = m15Candles.slice(-30);
-    const m15RangeHigh = Math.max(...recentM15ForPD.map(c => c.high));
-    const m15RangeLow = Math.min(...recentM15ForPD.map(c => c.low));
-    const m15Equilibrium = (m15RangeHigh + m15RangeLow) / 2; // 50% fib level
-    const m15FibOTE = m15RangeLow + (m15RangeHigh - m15RangeLow) * 0.705; // 70.5% OTE level
+    // ── Premium/Discount zone filter using M15 structural swing high/low (fib retracement) ──
+    // ICT rule:
+    //   BUY only in discount zone (below 50% fib of M15 swing range)
+    //   SELL only in premium zone (above 50% fib of M15 swing range)
+    //
+    // Use the RECENT M15 price action to define the structural range for PD zone.
+    // Take the last ~4 hours of M15 candles (16 candles) to find the local range.
+    // This gives the current swing cycle, not the overall multi-day range.
+    const recentM15PD = m15Candles.slice(-16);
+    const m15SwingHigh = Math.max(...recentM15PD.map(c => c.high));
+    const m15SwingLow = Math.min(...recentM15PD.map(c => c.low));
+    const m15Range = m15SwingHigh - m15SwingLow;
+    const m15Equilibrium = m15SwingLow + m15Range * 0.5;   // 50% fib = equilibrium
+    const m15FibOTE = m15SwingLow + m15Range * 0.705;      // 70.5% = OTE (optimal trade entry)
+    const m15Fib618 = m15SwingLow + m15Range * 0.618;      // 61.8% fib
 
-    const isInDiscount = currentPrice < m15Equilibrium;
-    const isInPremium = currentPrice > m15Equilibrium;
+    // Calculate where price is in the fib range (0 = swing low, 1 = swing high)
+    const fibPosition = m15Range > 0 ? (currentPrice - m15SwingLow) / m15Range : 0.5;
 
-    if (bias.direction === 'bullish' && !isInDiscount) {
-      const pdMsg = `BUY rejected: price ${currentPrice.toFixed(2)} is NOT in discount zone (equilibrium: ${m15Equilibrium.toFixed(2)}, range: ${m15RangeLow.toFixed(2)}-${m15RangeHigh.toFixed(2)})`;
-      reasons.push(pdMsg);
-      if (process.env.ICT_DEBUG === 'true') {
-        logger.info(`[ICT] ${pdMsg}`);
+    if (bias.direction === 'bullish') {
+      // BUY: price must be in discount (below 50% fib = below equilibrium)
+      // Ideally in OTE zone: between 61.8% and 78.6% retracement from the HIGH
+      // which means fibPosition should be between 0.214 and 0.382 (measured from low)
+      if (fibPosition > 0.5) {
+        const pdMsg = `BUY rejected: price ${currentPrice.toFixed(2)} at fib ${(fibPosition * 100).toFixed(1)}% — NOT in discount (EQ: ${m15Equilibrium.toFixed(2)}, range: ${m15SwingLow.toFixed(2)}-${m15SwingHigh.toFixed(2)})`;
+        reasons.push(pdMsg);
+        if (process.env.ICT_DEBUG === 'true') logger.info(`[ICT] ${pdMsg}`);
+        return {
+          isValid: false, direction: bias.direction as 'bullish' | 'bearish',
+          entryPrice: 0, entryType: 'market', stopLoss: 0, takeProfit: 0, riskRewardRatio: 0, reasons,
+        };
       }
-      return {
-        isValid: false,
-        direction: bias.direction as 'bullish' | 'bearish',
-        entryPrice: 0, entryType: 'market', stopLoss: 0, takeProfit: 0, riskRewardRatio: 0, reasons,
-      };
-    }
-    if (bias.direction === 'bearish' && !isInPremium) {
-      const pdMsg = `SELL rejected: price ${currentPrice.toFixed(2)} is NOT in premium zone (equilibrium: ${m15Equilibrium.toFixed(2)}, range: ${m15RangeLow.toFixed(2)}-${m15RangeHigh.toFixed(2)})`;
-      reasons.push(pdMsg);
-      if (process.env.ICT_DEBUG === 'true') {
-        logger.info(`[ICT] ${pdMsg}`);
+    } else {
+      // SELL: price must be in premium (above 50% fib = above equilibrium)
+      if (fibPosition < 0.5) {
+        const pdMsg = `SELL rejected: price ${currentPrice.toFixed(2)} at fib ${(fibPosition * 100).toFixed(1)}% — NOT in premium (EQ: ${m15Equilibrium.toFixed(2)}, range: ${m15SwingLow.toFixed(2)}-${m15SwingHigh.toFixed(2)})`;
+        reasons.push(pdMsg);
+        if (process.env.ICT_DEBUG === 'true') logger.info(`[ICT] ${pdMsg}`);
+        return {
+          isValid: false, direction: bias.direction as 'bullish' | 'bearish',
+          entryPrice: 0, entryType: 'market', stopLoss: 0, takeProfit: 0, riskRewardRatio: 0, reasons,
+        };
       }
-      return {
-        isValid: false,
-        direction: bias.direction as 'bullish' | 'bearish',
-        entryPrice: 0, entryType: 'market', stopLoss: 0, takeProfit: 0, riskRewardRatio: 0, reasons,
-      };
     }
 
     if (process.env.ICT_DEBUG === 'true') {
-      logger.info(`[ICT] PD check passed: ${bias.direction} @ ${currentPrice.toFixed(2)}, EQ=${m15Equilibrium.toFixed(2)}, OTE=${m15FibOTE.toFixed(2)}, range=${m15RangeLow.toFixed(2)}-${m15RangeHigh.toFixed(2)}`);
+      logger.info(`[ICT] PD check passed: ${bias.direction} @ ${currentPrice.toFixed(2)}, fib=${(fibPosition * 100).toFixed(1)}%, EQ=${m15Equilibrium.toFixed(2)}, OTE=${m15FibOTE.toFixed(2)}, range=${m15SwingLow.toFixed(2)}-${m15SwingHigh.toFixed(2)}`);
     }
 
     // ── Zone proximity check ──
