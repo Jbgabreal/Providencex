@@ -1,14 +1,15 @@
 #!/bin/bash
 # Start MT5 connector + ngrok tunnel in one command
 #
-# Usage: ./scripts/start-mt5-tunnel.sh
+# Usage: pnpm mt5:tunnel
 
 DOMAIN="inbond-undisputatiously-arlena.ngrok-free.dev"
-MT5_DIR="$(dirname "$0")/../services/mt5-connector"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MT5_DIR="$SCRIPT_DIR/../services/mt5-connector"
 
 # Kill any existing processes
-taskkill //F //IM ngrok.exe 2>/dev/null
-taskkill //F //IM python.exe 2>/dev/null
+taskkill //F //IM ngrok.exe > /dev/null 2>&1
+taskkill //F //IM python.exe > /dev/null 2>&1
 sleep 2
 
 echo "========================================="
@@ -18,8 +19,8 @@ echo ""
 
 # Start MT5 connector in background
 echo "[1/2] Starting MT5 connector on port 3030..."
-cd "$MT5_DIR"
-python src/main.py &
+cd "$MT5_DIR" || { echo "ERROR: Cannot find mt5-connector directory"; exit 1; }
+/c/Python313/python src/main.py &
 MT5_PID=$!
 sleep 3
 
