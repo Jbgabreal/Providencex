@@ -1,10 +1,12 @@
 /**
  * Overview Page - Daily Metrics
- * 
+ *
  * Displays high-level daily stats, trades by symbol/strategy, and top skip reasons
  */
 
 import { DailyMetricsResponse } from '@/types';
+
+export const dynamic = 'force-dynamic';
 
 const TRADING_ENGINE_BASE_URL = process.env.NEXT_PUBLIC_TRADING_ENGINE_BASE_URL || 'http://localhost:3020';
 
@@ -15,8 +17,7 @@ async function getDailyMetrics(date?: string): Promise<DailyMetricsResponse> {
 
   try {
     const res = await fetch(url, {
-      cache: 'no-store', // Always fetch fresh data
-      next: { revalidate: 10 }, // Revalidate every 10 seconds
+      cache: 'no-store',
     });
 
     if (!res.ok) {
