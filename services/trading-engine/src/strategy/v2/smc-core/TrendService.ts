@@ -150,50 +150,15 @@ export class TrendService {
     recentLows: number[],
     lastBosDirection: 'bullish' | 'bearish' | null
   ): TrendBias {
-    // Need at least minSwingPairs of each for strict detection
-    // But allow fallback with at least 1 of each for limited data scenarios
-    const hasEnoughSwings = recentHighs.length >= this.config.minSwingPairs && recentLows.length >= this.config.minSwingPairs;
-    const hasMinimalSwings = recentHighs.length >= 1 && recentLows.length >= 1;
-    
-    if (!hasMinimalSwings) {
-      return 'sideways';
-    }
-    
-    // If we don't have enough swings for strict detection, use relaxed criteria
-    if (!hasEnoughSwings) {
-      // Relaxed: Just check if we have at least 1 high and 1 low, and use BOS direction if available
-      if (lastBosDirection === 'bullish' && recentHighs.length >= 1 && recentLows.length >= 1) {
-        // Simple check: if last high > first high and last low > first low (or just one if only one)
-        if (recentHighs.length >= 2 && recentLows.length >= 2) {
-          const higherHigh = recentHighs[recentHighs.length - 1] > recentHighs[0];
-          const higherLow = recentLows[recentLows.length - 1] > recentLows[0];
-          if (higherHigh && higherLow) {
-            return 'bullish';
-          }
-        } else if (lastBosDirection === 'bullish') {
-          // If we have BOS bullish and at least some swings, lean bullish
-          return 'bullish';
-        }
-      }
-      
-      if (lastBosDirection === 'bearish' && recentHighs.length >= 1 && recentLows.length >= 1) {
-        // Simple check: if last high < first high and last low < first low
-        if (recentHighs.length >= 2 && recentLows.length >= 2) {
-          const lowerHigh = recentHighs[recentHighs.length - 1] < recentHighs[0];
-          const lowerLow = recentLows[recentLows.length - 1] < recentLows[0];
-          if (lowerHigh && lowerLow) {
-            return 'bearish';
-          }
-        } else if (lastBosDirection === 'bearish') {
-          // If we have BOS bearish and at least some swings, lean bearish
-          return 'bearish';
-        }
-      }
-      
+    // STRICT: Require at least 2 swing highs AND 2 swing lows to confirm trend
+    // Bullish = HH + HL (higher highs and higher lows)
+    // Bearish = LH + LL (lower highs and lower lows)
+    // Anything less = sideways (no guessing from a single BOS)
+    if (recentHighs.length < 2 || recentLows.length < 2) {
       return 'sideways';
     }
 
-    // Check for bullish pattern (HH-HL)
+    // Check for bullish pattern: each successive high > previous, each successive low > previous
     let isBullish = true;
     for (let i = 1; i < recentHighs.length; i++) {
       if (recentHighs[i] <= recentHighs[i - 1]) {
@@ -209,14 +174,11 @@ export class TrendService {
         }
       }
     }
-    // HH-HL pattern is sufficient for bullish trend. BOS direction confirms but is not required —
-    // the structural pattern itself is the primary evidence. Requiring BOS creates a chicken-and-egg
-    // problem where no BOS → sideways → no signals, even with clear directional swings.
-    if (isBullish && (lastBosDirection === 'bullish' || lastBosDirection === null)) {
+    if (isBullish) {
       return 'bullish';
     }
 
-    // Check for bearish pattern (LL-LH)
+    // Check for bearish pattern: each successive high < previous, each successive low < previous
     let isBearish = true;
     for (let i = 1; i < recentHighs.length; i++) {
       if (recentHighs[i] >= recentHighs[i - 1]) {
@@ -232,7 +194,7 @@ export class TrendService {
         }
       }
     }
-    if (isBearish && (lastBosDirection === 'bearish' || lastBosDirection === null)) {
+    if (isBearish) {
       return 'bearish';
     }
 

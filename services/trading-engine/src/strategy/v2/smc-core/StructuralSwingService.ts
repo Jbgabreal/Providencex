@@ -65,8 +65,11 @@ export class StructuralSwingService {
       const candle = candleData[i];
       const direction = this.getCandleDirection(candle);
 
-      // Skip neutral candles (they don't contribute to structure)
+      // Neutral/doji candles are treated as pullbacks (don't break or start legs)
       if (direction === 'neutral') {
+        if (currentLeg) {
+          currentLeg.allCandles.push({ index: i, candle });
+        }
         continue;
       }
 

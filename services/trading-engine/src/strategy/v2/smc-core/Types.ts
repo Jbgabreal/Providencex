@@ -131,11 +131,22 @@ export type StructuralSwing = {
  * Swing Detection Configuration
  */
 export type SwingConfig = {
-  method: 'fractal' | 'rolling' | 'hybrid';
+  method: 'fractal' | 'rolling' | 'hybrid' | 'bos-confirmed';
   pivotLeft?: number;          // for fractal method
   pivotRight?: number;          // for fractal method
   lookbackHigh?: number;        // for rolling method
   lookbackLow?: number;         // for rolling method
+};
+
+/**
+ * BOS-Confirmed Swing State - Tracks the state machine for BOS-confirmed swings
+ * ICT rule: A swing is only confirmed when a subsequent candle CLOSES beyond it
+ */
+export type BosConfirmedSwingState = {
+  lastConfirmedSwingHigh: SwingPoint | null;
+  lastConfirmedSwingLow: SwingPoint | null;
+  structuralRange: { high: number; low: number } | null;
+  equilibrium: number | null;  // 50% of structural range
 };
 
 /**

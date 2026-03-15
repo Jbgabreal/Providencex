@@ -126,21 +126,28 @@ export class BacktestRunner {
       const endDate = new Date(this.config.endDate);
       const symbols = Array.isArray(this.config.symbol) ? this.config.symbol : [this.config.symbol];
 
+      // H4 warmup: load 14 days of data BEFORE the start date so H4 structural
+      // swings are available from the first candle of the actual backtest period.
+      // 14 days × 6 H4 candles/day = ~84 H4 candles (plenty for bias detection).
+      const WARMUP_DAYS = 14;
+      const warmupStartDate = new Date(startDate.getTime() - WARMUP_DAYS * 24 * 60 * 60 * 1000);
+      logger.info(`[BacktestRunner] H4 warmup: loading ${WARMUP_DAYS} days before start (${warmupStartDate.toISOString().split('T')[0]} → ${startDate.toISOString().split('T')[0]})`);
+
       // Load historical candles for all symbols
       const allCandles: Map<string, Array<{ candle: any; symbol: string }>> = new Map();
-      
+
       // SENIOR DEV FIX: Always load M1 data directly from data source (MT5/Postgres)
       // This ensures deterministic backtesting with real price action
       // No expansion needed - we get actual M1 candles
       const loadTimeframe = 'M1'; // Force M1 for deterministic backtesting
       logger.info(`[BacktestRunner] Loading ${loadTimeframe} candles from ${this.dataLoader['config']?.dataSource || 'data source'}...`);
       logger.info(`[BacktestRunner] CRITICAL: Using real ${loadTimeframe} data - no expansion or interpolation`);
-      
+
       for (const symbol of symbols) {
         logger.info(`[BacktestRunner] Loading ${loadTimeframe} candles for ${symbol}...`);
         const candles = await this.dataLoader.loadCandles(
           symbol,
-          startDate,
+          warmupStartDate, // Load from warmup date (14 days earlier)
           endDate,
           loadTimeframe // Always M1 for real price data
         );
@@ -331,9 +338,21 @@ export class BacktestRunner {
           // We'll do this by creating a mock snapshot from simulatedMT5
           this.updateOpenTradesSnapshot(openTradesService, simulatedMT5);
 
+          // Block trades during H4 warmup period (before actual start date)
+          const candleTimestamp = candle.timestamp;
+          const isWarmup = candleTimestamp < startDate.getTime();
+
           // Check news guardrail for this candle's timestamp (if enabled)
           let guardrailDecisionForEngine: import('../types').GuardrailDecision;
-          if (this.newsGuardrail) {
+          if (isWarmup) {
+            // During warmup: process candle (builds H4 history) but block trading
+            guardrailDecisionForEngine = {
+              can_trade: false,
+              mode: 'warmup' as any,
+              active_windows: [],
+              reason_summary: 'H4 warmup period — building structural history',
+            };
+          } else if (this.newsGuardrail) {
             const guardrailDecision = await this.newsGuardrail.checkCanTrade(
               candle.timestamp,
               strategy

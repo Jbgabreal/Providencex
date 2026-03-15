@@ -7,7 +7,7 @@
 
 import { Logger } from '@providencex/shared-utils';
 import { Candle } from '../../../marketData/types';
-import { SwingPoint, SwingConfig, CandleData, candlesToData } from './Types';
+import { SwingPoint, SwingConfig, CandleData, BosConfirmedSwingState, candlesToData } from './Types';
 
 const logger = new Logger('SwingService');
 
@@ -30,7 +30,7 @@ export class SwingService {
    */
   detectSwings(candles: Candle[]): SwingPoint[] {
     const candleData = candlesToData(candles);
-    
+
     switch (this.config.method) {
       case 'fractal':
         return this.detectFractalSwings(candleData);
@@ -38,9 +38,41 @@ export class SwingService {
         return this.detectRollingSwings(candleData);
       case 'hybrid':
         return this.detectHybridSwings(candleData);
+      case 'bos-confirmed':
+        return this.detectBosConfirmedSwings(candleData);
       default:
         return this.detectFractalSwings(candleData);
     }
+  }
+
+  /**
+   * Get BOS-confirmed swing state (structural range, equilibrium)
+   * Only meaningful when using 'bos-confirmed' method
+   */
+  getBosConfirmedState(candles: Candle[]): BosConfirmedSwingState {
+    const candleData = candlesToData(candles);
+    const swings = this.detectBosConfirmedSwings(candleData);
+
+    const highs = swings.filter(s => s.type === 'high');
+    const lows = swings.filter(s => s.type === 'low');
+
+    const lastHigh = highs.length > 0 ? highs[highs.length - 1] : null;
+    const lastLow = lows.length > 0 ? lows[lows.length - 1] : null;
+
+    let structuralRange: { high: number; low: number } | null = null;
+    let equilibrium: number | null = null;
+
+    if (lastHigh && lastLow) {
+      structuralRange = { high: lastHigh.price, low: lastLow.price };
+      equilibrium = lastLow.price + (lastHigh.price - lastLow.price) * 0.5;
+    }
+
+    return {
+      lastConfirmedSwingHigh: lastHigh,
+      lastConfirmedSwingLow: lastLow,
+      structuralRange,
+      equilibrium,
+    };
   }
 
   /**
@@ -283,6 +315,146 @@ export class SwingService {
 
     // Convert map to array and sort
     return Array.from(swingMap.values()).sort((a, b) => a.index - b.index);
+  }
+
+  /**
+   * Approach 4: BOS-Confirmed Swing Detection (ICT State Machine)
+   *
+   * ICT rule for confirmed swings:
+   * 1. Detect fractal candidates (local high/low using pivotLeft/pivotRight)
+   * 2. A swing HIGH candidate is CONFIRMED only when a subsequent candle CLOSES ABOVE it
+   * 3. A swing LOW candidate is CONFIRMED only when a subsequent candle CLOSES BELOW it
+   * 4. Wick-only break (high > candidate but close <= candidate) = liquidity sweep, NOT confirmation
+   * 5. Maintain lastConfirmedSwingHigh and lastConfirmedSwingLow state
+   * 6. Update on each confirmation event
+   *
+   * This produces fewer, higher-quality swings that represent true structural levels.
+   */
+  private detectBosConfirmedSwings(candles: CandleData[]): SwingPoint[] {
+    const { pivotLeft = 3, pivotRight = 3 } = this.config;
+    const smcDebug = process.env.SMC_DEBUG === 'true';
+
+    if (candles.length < pivotLeft + pivotRight + 1) {
+      return [];
+    }
+
+    // Step 1: Find all fractal candidates
+    const candidates: SwingPoint[] = [];
+    for (let i = pivotLeft; i < candles.length - pivotRight; i++) {
+      const current = candles[i];
+      let isHighCandidate = true;
+      let isLowCandidate = true;
+
+      for (let j = i - pivotLeft; j <= i + pivotRight; j++) {
+        if (j === i) continue;
+        if (candles[j].high >= current.high) isHighCandidate = false;
+        if (candles[j].low <= current.low) isLowCandidate = false;
+        if (!isHighCandidate && !isLowCandidate) break;
+      }
+
+      if (isHighCandidate) {
+        candidates.push({ index: i, type: 'high', price: current.high, timestamp: current.timestamp });
+      }
+      if (isLowCandidate) {
+        candidates.push({ index: i, type: 'low', price: current.low, timestamp: current.timestamp });
+      }
+    }
+
+    // Step 2: State machine — confirm candidates via BOS (candle CLOSE beyond)
+    const confirmed: SwingPoint[] = [];
+    const confirmedSet = new Set<number>(); // track confirmed candidate indices
+
+    // Process candles after each candidate to check for BOS confirmation
+    for (const candidate of candidates) {
+      if (confirmedSet.has(candidate.index)) continue;
+
+      // Look at all subsequent candles for BOS confirmation
+      for (let i = candidate.index + 1; i < candles.length; i++) {
+        const candle = candles[i];
+
+        if (candidate.type === 'high') {
+          // Swing HIGH confirmed when candle CLOSES above it
+          if (candle.close > candidate.price) {
+            confirmed.push(candidate);
+            confirmedSet.add(candidate.index);
+            if (smcDebug) {
+              logger.info(
+                `[SwingService] BOS-confirmed swing HIGH: ${candidate.price.toFixed(2)} at idx ${candidate.index}, ` +
+                `confirmed by close ${candle.close.toFixed(2)} at idx ${i}`
+              );
+            }
+            break;
+          }
+          // If a LOWER high candidate appears before confirmation, this one may be superseded
+          // but we still wait for BOS confirmation of the original
+        } else {
+          // Swing LOW confirmed when candle CLOSES below it
+          if (candle.close < candidate.price) {
+            confirmed.push(candidate);
+            confirmedSet.add(candidate.index);
+            if (smcDebug) {
+              logger.info(
+                `[SwingService] BOS-confirmed swing LOW: ${candidate.price.toFixed(2)} at idx ${candidate.index}, ` +
+                `confirmed by close ${candle.close.toFixed(2)} at idx ${i}`
+              );
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    return confirmed.sort((a, b) => a.index - b.index);
+  }
+
+  /**
+   * Detect liquidity sweeps — wick beyond swing but no close beyond
+   * Returns sweep events (useful for ICT entry model: sweep = entry trigger)
+   */
+  detectLiquiditySweeps(candles: Candle[], confirmedSwings: SwingPoint[]): Array<{
+    index: number;        // candle that swept
+    sweptSwing: SwingPoint;
+    sweepPrice: number;   // the wick extreme
+    timestamp: number;
+  }> {
+    const candleData = candlesToData(candles);
+    const sweeps: Array<{ index: number; sweptSwing: SwingPoint; sweepPrice: number; timestamp: number }> = [];
+    const sweptSet = new Set<number>();
+
+    for (let i = 0; i < candleData.length; i++) {
+      const candle = candleData[i];
+
+      for (const swing of confirmedSwings) {
+        if (swing.index >= i) continue;
+        if (sweptSet.has(swing.index)) continue;
+
+        if (swing.type === 'high') {
+          // Liquidity sweep: wick above swing high but close <= swing high
+          if (candle.high > swing.price && candle.close <= swing.price) {
+            sweeps.push({
+              index: i,
+              sweptSwing: swing,
+              sweepPrice: candle.high,
+              timestamp: candle.timestamp,
+            });
+            sweptSet.add(swing.index);
+          }
+        } else {
+          // Liquidity sweep: wick below swing low but close >= swing low
+          if (candle.low < swing.price && candle.close >= swing.price) {
+            sweeps.push({
+              index: i,
+              sweptSwing: swing,
+              sweepPrice: candle.low,
+              timestamp: candle.timestamp,
+            });
+            sweptSet.add(swing.index);
+          }
+        }
+      }
+    }
+
+    return sweeps.sort((a, b) => a.index - b.index);
   }
 
   /**

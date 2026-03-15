@@ -31,11 +31,12 @@ export class MarketStructureHTF {
   private chochService: ChochService;
   private useStructuralSwings: boolean; // Toggle between structural and fractal swings
 
-  constructor(lookbackPeriod: number = 50, useStructuralSwings: boolean = false) {
+  constructor(lookbackPeriod: number = 50, useStructuralSwings: boolean = true) {
     this.lookbackPeriod = lookbackPeriod;
-    // H4 should use fractal/hybrid swings by default — structural swings (3-impulse rule)
-    // are too strict for 4-hour candles where doji/neutral candles break impulse chains.
-    // Structural swings work better on lower timeframes (M15, M5).
+    // H4 uses structural swings (3-impulse rule) to detect EXTERNAL structure only.
+    // Fractal/hybrid swings pick up internal retracements as noise.
+    // External structure = 3+ consecutive bullish/bearish candles forming a leg.
+    // Internal swings within the external range are ignored for bias determination.
     this.useStructuralSwings = useStructuralSwings;
 
     // Initialize SMC core services with HTF-appropriate config
@@ -58,7 +59,7 @@ export class MarketStructureHTF {
     });
     
     this.trendService = new TrendService({
-      minSwingPairs: 1,
+      minSwingPairs: 2,  // Require at least 2 HH+HL or 2 LH+LL to confirm trend
       discountMax: 0.5,
       premiumMin: 0.5,
     });
@@ -143,42 +144,10 @@ export class MarketStructureHTF {
       }
     }
 
-    // Fallback: If formal trend detection returns sideways, use ICT PD model
-    // This handles cases with limited candles where formal HH/HL pattern can't be confirmed
-    if (trend === 'sideways' && candles.length >= 2) {
-      const lastCandle = candles[candles.length - 1];
-      const lastClose = lastCandle.close;
-      
-      // Calculate previous swing high/low from recent candles (rolling lookback)
-      // Use adaptive lookback based on available candles
-      const swingLookback = Math.min(Math.max(10, Math.floor(candles.length * 0.6)), 50);
-      const swingCandles = candles.slice(-swingLookback);
-      
-      if (swingCandles.length >= 2) {
-        const previousSwingHigh = Math.max(...swingCandles.slice(0, -1).map(c => c.high));
-        const previousSwingLow = Math.min(...swingCandles.slice(0, -1).map(c => c.low));
-        
-        // ICT PD model: trend = bullish if lastClose > previousSwingHigh
-        if (lastClose > previousSwingHigh) {
-          trend = 'bullish';
-          if (smcDebug) {
-            logger.info(
-              `[MarketStructureHTF] Fallback ICT PD: bullish ` +
-              `(lastClose ${lastClose.toFixed(2)} > swingHigh ${previousSwingHigh.toFixed(2)})`
-            );
-          }
-        } else if (lastClose < previousSwingLow) {
-          // ICT PD model: trend = bearish if lastClose < previousSwingLow
-          trend = 'bearish';
-          if (smcDebug) {
-            logger.info(
-              `[MarketStructureHTF] Fallback ICT PD: bearish ` +
-              `(lastClose ${lastClose.toFixed(2)} < swingLow ${previousSwingLow.toFixed(2)})`
-            );
-          }
-        }
-      }
-    }
+    // No fallback: if TrendService says sideways, it IS sideways.
+    // Bullish requires confirmed HH + HL pattern (at least 2 swing highs + 2 swing lows).
+    // Bearish requires confirmed LH + LL pattern.
+    // A single BOS or close > swing high is NOT enough to determine directional bias.
 
     // Get swing highs and lows
     const swingHighs = this.swingService.getSwingHighs(swings);
