@@ -38,8 +38,11 @@ const SYMBOL_MAP: Record<string, string> = {
   R_10: 'R_10',
 };
 
+// ProvidenceX Deriv App ID — shared across all users
+export const DERIV_APP_ID = process.env.DERIV_APP_ID || '32Irfb5O7IuciwD02q5J1';
+
 export interface DerivAdapterConfig {
-  appId: string;
+  appId?: string;   // Defaults to DERIV_APP_ID
   apiToken: string;
   accountId?: string;
 }
@@ -64,7 +67,7 @@ export class DerivBrokerAdapter implements BrokerAdapter {
   private accountCurrency = 'USD';
 
   constructor(config: DerivAdapterConfig) {
-    this.config = config;
+    this.config = { ...config, appId: config.appId || DERIV_APP_ID };
   }
 
   async connect(): Promise<void> {

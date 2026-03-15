@@ -23,7 +23,6 @@ export default function AccountsPage() {
     is_demo: false,
     baseUrl: '',
     // Deriv fields
-    deriv_app_id: '',
     deriv_api_token: '',
     deriv_account_id: '',
   });
@@ -38,7 +37,7 @@ export default function AccountsPage() {
     setFormData({
       label: '', account_number: '', server: '', password: '',
       broker_name: '', is_demo: false, baseUrl: '',
-      deriv_app_id: '', deriv_api_token: '', deriv_account_id: '',
+      deriv_api_token: '', deriv_account_id: '',
     });
     setBrokerType('mt5');
   };
@@ -54,7 +53,6 @@ export default function AccountsPage() {
           label: formData.label || 'Deriv Account',
           broker_type: 'deriv',
           broker_credentials: {
-            appId: formData.deriv_app_id,
             apiToken: formData.deriv_api_token,
             accountId: formData.deriv_account_id || undefined,
           },
@@ -208,19 +206,6 @@ export default function AccountsPage() {
             {/* Deriv Fields */}
             {brokerType === 'deriv' && (
               <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">App ID *</label>
-                  <input
-                    type="text" required
-                    value={formData.deriv_app_id}
-                    onChange={(e) => setFormData({ ...formData, deriv_app_id: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    placeholder="Your Deriv App ID"
-                  />
-                  <p className="mt-1 text-xs text-gray-500">
-                    Register an app at deriv.com to get your App ID
-                  </p>
-                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">API Token *</label>
                   <input

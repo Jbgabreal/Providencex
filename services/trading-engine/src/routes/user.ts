@@ -161,8 +161,8 @@ export default function createUserRouter(config: TradingEngineConfig) {
   // Validate based on broker type
   const resolvedBrokerType = broker_type || 'mt5';
   if (resolvedBrokerType === 'deriv') {
-    if (!broker_credentials?.apiToken || !broker_credentials?.appId) {
-      return res.status(400).json({ error: 'Deriv accounts require broker_credentials.appId and broker_credentials.apiToken' });
+    if (!broker_credentials?.apiToken) {
+      return res.status(400).json({ error: 'Deriv accounts require broker_credentials.apiToken' });
     }
   } else {
     if (!account_number || !server) {

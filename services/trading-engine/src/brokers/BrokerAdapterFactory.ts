@@ -31,11 +31,8 @@ export class BrokerAdapterFactory {
         if (!credentials.apiToken) {
           throw new Error('Deriv adapter requires apiToken in credentials');
         }
-        if (!credentials.appId) {
-          throw new Error('Deriv adapter requires appId in credentials');
-        }
         return new DerivBrokerAdapter({
-          appId: credentials.appId,
+          appId: credentials.appId, // Falls back to DERIV_APP_ID if not set
           apiToken: credentials.apiToken,
           accountId: credentials.accountId,
         });
