@@ -1,14 +1,8 @@
 [build]
-builder = "nixpacks"
-buildCommand = "cd ../.. && pnpm install --frozen-lockfile && pnpm --filter @providencex/admin-dashboard build"
-watchPatterns = ["services/admin-dashboard/**"]
+dockerfilePath = "services/admin-dashboard/Dockerfile"
 
 [deploy]
-startCommand = "cd ../.. && pnpm --filter @providencex/admin-dashboard start"
 healthcheckPath = "/"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
-
-[service]
-internalPort = 3001

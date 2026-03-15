@@ -1,14 +1,8 @@
 [build]
-builder = "nixpacks"
-buildCommand = "cd ../.. && pnpm install --frozen-lockfile && pnpm --filter @providencex/shared-types build && pnpm --filter @providencex/shared-utils build && pnpm --filter @providencex/shared-config build && pnpm --filter @providencex/api-gateway build"
-watchPatterns = ["services/api-gateway/**", "packages/**"]
+dockerfilePath = "services/api-gateway/Dockerfile"
 
 [deploy]
-startCommand = "cd ../.. && node services/api-gateway/dist/index.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
-
-[service]
-internalPort = 3000

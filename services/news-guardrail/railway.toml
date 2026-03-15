@@ -1,14 +1,8 @@
 [build]
-builder = "nixpacks"
-buildCommand = "cd ../.. && pnpm install --frozen-lockfile && pnpm --filter @providencex/shared-types build && pnpm --filter @providencex/shared-utils build && pnpm --filter @providencex/shared-config build && pnpm --filter @providencex/news-guardrail build"
-watchPatterns = ["services/news-guardrail/**", "packages/**"]
+dockerfilePath = "services/news-guardrail/Dockerfile"
 
 [deploy]
-startCommand = "cd ../.. && node services/news-guardrail/dist/index.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
-
-[service]
-internalPort = 3010
