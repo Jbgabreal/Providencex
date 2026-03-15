@@ -25,6 +25,9 @@ export class BrokerAdapterFactory {
         return new MT5BrokerAdapter({
           baseUrl: credentials.baseUrl || defaultMt5BaseUrl || 'http://localhost:3030',
           login: credentials.login,
+          password: credentials.password,
+          server: credentials.server,
+          terminalPath: credentials.terminalPath,
         });
 
       case 'deriv': {

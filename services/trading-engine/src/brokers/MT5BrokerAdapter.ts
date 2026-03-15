@@ -20,16 +20,19 @@ const logger = new Logger('MT5BrokerAdapter');
 export interface MT5AdapterConfig {
   baseUrl: string;
   login?: number;
+  password?: string;
+  server?: string;
+  terminalPath?: string;
 }
 
 export class MT5BrokerAdapter implements BrokerAdapter {
   readonly brokerType = 'mt5' as const;
   private baseUrl: string;
-  private login?: number;
+  private config: MT5AdapterConfig;
 
   constructor(config: MT5AdapterConfig) {
     this.baseUrl = config.baseUrl;
-    this.login = config.login;
+    this.config = config;
   }
 
   async connect(): Promise<void> {
@@ -46,7 +49,7 @@ export class MT5BrokerAdapter implements BrokerAdapter {
 
   async openTrade(request: NormalizedTradeRequest): Promise<NormalizedTradeResult> {
     try {
-      const tradeRequest: TradeRequest = {
+      const tradeRequest: any = {
         symbol: request.symbol,
         direction: request.direction,
         entry_type: request.orderKind === 'market' ? 'MARKET' : request.orderKind === 'limit' ? 'LIMIT' : 'STOP',
@@ -58,6 +61,16 @@ export class MT5BrokerAdapter implements BrokerAdapter {
         strategy_id: request.strategyId,
         metadata: request.metadata,
       };
+
+      // Multi-account: pass credentials so connector can switch accounts
+      if (this.config.login && this.config.password) {
+        tradeRequest.account = {
+          mt5_login: this.config.login,
+          mt5_password: this.config.password,
+          mt5_server: this.config.server || '',
+          mt5_terminal_path: this.config.terminalPath || null,
+        };
+      }
 
       const response = await axios.post<TradeResponse>(
         `${this.baseUrl}/api/v1/trades/open`,
@@ -90,9 +103,19 @@ export class MT5BrokerAdapter implements BrokerAdapter {
 
   async closeTrade(ticket: string | number, reason?: string): Promise<NormalizedTradeResult> {
     try {
+      const payload: any = { mt5_ticket: ticket, reason };
+      if (this.config.login && this.config.password) {
+        payload.account = {
+          mt5_login: this.config.login,
+          mt5_password: this.config.password,
+          mt5_server: this.config.server || '',
+          mt5_terminal_path: this.config.terminalPath || null,
+        };
+      }
+
       const response = await axios.post(
         `${this.baseUrl}/api/v1/trades/close`,
-        { mt5_ticket: ticket, reason },
+        payload,
         { timeout: 10000 }
       );
 

@@ -256,6 +256,8 @@ export class UserAssignmentOrchestrator {
       brokerCredentials: ctx.mt5Account.broker_credentials || {
         baseUrl: typeof meta.baseUrl === 'string' ? meta.baseUrl : defaultBaseUrl,
         login: Number(meta.login || ctx.mt5Account.account_number),
+        password: meta.password || undefined,
+        server: ctx.mt5Account.server || undefined,
       },
       // Store multi-tenant metadata for trade history persistence
       metadata: {

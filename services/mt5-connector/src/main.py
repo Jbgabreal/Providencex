@@ -18,6 +18,7 @@ from .models import (
 )
 from .order_event_emitter import OrderEventEmitter
 from .orderflow_accumulator import get_accumulator
+from .account_manager import init_account_manager, get_account_manager, AccountCredentials
 from .utils import logger
 
 # Initialize configuration
@@ -45,24 +46,37 @@ async def lifespan(app: FastAPI):
     logger.info(f"Configuration: {config.get_config_dict()}")
     
     mt5_client = MT5Client(config)
-    
+
     # Initialize order event emitter (v3)
     order_event_emitter = OrderEventEmitter(config)
-    
-    # Try to initialize MT5 (but don't fail if it doesn't connect yet)
+
+    # Initialize multi-account manager
+    acct_mgr = init_account_manager(default_terminal_path=config.path)
+    logger.info("[MultiAccount] Account manager initialized")
+
+    # Try to initialize MT5 with default/admin account
     init_success, init_msg = mt5_client.initialize()
     if init_success:
-        logger.info("MT5 initialized successfully on startup")
+        logger.info("MT5 initialized successfully on startup (default account)")
+        # Also register with account manager
+        if config.validate():
+            acct_mgr.connect_default(AccountCredentials(
+                login=config.login,
+                password=config.password,
+                server=config.server,
+                terminal_path=config.path,
+            ))
     else:
         logger.warning(f"MT5 initialization deferred: {init_msg}")
         logger.info("MT5 will be initialized on first trade request")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down MT5 Connector...")
     if order_event_emitter:
         await order_event_emitter.close()
+    acct_mgr.shutdown()
     if mt5_client:
         mt5_client.shutdown()
 
@@ -282,9 +296,24 @@ async def open_trade(request: OpenTradeRequest):
     }
     
     logger.info(f"Trade request dict: SL={request_dict['stop_loss']}, TP={request_dict['take_profit']}")
-    
-    # Execute trade
-    result = mt5_client.open_trade(request_dict)
+
+    # Execute trade — use account manager if per-request credentials provided
+    if request.account and request.account.mt5_login and request.account.mt5_password:
+        creds = AccountCredentials(
+            login=request.account.mt5_login,
+            password=request.account.mt5_password,
+            server=request.account.mt5_server or "",
+            terminal_path=request.account.mt5_terminal_path,
+        )
+        logger.info(f"[MultiAccount] Executing trade for account {creds.login}")
+        try:
+            result = get_account_manager().execute_for_account(
+                creds, lambda: mt5_client.open_trade(request_dict)
+            )
+        except ConnectionError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    else:
+        result = mt5_client.open_trade(request_dict)
     
     if result['success']:
         ticket = result.get('ticket')
@@ -355,9 +384,24 @@ async def close_trade(request: CloseTradeRequest):
         ticket = request.mt5_ticket
     
     logger.info(f"Received close trade request: ticket {ticket}, reason: {request.reason or 'N/A'}")
-    
-    # Execute close
-    result = mt5_client.close_trade(ticket)
+
+    # Execute close — use account manager if per-request credentials provided
+    if request.account and request.account.mt5_login and request.account.mt5_password:
+        creds = AccountCredentials(
+            login=request.account.mt5_login,
+            password=request.account.mt5_password,
+            server=request.account.mt5_server or "",
+            terminal_path=request.account.mt5_terminal_path,
+        )
+        logger.info(f"[MultiAccount] Closing trade for account {creds.login}")
+        try:
+            result = get_account_manager().execute_for_account(
+                creds, lambda: mt5_client.close_trade(ticket)
+            )
+        except ConnectionError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    else:
+        result = mt5_client.close_trade(ticket)
     
     if result['success']:
         # Note: position_closed events will be emitted via MT5 history polling (v3)

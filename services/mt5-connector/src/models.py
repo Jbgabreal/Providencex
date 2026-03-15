@@ -6,9 +6,17 @@ from typing import Optional, Literal, List
 from datetime import datetime
 
 
+class AccountCredentialsPayload(BaseModel):
+    """Optional per-request MT5 account credentials for multi-account support."""
+    mt5_login: Optional[int] = Field(None, description="MT5 account login number")
+    mt5_password: Optional[str] = Field(None, description="MT5 account password")
+    mt5_server: Optional[str] = Field(None, description="MT5 broker server name")
+    mt5_terminal_path: Optional[str] = Field(None, description="Path to MT5 terminal exe (optional)")
+
+
 class OpenTradeRequest(BaseModel):
     """Request model for opening a trade
-    
+
     Supports both PRD format and Trading Engine format for backward compatibility.
     """
     symbol: str = Field(..., description="Trading symbol (e.g., 'XAUUSD', 'EURUSD')")
@@ -20,12 +28,15 @@ class OpenTradeRequest(BaseModel):
     take_profit: Optional[float] = Field(None, description="Take profit price")
     strategy: str = Field(default="low", description="Strategy identifier")
     strategy_id: str = Field(None, description="Alternative strategy field (for Trading Engine compatibility)")
-    
+
     # Alternative field names for Trading Engine compatibility
     stop_loss_price: Optional[float] = Field(None, description="Alternative field name for stop_loss")
     take_profit_price: Optional[float] = Field(None, description="Alternative field name for take_profit")
     entry_type: Optional[str] = Field(None, description="Entry type (MARKET/LIMIT/STOP) - legacy field, use order_kind")
     metadata: Optional[dict] = Field(None, description="Metadata - for compatibility")
+
+    # Multi-account: optional per-request credentials
+    account: Optional[AccountCredentialsPayload] = Field(None, description="MT5 account credentials for multi-account mode")
     
     @field_validator('symbol')
     @classmethod
@@ -90,11 +101,14 @@ class OpenTradeRequest(BaseModel):
 class CloseTradeRequest(BaseModel):
     """Request model for closing a trade"""
     ticket: int = Field(..., description="MT5 position ticket ID")
-    
+
     # Also accept mt5_ticket for backward compatibility with Trading Engine
     mt5_ticket: Optional[int] = Field(None, description="Alternative field name for ticket")
-    
+
     reason: Optional[str] = Field(None, description="Reason for closing the trade")
+
+    # Multi-account: optional per-request credentials
+    account: Optional[AccountCredentialsPayload] = Field(None, description="MT5 account credentials for multi-account mode")
     
     @model_validator(mode='after')
     def validate_ticket(self):
