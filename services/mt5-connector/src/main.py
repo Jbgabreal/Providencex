@@ -4,7 +4,9 @@ Provides REST API for executing trades in MetaTrader 5
 """
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, model_validator
 from contextlib import asynccontextmanager
+from typing import Optional, List
 import asyncio
 from datetime import datetime, timedelta, timezone
 import MetaTrader5 as mt5
@@ -19,6 +21,7 @@ from .models import (
 from .order_event_emitter import OrderEventEmitter
 from .orderflow_accumulator import get_accumulator
 from .account_manager import init_account_manager, get_account_manager, AccountCredentials
+from .worker_pool import init_worker_pool, get_worker_pool
 from .utils import logger
 
 # Initialize configuration
@@ -50,9 +53,13 @@ async def lifespan(app: FastAPI):
     # Initialize order event emitter (v3)
     order_event_emitter = OrderEventEmitter(config)
 
-    # Initialize multi-account manager
+    # Initialize multi-account manager (sequential fallback)
     acct_mgr = init_account_manager(default_terminal_path=config.path)
     logger.info("[MultiAccount] Account manager initialized")
+
+    # Initialize parallel worker pool
+    pool = init_worker_pool(default_terminal_path=config.path)
+    logger.info("[WorkerPool] Worker pool initialized")
 
     # Try to initialize MT5 with default/admin account
     init_success, init_msg = mt5_client.initialize()
@@ -76,6 +83,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down MT5 Connector...")
     if order_event_emitter:
         await order_event_emitter.close()
+    pool.shutdown()
     acct_mgr.shutdown()
     if mt5_client:
         mt5_client.shutdown()
@@ -1230,6 +1238,99 @@ async def get_history(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
         )
+
+
+# =============================================
+# Multi-Account Parallel Execution Endpoints
+# =============================================
+
+class RegisterAccountRequest(BaseModel):
+    login: int
+    password: str
+    server: str
+    terminal_path: Optional[str] = None
+
+class ParallelTradeRequest(BaseModel):
+    """Execute a trade across multiple accounts simultaneously."""
+    symbol: str
+    direction: str
+    order_kind: str = 'market'
+    lot_size: float
+    entry_price: Optional[float] = None
+    stop_loss: Optional[float] = None
+    stop_loss_price: Optional[float] = None
+    take_profit: Optional[float] = None
+    take_profit_price: Optional[float] = None
+    logins: Optional[List[int]] = None  # None = all registered accounts
+
+    @model_validator(mode='after')
+    def normalize(self):
+        if self.stop_loss is None and self.stop_loss_price:
+            self.stop_loss = self.stop_loss_price
+        if self.take_profit is None and self.take_profit_price:
+            self.take_profit = self.take_profit_price
+        return self
+
+
+@app.post("/api/v1/workers/register")
+async def register_worker_account(request: RegisterAccountRequest):
+    """Register an MT5 account — spawns a dedicated worker process."""
+    pool = get_worker_pool()
+    success = pool.register_account(
+        login=request.login,
+        password=request.password,
+        server=request.server,
+        terminal_path=request.terminal_path,
+    )
+    if success:
+        return {"success": True, "message": f"Worker spawned for account {request.login}", "active_workers": pool.worker_count}
+    else:
+        raise HTTPException(status_code=500, detail=f"Failed to spawn worker for account {request.login}")
+
+
+@app.post("/api/v1/workers/trade")
+async def parallel_trade(request: ParallelTradeRequest):
+    """Execute a trade across all registered accounts IN PARALLEL."""
+    pool = get_worker_pool()
+    if pool.worker_count == 0:
+        raise HTTPException(status_code=400, detail="No worker accounts registered. POST /api/v1/workers/register first.")
+
+    payload = {
+        'symbol': request.symbol.upper(),
+        'direction': request.direction.lower(),
+        'order_kind': request.order_kind,
+        'lot_size': request.lot_size,
+        'entry_price': request.entry_price,
+        'stop_loss': request.stop_loss,
+        'take_profit': request.take_profit,
+    }
+
+    results = pool.execute_trade_all(
+        action='open_trade',
+        payload=payload,
+        logins=request.logins,
+    )
+
+    successes = sum(1 for r in results.values() if r.get('success'))
+    failures = len(results) - successes
+
+    return {
+        "success": failures == 0,
+        "total": len(results),
+        "successes": successes,
+        "failures": failures,
+        "results": {str(k): v for k, v in results.items()},
+    }
+
+
+@app.get("/api/v1/workers/status")
+async def worker_status():
+    """Check status of all worker processes."""
+    pool = get_worker_pool()
+    return {
+        "active_workers": pool.worker_count,
+        "accounts": pool.active_accounts,
+    }
 
 
 # For development: run with uvicorn

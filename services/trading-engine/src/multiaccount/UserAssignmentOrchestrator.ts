@@ -166,6 +166,9 @@ export class UserAssignmentOrchestrator {
       return;
     }
 
+    // Build all execution engines first, then execute IN PARALLEL
+    const executions: Promise<any>[] = [];
+
     for (const ctx of assignments) {
       const account: AccountInfo = await this.buildAccountInfoFromAssignment(ctx);
       const accountKey = `mt5:${account.id}`;
@@ -187,7 +190,7 @@ export class UserAssignmentOrchestrator {
         `strategyKey=${ctx.strategyProfile.key} riskTier=${ctx.strategyProfile.risk_tier}`
       );
 
-      // Build per-account execution engine with real dependencies
+      // Build per-account execution engine
       const engine = new AccountExecutionEngine(
         account,
         this.accountRegistry,
@@ -199,15 +202,20 @@ export class UserAssignmentOrchestrator {
         this.tradeHistoryRepo
       );
 
-      try {
-        await engine.execute(signal, baseContext, guardrailMode, strategyKey);
-      } catch (error) {
-        this.logger.error(
-          `[UserAssignmentOrchestrator] Error executing assignment for account ${ctx.mt5Account.id}`,
-          error
-        );
-      }
+      // Queue for parallel execution
+      executions.push(
+        engine.execute(signal, baseContext, guardrailMode, strategyKey).catch((error) => {
+          this.logger.error(
+            `[UserAssignmentOrchestrator] Error executing assignment for account ${ctx.mt5Account.id}`,
+            error
+          );
+        })
+      );
     }
+
+    // Execute ALL accounts in parallel — each BrokerAdapter handles its own connection
+    await Promise.all(executions);
+    this.logger.info(`[UserAssignmentOrchestrator] All ${executions.length} assignment(s) executed in parallel`);
   }
 
   private async buildAccountInfoFromAssignment(ctx: ActiveAssignmentContext): Promise<AccountInfo> {
