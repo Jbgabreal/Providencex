@@ -22,7 +22,7 @@ Write-Host "  Working dir: $MT5_DIR"
 Write-Host "  Log file: $LOG_FILE"
 
 $mt5Process = Start-Process -FilePath "py" `
-    -ArgumentList "-c", "import uvicorn; uvicorn.run('src.main:app', host='0.0.0.0', port=3030)" `
+    -ArgumentList "run.py" `
     -WorkingDirectory $MT5_DIR `
     -PassThru `
     -RedirectStandardOutput $LOG_FILE `
