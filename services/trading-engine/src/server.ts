@@ -202,11 +202,14 @@ try {
 }
 
 // Start order flow service if enabled
-if (orderFlowConfig.enabled) {
-  orderFlowService.start(marketDataConfig.symbols);
-  logger.info(`[OrderFlow] Order Flow Service started for symbols: ${marketDataConfig.symbols.join(', ')}`);
-} else {
-  logger.info('[OrderFlow] Order Flow Service disabled');
+if (orderFlowService) {
+  const ofc = getOrderFlowConfig();
+  if (ofc.enabled) {
+    orderFlowService.start(marketDataConfig.symbols);
+    logger.info(`[OrderFlow] Order Flow Service started for symbols: ${marketDataConfig.symbols.join(', ')}`);
+  } else {
+    logger.info('[OrderFlow] Order Flow Service disabled');
+  }
 }
 
 // Historical Backfill Service
@@ -1200,7 +1203,7 @@ async function start(): Promise<void> {
         const shutdown = async (signal: string) => {
           logger.info(`${signal} received, shutting down gracefully...`);
           priceFeed.stop();
-          if (orderFlowService.isServiceRunning()) {
+          if (orderFlowService?.isServiceRunning()) {
             orderFlowService.stop();
           }
           openTradesService.stop();
