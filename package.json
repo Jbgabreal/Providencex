@@ -13,7 +13,7 @@
     "test": "pnpm --recursive test",
     "lint": "pnpm --recursive lint",
     "test-db": "tsx scripts/test-db-connection.ts",
-    "mt5:tunnel": "bash scripts/start-mt5-tunnel.sh",
+    "mt5:tunnel": "powershell -ExecutionPolicy Bypass -File scripts/start-mt5-tunnel.ps1",
     "migrate": "tsx scripts/migrate.ts",
     "deploy": "for svc in trading-engine news-guardrail api-gateway client-portal admin-dashboard; do railway up --service $svc --detach; done"
   },
