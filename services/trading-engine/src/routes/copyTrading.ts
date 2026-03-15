@@ -65,7 +65,7 @@ export default function createCopyTradingRouter(config: TradingEngineConfig) {
 
   router.post('/subscriptions', async (req: Request, res: Response) => {
     const userId = req.auth!.userId;
-    const { mentor_profile_id, mt5_account_id, mode, risk_mode, risk_amount, selected_tp_levels } = req.body || {};
+    const { mentor_profile_id, mt5_account_id, mode, risk_mode, risk_amount, selected_tp_levels, selected_symbols } = req.body || {};
 
     if (!mentor_profile_id || !mt5_account_id) {
       return res.status(400).json({ error: 'mentor_profile_id and mt5_account_id are required' });
@@ -98,6 +98,7 @@ export default function createCopyTradingRouter(config: TradingEngineConfig) {
         riskMode: risk_mode || 'percentage',
         riskAmount: risk_amount || 1.0,
         selectedTpLevels: selected_tp_levels || [1],
+        selectedSymbols: selected_symbols || [],
       });
 
       // Increment follower count
@@ -130,6 +131,7 @@ export default function createCopyTradingRouter(config: TradingEngineConfig) {
         riskMode: req.body.risk_mode,
         riskAmount: req.body.risk_amount,
         selectedTpLevels: req.body.selected_tp_levels,
+        selectedSymbols: req.body.selected_symbols,
       });
       if (!updated) return res.status(404).json({ error: 'Subscription not found' });
       res.json({ success: true, subscription: updated });

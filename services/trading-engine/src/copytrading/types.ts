@@ -66,6 +66,7 @@ export interface FollowerSubscription {
   risk_mode: RiskMode;
   risk_amount: number;
   selected_tp_levels: number[];
+  selected_symbols: string[];  // empty = copy all pairs, otherwise filter
   status: SubscriptionStatus;
   created_at: string;
   updated_at: string;

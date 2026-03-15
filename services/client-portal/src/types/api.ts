@@ -73,6 +73,7 @@ export interface UserTradingConfig {
   risk_per_trade_usd?: number;
   max_consecutive_losses?: number;
   sessions?: Array<'asian' | 'london' | 'newyork'>;
+  symbols?: string[];
 }
 
 // Strategy Assignment Types

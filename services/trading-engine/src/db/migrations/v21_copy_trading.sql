@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS follower_subscriptions (
   risk_mode TEXT NOT NULL DEFAULT 'percentage' CHECK (risk_mode IN ('percentage', 'usd', 'fixed_lot')),
   risk_amount NUMERIC NOT NULL DEFAULT 1.0,
   selected_tp_levels INTEGER[] NOT NULL DEFAULT '{1}',
+  selected_symbols TEXT[] NOT NULL DEFAULT '{}',  -- empty = copy all pairs
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'stopped')),
   UNIQUE(user_id, mentor_profile_id, mt5_account_id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

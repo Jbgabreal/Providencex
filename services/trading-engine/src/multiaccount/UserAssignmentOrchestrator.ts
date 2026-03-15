@@ -242,7 +242,9 @@ export class UserAssignmentOrchestrator {
             : defaultBaseUrl,
         login: Number(meta.login || ctx.mt5Account.account_number),
       },
-      symbols: ['XAUUSD'], // initial default; can be extended per-profile
+      symbols: ctx.assignment.user_config?.symbols
+        || (ctx.strategyProfile.config as any)?.symbols
+        || ['XAUUSD', 'EURUSD', 'GBPUSD', 'US30'], // user config → profile config → defaults
       risk: {
         // These values are overridden by StrategyProfileRiskConfig inside PerAccountRiskService.
         riskPercent: ctx.profileRiskConfig.riskPerTradePercent,

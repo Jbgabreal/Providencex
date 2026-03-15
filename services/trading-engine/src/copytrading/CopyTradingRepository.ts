@@ -211,16 +211,18 @@ export class CopyTradingRepository {
     riskMode?: RiskMode;
     riskAmount?: number;
     selectedTpLevels?: number[];
+    selectedSymbols?: string[];
   }): Promise<FollowerSubscription> {
     const pool = this.ensurePool();
     const result = await pool.query(
       `INSERT INTO follower_subscriptions (
-        user_id, mentor_profile_id, mt5_account_id, mode, risk_mode, risk_amount, selected_tp_levels
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        user_id, mentor_profile_id, mt5_account_id, mode, risk_mode, risk_amount, selected_tp_levels, selected_symbols
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [
         params.userId, params.mentorProfileId, params.mt5AccountId,
         params.mode || 'auto_trade', params.riskMode || 'percentage',
         params.riskAmount || 1.0, params.selectedTpLevels || [1],
+        params.selectedSymbols || [],
       ]
     );
     return result.rows[0];
@@ -249,6 +251,7 @@ export class CopyTradingRepository {
     riskMode?: RiskMode;
     riskAmount?: number;
     selectedTpLevels?: number[];
+    selectedSymbols?: string[];
   }): Promise<FollowerSubscription | null> {
     const pool = this.ensurePool();
     const sets: string[] = [];
@@ -258,6 +261,7 @@ export class CopyTradingRepository {
     if (updates.riskMode) { sets.push(`risk_mode = $${i++}`); params.push(updates.riskMode); }
     if (updates.riskAmount !== undefined) { sets.push(`risk_amount = $${i++}`); params.push(updates.riskAmount); }
     if (updates.selectedTpLevels) { sets.push(`selected_tp_levels = $${i++}`); params.push(updates.selectedTpLevels); }
+    if (updates.selectedSymbols) { sets.push(`selected_symbols = $${i++}`); params.push(updates.selectedSymbols); }
     if (sets.length === 0) return null;
     sets.push(`updated_at = NOW()`);
     params.push(id, userId);

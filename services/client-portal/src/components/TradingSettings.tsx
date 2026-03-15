@@ -11,6 +11,21 @@ const SESSION_OPTIONS = [
   { value: 'newyork' as const, label: 'New York', time: '08:00-17:00 NY' },
 ];
 
+const SYMBOL_OPTIONS = [
+  { value: 'XAUUSD', label: 'Gold (XAUUSD)' },
+  { value: 'EURUSD', label: 'EUR/USD' },
+  { value: 'GBPUSD', label: 'GBP/USD' },
+  { value: 'USDJPY', label: 'USD/JPY' },
+  { value: 'AUDUSD', label: 'AUD/USD' },
+  { value: 'USDCAD', label: 'USD/CAD' },
+  { value: 'USDCHF', label: 'USD/CHF' },
+  { value: 'NZDUSD', label: 'NZD/USD' },
+  { value: 'US30', label: 'Dow Jones (US30)' },
+  { value: 'US100', label: 'Nasdaq (US100)' },
+  { value: 'EURJPY', label: 'EUR/JPY' },
+  { value: 'GBPJPY', label: 'GBP/JPY' },
+];
+
 interface Props {
   assignment: StrategyAssignment;
 }
@@ -31,6 +46,9 @@ export function TradingSettings({ assignment }: Props) {
   const [sessions, setSessions] = useState<Set<string>>(
     new Set(existingConfig.sessions || ['london', 'newyork'])
   );
+  const [symbols, setSymbols] = useState<Set<string>>(
+    new Set(existingConfig.symbols || ['XAUUSD'])
+  );
 
   // Reset saved indicator
   useEffect(() => {
@@ -43,11 +61,21 @@ export function TradingSettings({ assignment }: Props) {
   const toggleSession = (session: string) => {
     const next = new Set(sessions);
     if (next.has(session)) {
-      if (next.size > 1) next.delete(session); // must keep at least 1
+      if (next.size > 1) next.delete(session);
     } else {
       next.add(session);
     }
     setSessions(next);
+  };
+
+  const toggleSymbol = (symbol: string) => {
+    const next = new Set(symbols);
+    if (next.has(symbol)) {
+      if (next.size > 1) next.delete(symbol);
+    } else {
+      next.add(symbol);
+    }
+    setSymbols(next);
   };
 
   const handleSave = async () => {
@@ -57,6 +85,7 @@ export function TradingSettings({ assignment }: Props) {
       risk_per_trade_usd: riskUsd,
       max_consecutive_losses: maxLosses,
       sessions: Array.from(sessions) as UserTradingConfig['sessions'],
+      symbols: Array.from(symbols),
     };
 
     try {
@@ -218,6 +247,36 @@ export function TradingSettings({ assignment }: Props) {
         </div>
         <p className="text-xs text-gray-500 mt-1">
           Strategy will only take trades during selected sessions
+        </p>
+      </div>
+
+      {/* Trading Pairs */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Trading Pairs
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          {SYMBOL_OPTIONS.map((opt) => (
+            <label
+              key={opt.value}
+              className={`flex items-center p-2 rounded-md border cursor-pointer transition-colors text-sm ${
+                symbols.has(opt.value)
+                  ? 'border-green-500 bg-green-50'
+                  : 'border-gray-200 bg-white hover:bg-gray-50'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={symbols.has(opt.value)}
+                onChange={() => toggleSymbol(opt.value)}
+                className="h-3.5 w-3.5 text-green-600 rounded border-gray-300 focus:ring-green-500"
+              />
+              <span className="ml-2 text-gray-900">{opt.label}</span>
+            </label>
+          ))}
+        </div>
+        <p className="text-xs text-gray-500 mt-1">
+          Strategy will only trade selected pairs. At least one required.
         </p>
       </div>
 

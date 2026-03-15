@@ -346,6 +346,17 @@ router.post('/strategy-assignments/:id/resume', (req, res) =>
       }
     }
 
+    // Symbols (trading pairs)
+    const AVAILABLE_SYMBOLS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'US30', 'US100', 'EURJPY', 'GBPJPY'];
+    if (Array.isArray(body.symbols)) {
+      const validSymbols = body.symbols
+        .map((s: string) => s.toUpperCase())
+        .filter((s: string) => AVAILABLE_SYMBOLS.includes(s));
+      if (validSymbols.length > 0) {
+        userConfig.symbols = validSymbols;
+      }
+    }
+
     try {
       const assignment = await tenantRepo.updateAssignmentUserConfig(id, userId, userConfig);
       if (!assignment) {

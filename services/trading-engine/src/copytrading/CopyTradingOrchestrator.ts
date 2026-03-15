@@ -78,6 +78,13 @@ export class CopyTradingOrchestrator {
     signal: MentorSignal,
     sub: FollowerSubscription
   ): Promise<{ created: number; failed: number }> {
+    // Check symbol filter — skip if follower doesn't want this pair
+    const selectedSymbols = sub.selected_symbols || [];
+    if (selectedSymbols.length > 0 && !selectedSymbols.includes(signal.symbol.toUpperCase())) {
+      logger.info(`[Fanout] Symbol ${signal.symbol} not in follower's selected pairs, skipping subscription ${sub.id}`);
+      return { created: 0, failed: 0 };
+    }
+
     // Get follower's account
     const accounts = await this.tenantRepo.getMt5AccountsForUser(sub.user_id);
     const account = accounts.find((a) => a.id === sub.mt5_account_id);

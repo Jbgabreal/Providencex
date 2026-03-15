@@ -58,6 +58,7 @@ export interface UserTradingConfig {
   risk_per_trade_usd?: number;
   max_consecutive_losses?: number;
   sessions?: Array<'asian' | 'london' | 'newyork'>;
+  symbols?: string[];  // e.g. ['XAUUSD', 'EURUSD'] — pairs the user wants to trade
 }
 
 export interface UserStrategyAssignment {
