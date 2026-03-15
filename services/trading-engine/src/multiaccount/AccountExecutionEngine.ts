@@ -16,6 +16,8 @@ import { TradeRequest, TradeResponse } from '@providencex/shared-types';
 import { PriceFeedClient, CandleStore } from '../marketData';
 import { StrategyProfileRiskConfig } from '../risk/RiskConfigFromProfile';
 import { TradeHistoryRepository } from '../db/TradeHistoryRepository';
+import type { BrokerAdapter } from '../brokers/BrokerAdapter';
+import { BrokerAdapterFactory } from '../brokers/BrokerAdapterFactory';
 
 const logger = new Logger('AccountExecutionEngine');
 
@@ -47,6 +49,7 @@ export class AccountExecutionEngine {
   private candleStore?: CandleStore;
   private profileRiskConfig?: StrategyProfileRiskConfig;
   private tradeHistoryRepo?: TradeHistoryRepository;
+  private brokerAdapter: BrokerAdapter;
 
   constructor(
     account: AccountInfo,
@@ -67,6 +70,14 @@ export class AccountExecutionEngine {
     this.candleStore = candleStore;
     this.profileRiskConfig = profileRiskConfig;
     this.tradeHistoryRepo = tradeHistoryRepo;
+
+    // Create broker adapter based on account type
+    const brokerType = account.brokerType || 'mt5';
+    const credentials = account.brokerCredentials || {
+      baseUrl: account.mt5.baseUrl,
+      login: account.mt5.login,
+    };
+    this.brokerAdapter = BrokerAdapterFactory.create(brokerType, credentials);
   }
 
   /**
@@ -243,37 +254,26 @@ export class AccountExecutionEngine {
       `lot_size: ${lotSize}, current_price: ${latestTick?.mid.toFixed(5) || 'N/A'}`
     );
 
-    const tradeRequest: TradeRequest = {
-      symbol: signal.symbol,
-      direction: signal.direction.toUpperCase() as 'BUY' | 'SELL',
-      entry_type: 'MARKET',
-      order_kind: 'market',
-      entry_price: signal.entryPrice,
-      lot_size: lotSize,
-      stop_loss_price: signal.sl,
-      take_profit_price: signal.tp,
-      strategy_id: 'smc_v1',
-      metadata: {
-        signal_reason: signal.smcMetadata?.entryReason || 'SMC signal',
-        strategy,
-        account_id: this.account.id,
-      },
-    };
-
     try {
+      // Execute trade via broker adapter (MT5, Deriv, etc.)
+      const result = await this.brokerAdapter.openTrade({
+        symbol: signal.symbol,
+        direction: signal.direction.toUpperCase() as 'BUY' | 'SELL',
+        orderKind: 'market',
+        entryPrice: signal.entryPrice,
+        lotSize,
+        stopLossPrice: signal.sl,
+        takeProfitPrice: signal.tp,
+        strategyId: 'smc_v1',
+        metadata: {
+          signal_reason: signal.smcMetadata?.entryReason || 'SMC signal',
+          strategy,
+          account_id: this.account.id,
+        },
+      });
 
-      // Call account-specific MT5 connector
-      const response = await axios.post<TradeResponse>(
-        `${this.account.mt5.baseUrl}/api/v1/trades/open`,
-        tradeRequest,
-        {
-          timeout: 10000,
-          validateStatus: (status) => status < 500,
-        }
-      );
-
-      if (response.status >= 200 && response.status < 300) {
-        logger.info(`[${this.account.id}] Trade executed successfully: MT5 ticket ${response.data.mt5_ticket}`);
+      if (result.success) {
+        logger.info(`[${this.account.id}] Trade executed via ${result.brokerType}: ticket ${result.ticket}`);
 
         // Record successful trade
         this.accountRegistry.recordTrade(this.account.id, signal.symbol);
@@ -282,15 +282,14 @@ export class AccountExecutionEngine {
         if (this.tradeHistoryRepo && this.account.metadata) {
           const metadata = this.account.metadata;
           try {
+            const ticketNum = typeof result.ticket === 'string' ? parseInt(result.ticket, 10) : (result.ticket || 0);
             await this.tradeHistoryRepo.recordTradeOpened({
               userId: metadata.userId,
               mt5AccountId: metadata.mt5AccountId,
               strategyProfileId: metadata.strategyProfileId,
               assignmentId: metadata.assignmentId,
-              mt5Ticket: typeof response.data.mt5_ticket === 'string'
-                ? parseInt(response.data.mt5_ticket, 10)
-                : response.data.mt5_ticket,
-              mt5OrderId: (response.data as any).mt5_order_id || undefined,
+              mt5Ticket: ticketNum,
+              mt5OrderId: result.rawResponse?.mt5_order_id || undefined,
               symbol: signal.symbol,
               direction: signal.direction.toUpperCase() as 'BUY' | 'SELL',
               lotSize,
@@ -301,12 +300,12 @@ export class AccountExecutionEngine {
               metadata: {
                 strategy,
                 account_id: this.account.id,
+                broker_type: result.brokerType,
               },
             });
-            logger.debug(`[${this.account.id}] Trade persisted to history: ticket ${response.data.mt5_ticket}`);
+            logger.debug(`[${this.account.id}] Trade persisted to history: ticket ${result.ticket}`);
           } catch (error) {
             logger.error(`[${this.account.id}] Failed to persist trade to history`, error);
-            // Don't fail the trade execution if history persistence fails
           }
         }
 
@@ -315,25 +314,11 @@ export class AccountExecutionEngine {
           success: true,
           decision: 'TRADE',
           reasons: ['Trade executed successfully'],
-          ticket: typeof response.data.mt5_ticket === 'string' ? parseInt(response.data.mt5_ticket, 10) : response.data.mt5_ticket,
+          ticket: result.ticket,
         };
       } else {
-        // Extract error message from response body
-        const errorDetail = response.data as any;
-        const errorMessage = errorDetail?.error || errorDetail?.message || errorDetail?.detail || `MT5 Connector returned status ${response.status}`;
-        const errorMsg = `MT5 Connector returned status ${response.status}: ${errorMessage}`;
-        
-        logger.error(`[${this.account.id}] ${errorMsg}`, {
-          status: response.status,
-          statusText: response.statusText,
-          data: response.data,
-          request: {
-            symbol: tradeRequest.symbol,
-            direction: tradeRequest.direction,
-            lotSize: tradeRequest.lot_size,
-          },
-        });
-        
+        const errorMsg = result.error || 'Trade execution failed';
+        logger.error(`[${this.account.id}] ${errorMsg}`);
         this.accountRegistry.recordError(this.account.id, errorMsg);
         return {
           accountId: this.account.id,
@@ -344,31 +329,8 @@ export class AccountExecutionEngine {
         };
       }
     } catch (error) {
-      // Handle Axios errors with better detail extraction
-      let errorMsg: string;
-      if (axios.isAxiosError(error)) {
-        const axiosError = error as AxiosError;
-        const errorDetail = axiosError.response?.data as any;
-        const errorMessage = errorDetail?.error || errorDetail?.message || errorDetail?.detail || axiosError.message;
-        errorMsg = `MT5 Connector error (${axiosError.response?.status || 'network'}): ${errorMessage}`;
-        
-        logger.error(`[${this.account.id}] Trade execution failed: ${errorMsg}`, {
-          code: axiosError.code,
-          status: axiosError.response?.status,
-          statusText: axiosError.response?.statusText,
-          data: axiosError.response?.data,
-          request: {
-            url: axiosError.config?.url,
-            method: axiosError.config?.method,
-            symbol: tradeRequest.symbol,
-            direction: tradeRequest.direction,
-          },
-        });
-      } else {
-        errorMsg = error instanceof Error ? error.message : String(error);
-        logger.error(`[${this.account.id}] Trade execution failed: ${errorMsg}`, error);
-      }
-      
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(`[${this.account.id}] Trade execution failed: ${errorMsg}`, error);
       this.accountRegistry.recordError(this.account.id, errorMsg);
       return {
         accountId: this.account.id,

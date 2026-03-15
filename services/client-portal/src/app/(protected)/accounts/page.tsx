@@ -8,10 +8,12 @@ import {
   useResumeMt5Account,
   useDisconnectMt5Account,
 } from '@/hooks/useMt5Accounts';
+import type { BrokerType } from '@/types/api';
 import { Plus, Pause, Play, X } from 'lucide-react';
 
 export default function AccountsPage() {
   const [showAddForm, setShowAddForm] = useState(false);
+  const [brokerType, setBrokerType] = useState<BrokerType>('mt5');
   const [formData, setFormData] = useState({
     label: '',
     account_number: '',
@@ -20,6 +22,10 @@ export default function AccountsPage() {
     broker_name: '',
     is_demo: false,
     baseUrl: '',
+    // Deriv fields
+    deriv_app_id: '',
+    deriv_api_token: '',
+    deriv_account_id: '',
   });
 
   const { data: accounts, isLoading, error } = useMt5Accounts();
@@ -28,38 +34,48 @@ export default function AccountsPage() {
   const resumeAccount = useResumeMt5Account();
   const disconnectAccount = useDisconnectMt5Account();
 
+  const resetForm = () => {
+    setFormData({
+      label: '', account_number: '', server: '', password: '',
+      broker_name: '', is_demo: false, baseUrl: '',
+      deriv_app_id: '', deriv_api_token: '', deriv_account_id: '',
+    });
+    setBrokerType('mt5');
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      // Build connection_meta with broker-specific information
-      const connectionMeta: any = {};
-      if (formData.baseUrl) {
-        connectionMeta.baseUrl = formData.baseUrl;
-      }
-      if (formData.password) {
-        connectionMeta.password = formData.password; // Store password securely (will be encrypted in production)
-      }
-      if (formData.broker_name) {
-        connectionMeta.broker_name = formData.broker_name;
-      }
+      if (brokerType === 'deriv') {
+        await createAccount.mutateAsync({
+          account_number: formData.deriv_account_id || undefined,
+          server: 'deriv',
+          is_demo: formData.is_demo,
+          label: formData.label || 'Deriv Account',
+          broker_type: 'deriv',
+          broker_credentials: {
+            appId: formData.deriv_app_id,
+            apiToken: formData.deriv_api_token,
+            accountId: formData.deriv_account_id || undefined,
+          },
+        });
+      } else {
+        const connectionMeta: any = {};
+        if (formData.baseUrl) connectionMeta.baseUrl = formData.baseUrl;
+        if (formData.password) connectionMeta.password = formData.password;
+        if (formData.broker_name) connectionMeta.broker_name = formData.broker_name;
 
-      await createAccount.mutateAsync({
-        account_number: formData.account_number,
-        server: formData.server,
-        is_demo: formData.is_demo,
-        label: formData.label || undefined,
-        connection_meta: Object.keys(connectionMeta).length > 0 ? connectionMeta : undefined,
-      });
+        await createAccount.mutateAsync({
+          account_number: formData.account_number,
+          server: formData.server,
+          is_demo: formData.is_demo,
+          label: formData.label || undefined,
+          broker_type: 'mt5',
+          connection_meta: Object.keys(connectionMeta).length > 0 ? connectionMeta : undefined,
+        });
+      }
       setShowAddForm(false);
-      setFormData({
-        label: '',
-        account_number: '',
-        server: '',
-        password: '',
-        broker_name: '',
-        is_demo: false,
-        baseUrl: '',
-      });
+      resetForm();
     } catch (error) {
       console.error('Failed to create account:', error);
     }
@@ -82,22 +98,62 @@ export default function AccountsPage() {
     );
   };
 
+  const getBrokerBadge = (type: string) => {
+    const label = type === 'deriv' ? 'Deriv' : 'MT5';
+    const color = type === 'deriv' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800';
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${color}`}>
+        {label}
+      </span>
+    );
+  };
+
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">MT5 Accounts</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Trading Accounts</h1>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
           className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
         >
           <Plus className="mr-2 h-5 w-5" />
-          Add MT5 Account
+          Add Account
         </button>
       </div>
 
       {showAddForm && (
         <div className="mb-6 bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">Connect MT5 Account</h2>
+          <h2 className="text-lg font-semibold mb-4">Connect Trading Account</h2>
+
+          {/* Broker Type Selector */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Broker Type</label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setBrokerType('mt5')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium border ${
+                  brokerType === 'mt5'
+                    ? 'bg-purple-600 text-white border-purple-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                MetaTrader 5
+              </button>
+              <button
+                type="button"
+                onClick={() => setBrokerType('deriv')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium border ${
+                  brokerType === 'deriv'
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                Deriv
+              </button>
+            </div>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -108,84 +164,89 @@ export default function AccountsPage() {
                 value={formData.label}
                 onChange={(e) => setFormData({ ...formData, label: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                placeholder="My Trading Account"
+                placeholder={brokerType === 'deriv' ? 'My Deriv Account' : 'My Trading Account'}
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Account Number *
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.account_number}
-                onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                placeholder="12345678"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Server *
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.server}
-                onChange={(e) => setFormData({ ...formData, server: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                placeholder="YourBroker-Demo"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Your broker's MT5 server name (e.g., IC Markets-Demo, FXTM-Demo)
-              </p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Password *
-              </label>
-              <input
-                type="password"
-                required
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                placeholder="Your MT5 account password"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Your MT5 account password (stored securely)
-              </p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Broker Name (Optional)
-              </label>
-              <input
-                type="text"
-                value={formData.broker_name}
-                onChange={(e) => setFormData({ ...formData, broker_name: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                placeholder="IC Markets, FXTM, Pepperstone, etc."
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Your broker's name (for reference)
-              </p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                MT5 Connector Base URL (Optional)
-              </label>
-              <input
-                type="text"
-                value={formData.baseUrl}
-                onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                placeholder="http://localhost:3030"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Custom MT5 Connector URL (leave empty to use default)
-              </p>
-            </div>
+
+            {/* MT5 Fields */}
+            {brokerType === 'mt5' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Account Number *</label>
+                  <input
+                    type="text" required
+                    value={formData.account_number}
+                    onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="12345678"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Server *</label>
+                  <input
+                    type="text" required
+                    value={formData.server}
+                    onChange={(e) => setFormData({ ...formData, server: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="YourBroker-Demo"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">e.g., IC Markets-Demo, FXTM-Demo</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+                  <input
+                    type="password" required
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="Your MT5 password"
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Deriv Fields */}
+            {brokerType === 'deriv' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">App ID *</label>
+                  <input
+                    type="text" required
+                    value={formData.deriv_app_id}
+                    onChange={(e) => setFormData({ ...formData, deriv_app_id: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="Your Deriv App ID"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Register an app at deriv.com to get your App ID
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">API Token *</label>
+                  <input
+                    type="password" required
+                    value={formData.deriv_api_token}
+                    onChange={(e) => setFormData({ ...formData, deriv_api_token: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="Your Deriv API token"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Create an API token with trading scope at deriv.com/account/api-token
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Account ID (Optional)</label>
+                  <input
+                    type="text"
+                    value={formData.deriv_account_id}
+                    onChange={(e) => setFormData({ ...formData, deriv_account_id: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="CR1234567"
+                  />
+                </div>
+              </>
+            )}
+
             <div className="flex items-center">
               <input
                 type="checkbox"
@@ -208,7 +269,7 @@ export default function AccountsPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setShowAddForm(false)}
+                onClick={() => { setShowAddForm(false); resetForm(); }}
                 className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
               >
                 Cancel
@@ -234,11 +295,16 @@ export default function AccountsPage() {
             <div key={account.id} className="bg-white rounded-lg shadow p-6">
               <div className="flex justify-between items-start mb-4">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    {account.label || 'Unnamed Account'}
-                  </h3>
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      {account.label || 'Unnamed Account'}
+                    </h3>
+                    {getBrokerBadge(account.broker_type || 'mt5')}
+                  </div>
                   <p className="text-sm text-gray-500">{account.account_number}</p>
-                  <p className="text-xs text-gray-400">{account.server}</p>
+                  {account.broker_type !== 'deriv' && (
+                    <p className="text-xs text-gray-400">{account.server}</p>
+                  )}
                 </div>
                 {getStatusBadge(account.status)}
               </div>
@@ -250,8 +316,7 @@ export default function AccountsPage() {
                     disabled={pauseAccount.isPending}
                     className="flex items-center px-3 py-1.5 text-sm bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200 disabled:opacity-50"
                   >
-                    <Pause className="mr-1 h-4 w-4" />
-                    Pause
+                    <Pause className="mr-1 h-4 w-4" /> Pause
                   </button>
                 )}
                 {account.status === 'paused' && (
@@ -260,8 +325,7 @@ export default function AccountsPage() {
                     disabled={resumeAccount.isPending}
                     className="flex items-center px-3 py-1.5 text-sm bg-green-100 text-green-800 rounded hover:bg-green-200 disabled:opacity-50"
                   >
-                    <Play className="mr-1 h-4 w-4" />
-                    Resume
+                    <Play className="mr-1 h-4 w-4" /> Resume
                   </button>
                 )}
                 {account.status !== 'disconnected' && (
@@ -274,8 +338,7 @@ export default function AccountsPage() {
                     disabled={disconnectAccount.isPending}
                     className="flex items-center px-3 py-1.5 text-sm bg-red-100 text-red-800 rounded hover:bg-red-200 disabled:opacity-50"
                   >
-                    <X className="mr-1 h-4 w-4" />
-                    Disconnect
+                    <X className="mr-1 h-4 w-4" /> Disconnect
                   </button>
                 )}
               </div>
@@ -284,9 +347,9 @@ export default function AccountsPage() {
         </div>
       ) : (
         <div className="text-center py-12 bg-white rounded-lg shadow">
-          <p className="text-gray-500">No MT5 accounts connected yet.</p>
+          <p className="text-gray-500">No trading accounts connected yet.</p>
           <p className="text-sm text-gray-400 mt-2">
-            Click "Add MT5 Account" to get started.
+            Click "Add Account" to connect your MT5 or Deriv account.
           </p>
         </div>
       )}

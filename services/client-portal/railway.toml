@@ -1,0 +1,14 @@
+[build]
+builder = "nixpacks"
+buildCommand = "cd ../.. && pnpm install --frozen-lockfile && pnpm --filter @providencex/client-portal build"
+watchPatterns = ["services/client-portal/**"]
+
+[deploy]
+startCommand = "cd ../.. && pnpm --filter @providencex/client-portal start"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[service]
+internalPort = 3002

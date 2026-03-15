@@ -4,7 +4,10 @@
  * Type definitions matching the backend API responses
  */
 
-// MT5 Account Types
+// Broker Types
+export type BrokerType = 'mt5' | 'deriv';
+
+// MT5 Account Types (table supports all broker types)
 export interface Mt5Account {
   id: string;
   user_id: string;
@@ -14,16 +17,20 @@ export interface Mt5Account {
   is_demo: boolean;
   status: 'connected' | 'paused' | 'disconnected';
   connection_meta: any | null;
+  broker_type: BrokerType;
+  broker_credentials: Record<string, any> | null;
   created_at: string;
   updated_at: string;
   disconnected_at: string | null;
 }
 
 export interface CreateMt5AccountRequest {
-  account_number: string;
-  server: string;
+  account_number?: string;
+  server?: string;
   is_demo: boolean;
   label?: string;
+  broker_type?: BrokerType;
+  broker_credentials?: Record<string, any>;
   connection_meta?: {
     baseUrl?: string;
     [key: string]: any;

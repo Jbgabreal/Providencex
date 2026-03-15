@@ -16,6 +16,8 @@ export interface User {
 
 export type Mt5AccountStatus = 'connected' | 'paused' | 'disconnected';
 
+export type BrokerType = 'mt5' | 'deriv';
+
 export interface Mt5Account {
   id: string;
   user_id: string;
@@ -25,6 +27,8 @@ export interface Mt5Account {
   is_demo: boolean;
   status: Mt5AccountStatus;
   connection_meta: any | null;
+  broker_type: BrokerType;
+  broker_credentials: Record<string, any> | null;
   created_at: string;
   updated_at: string;
   disconnected_at: string | null;
@@ -280,12 +284,15 @@ export class TenantRepository {
     server: string;
     isDemo: boolean;
     connectionMeta?: any;
+    brokerType?: BrokerType;
+    brokerCredentials?: Record<string, any>;
   }): Promise<Mt5Account> {
     const pool = this.ensurePool();
     const result = await pool.query(
       `INSERT INTO mt5_accounts (
-         user_id, label, account_number, server, is_demo, status, connection_meta
-       ) VALUES ($1, $2, $3, $4, $5, 'connected', $6)
+         user_id, label, account_number, server, is_demo, status, connection_meta,
+         broker_type, broker_credentials
+       ) VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, $8)
        RETURNING *`,
       [
         params.userId,
@@ -294,6 +301,8 @@ export class TenantRepository {
         params.server,
         params.isDemo,
         params.connectionMeta || null,
+        params.brokerType || 'mt5',
+        params.brokerCredentials ? JSON.stringify(params.brokerCredentials) : null,
       ]
     );
     return result.rows[0];

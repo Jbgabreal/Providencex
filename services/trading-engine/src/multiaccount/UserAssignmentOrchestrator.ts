@@ -105,6 +105,8 @@ export class UserAssignmentOrchestrator {
           is_demo: row.is_demo,
           status: row.status,
           connection_meta: row.connection_meta,
+          broker_type: row.broker_type || 'mt5',
+          broker_credentials: row.broker_credentials || null,
           created_at: row.created_at,
           updated_at: row.updated_at,
           disconnected_at: row.disconnected_at,
@@ -249,6 +251,12 @@ export class UserAssignmentOrchestrator {
       },
       executionFilter: {},
       enabled: true,
+      // Broker adapter fields
+      brokerType: (ctx.mt5Account.broker_type as any) || 'mt5',
+      brokerCredentials: ctx.mt5Account.broker_credentials || {
+        baseUrl: typeof meta.baseUrl === 'string' ? meta.baseUrl : defaultBaseUrl,
+        login: Number(meta.login || ctx.mt5Account.account_number),
+      },
       // Store multi-tenant metadata for trade history persistence
       metadata: {
         userId: ctx.userId,

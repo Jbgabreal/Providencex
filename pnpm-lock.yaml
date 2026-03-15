@@ -286,7 +286,7 @@ importers:
         version: 3.0.3
       openai:
         specifier: ^4.20.1
-        version: 4.104.0
+        version: 4.104.0(ws@8.19.0)
       pg:
         specifier: ^8.11.3
         version: 8.16.3
@@ -355,6 +355,9 @@ importers:
       '@types/jsonwebtoken':
         specifier: ^9.0.10
         version: 9.0.10
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       axios:
         specifier: ^1.6.2
         version: 1.13.2
@@ -375,10 +378,13 @@ importers:
         version: 3.0.3
       openai:
         specifier: ^4.104.0
-        version: 4.104.0
+        version: 4.104.0(ws@8.19.0)
       pg:
         specifier: ^8.11.3
         version: 8.16.3
+      ws:
+        specifier: ^8.19.0
+        version: 8.19.0
     devDependencies:
       '@types/express':
         specifier: ^4.17.21
@@ -9438,7 +9444,7 @@ packages:
     dependencies:
       wrappy: 1.0.2
 
-  /openai@4.104.0:
+  /openai@4.104.0(ws@8.19.0):
     resolution: {integrity: sha512-p99EFNsA/yX6UhVO93f5kJsDRLAg+CTA2RBqdHK4RtK8u5IJw32Hyb2dTGKbnnFmnuoBv5r7Z2CURI9sGZpSuA==}
     hasBin: true
     peerDependencies:
@@ -9457,6 +9463,7 @@ packages:
       form-data-encoder: 1.7.2
       formdata-node: 4.4.1
       node-fetch: 2.7.0
+      ws: 8.19.0
     transitivePeerDependencies:
       - encoding
     dev: false
@@ -12145,6 +12152,19 @@ packages:
     dependencies:
       bufferutil: 4.0.9
       utf-8-validate: 5.0.10
+    dev: false
+
+  /ws@8.19.0:
+    resolution: {integrity: sha512-blAT2mjOEIi0ZzruJfIhb3nps74PRWTCz1IjglWEEpQl5XS/UNama6u2/rjFkDDouqr4L67ry+1aGIALViWjDg==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
     dev: false
 
   /x402@0.7.3(@solana/sysvars@5.0.0)(@tanstack/react-query@5.90.11)(@types/react@18.3.27)(fastestsmallesttextencoderdecoder@1.0.22)(react@18.3.1)(typescript@5.9.3)(ws@8.18.3):

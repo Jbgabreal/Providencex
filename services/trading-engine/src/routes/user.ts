@@ -156,20 +156,30 @@ export default function createUserRouter(config: TradingEngineConfig) {
   router.post('/mt5-accounts', async (req: Request, res: Response) => {
     const userId = req.auth!.userId;
 
-  const { account_number, server, is_demo, label, connection_meta } = req.body || {};
+  const { account_number, server, is_demo, label, connection_meta, broker_type, broker_credentials } = req.body || {};
 
-  if (!account_number || !server) {
-    return res.status(400).json({ error: 'account_number and server are required' });
+  // Validate based on broker type
+  const resolvedBrokerType = broker_type || 'mt5';
+  if (resolvedBrokerType === 'deriv') {
+    if (!broker_credentials?.apiToken || !broker_credentials?.appId) {
+      return res.status(400).json({ error: 'Deriv accounts require broker_credentials.appId and broker_credentials.apiToken' });
+    }
+  } else {
+    if (!account_number || !server) {
+      return res.status(400).json({ error: 'account_number and server are required for MT5 accounts' });
+    }
   }
 
   try {
     const account = await tenantRepo.createMt5Account({
       userId,
       label,
-      accountNumber: String(account_number),
-      server: String(server),
+      accountNumber: String(account_number || broker_credentials?.accountId || ''),
+      server: String(server || resolvedBrokerType),
       isDemo: Boolean(is_demo),
       connectionMeta: connection_meta || null,
+      brokerType: resolvedBrokerType,
+      brokerCredentials: broker_credentials || null,
     });
     res.status(201).json({ success: true, account });
   } catch (error) {

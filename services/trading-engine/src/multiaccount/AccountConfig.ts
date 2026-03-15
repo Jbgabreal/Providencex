@@ -1,8 +1,10 @@
 /**
  * Account Configuration (Trading Engine v12)
- * 
+ *
  * Defines types for multi-account configuration
  */
+
+import type { BrokerType, BrokerCredentials } from '../brokers/types';
 
 /**
  * MT5 Connection Information
@@ -59,6 +61,8 @@ export interface AccountInfo {
   executionFilter?: AccountExecutionFilterConfig; // Optional per-account filter overrides
   enabled?: boolean; // Whether account is enabled (default: true)
   metadata?: Record<string, any>; // Optional metadata (e.g., userId, mt5AccountId, strategyProfileId for multi-tenant)
+  brokerType?: BrokerType; // 'mt5' | 'deriv' (default: 'mt5')
+  brokerCredentials?: BrokerCredentials; // Broker-specific auth data
 }
 
 /**
