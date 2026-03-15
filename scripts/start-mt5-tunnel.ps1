@@ -17,7 +17,7 @@ Write-Host ""
 
 # Start MT5 connector in background
 Write-Host "[1/2] Starting MT5 connector on port 3030..."
-$mt5Process = Start-Process -FilePath "py" -ArgumentList "src/main.py" -WorkingDirectory $MT5_DIR -PassThru -WindowStyle Hidden
+$mt5Process = Start-Process -FilePath "py" -ArgumentList "-c","import uvicorn; uvicorn.run('src.main:app', host='0.0.0.0', port=3030)" -WorkingDirectory $MT5_DIR -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 4
 
 # Check if MT5 connector started
