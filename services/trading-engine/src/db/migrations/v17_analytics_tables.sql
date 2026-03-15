@@ -52,6 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_executed_trades_opened_at ON executed_trades(open
 CREATE INDEX IF NOT EXISTS idx_executed_trades_closed_at ON executed_trades(closed_at DESC) WHERE closed_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_executed_trades_user_account_strategy ON executed_trades(user_id, mt5_account_id, strategy_profile_id);
 CREATE INDEX IF NOT EXISTS idx_executed_trades_symbol ON executed_trades(symbol);
+CREATE INDEX IF NOT EXISTS idx_executed_trades_strategy_date ON executed_trades(strategy_profile_id, opened_at DESC);
 
 -- 2) daily_account_metrics
 -- Daily aggregated metrics per account+strategy for fast dashboard queries
@@ -108,4 +109,5 @@ CREATE INDEX IF NOT EXISTS idx_daily_account_metrics_strategy_profile_id ON dail
 CREATE INDEX IF NOT EXISTS idx_daily_account_metrics_date ON daily_account_metrics(date DESC);
 CREATE INDEX IF NOT EXISTS idx_daily_account_metrics_user_account_strategy ON daily_account_metrics(user_id, mt5_account_id, strategy_profile_id);
 CREATE INDEX IF NOT EXISTS idx_daily_account_metrics_date_range ON daily_account_metrics(date, mt5_account_id, strategy_profile_id);
+CREATE INDEX IF NOT EXISTS idx_daily_account_metrics_strategy_date ON daily_account_metrics(strategy_profile_id, date ASC);
 

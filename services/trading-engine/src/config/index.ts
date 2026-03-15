@@ -56,7 +56,7 @@ export function getConfig(): TradingEngineConfig {
   return {
     port: baseConfig.port,
     newsGuardrailUrl: baseConfig.newsGuardrailUrl,
-    mt5ConnectorUrl: baseConfig.mt5ConnectorUrl,
+    mt5ConnectorUrl: baseConfig.mt5ConnectorUrl || process.env.MT5_CONNECTOR_URL || 'http://localhost:3030',
     symbols: baseConfig.symbols,
     
     // Market Data Configuration

@@ -83,7 +83,12 @@ export class GuardrailService {
   }
 
   /**
-   * Determine guardrail mode based on response and strategy rules
+   * Determine guardrail mode based on response and strategy rules.
+   *
+   * The news-guardrail service now handles look-ahead in canTradeNow, so
+   * `data.can_trade = false` covers both "currently inside window" and
+   * "upcoming high-risk event within the look-ahead horizon".
+   * We still apply strategy-specific risk_score thresholds for the active window.
    */
   private determineMode(data: CanTradeResponse, strategy: Strategy): GuardrailMode {
     if (!data.can_trade) {
@@ -95,28 +100,19 @@ export class GuardrailService {
     }
 
     const window = data.active_window;
-    const riskScore = window.risk_score;
+    const riskScore = window.risk_score ?? 0;
 
-    // Apply strategy-specific rules
     if (strategy === 'low') {
-      // Low risk: block if risk_score >= 30
-      if (riskScore >= 30) {
-        return 'blocked';
-      }
-      // Low risk: check for upcoming high-risk windows (risk_score >= 70 within 45 min)
-      // This would need additional logic to check future windows
+      // Low risk strategy: block on any event with risk_score >= 30
+      if (riskScore >= 30) return 'blocked';
+      // Reduced mode for minor events (risk_score 15–29)
+      if (riskScore >= 15) return 'reduced';
       return 'normal';
     } else {
-      // High risk: hard block if risk_score >= 80
-      if (riskScore >= 80) {
-        return 'blocked';
-      }
-      // High risk: reduced mode if risk_score in [50, 79]
-      if (riskScore >= 50 && riskScore < 80) {
-        return 'reduced';
-      }
-      // High risk: check for upcoming very high risk (risk_score >= 90 within 30 min)
-      // This would need additional logic to check future windows
+      // High risk strategy: hard block at risk_score >= 80
+      if (riskScore >= 80) return 'blocked';
+      // Reduced mode for medium events (risk_score 40–79)
+      if (riskScore >= 40) return 'reduced';
       return 'normal';
     }
   }

@@ -483,8 +483,11 @@ export class HistoricalDataLoader {
   }
 
   /**
-   * Generate mock historical data for testing
-   * Creates realistic-looking OHLCV data with some volatility
+   * Generate mock historical data for testing.
+   * Uses a multi-scale trend model that creates realistic ICT market structure:
+   * - Long-term H4 trends with periodic reversals (CHoCH opportunities)
+   * - Medium-term M15 swing highs/lows within H4 trends
+   * - Realistic OHLC wick/body sizes
    */
   private async generateMockData(
     symbol: string,
@@ -495,73 +498,97 @@ export class HistoricalDataLoader {
     logger.info(`[DataLoader] Generating mock data for ${symbol}`);
 
     const candles: HistoricalCandle[] = [];
-    
-    // Determine candle interval in milliseconds
-    let intervalMs: number;
-    switch (timeframe.toUpperCase()) {
-      case 'M1':
-        intervalMs = 60 * 1000;
-        break;
-      case 'M5':
-        intervalMs = 5 * 60 * 1000;
-        break;
-      case 'M15':
-        intervalMs = 15 * 60 * 1000;
-        break;
-      case 'H1':
-        intervalMs = 60 * 60 * 1000;
-        break;
-      default:
-        intervalMs = 5 * 60 * 1000; // Default to M5
-    }
 
-    // Base price (symbol-dependent)
-    let basePrice: number;
-    switch (symbol.toUpperCase()) {
-      case 'XAUUSD':
-      case 'GOLD':
-        basePrice = 2650.0;
-        break;
-      case 'EURUSD':
-        basePrice = 1.1000;
-        break;
-      case 'GBPUSD':
-        basePrice = 1.2700;
-        break;
-      case 'US30':
-        basePrice = 38000.0;
-        break;
-      default:
-        basePrice = 100.0;
-    }
+    // Candle interval
+    const intervalMs = (() => {
+      switch (timeframe.toUpperCase()) {
+        case 'M1':  return 60_000;
+        case 'M5':  return 300_000;
+        case 'M15': return 900_000;
+        case 'H1':  return 3_600_000;
+        default:    return 60_000;
+      }
+    })();
+
+    // Symbol parameters: [basePrice, m1Volatility, m1WickFactor]
+    const params: Record<string, [number, number, number]> = {
+      XAUUSD: [2050.0, 0.20, 0.30],   // $0.20 per M1 candle body, $0.30 wick
+      GOLD:   [2050.0, 0.20, 0.30],
+      EURUSD: [1.0850, 0.00008, 0.00012],
+      GBPUSD: [1.2650, 0.00010, 0.00015],
+      US30:   [35000.0, 10.0, 15.0],
+    };
+    const [basePrice, m1Vol, m1Wick] = params[symbol.toUpperCase()] ?? [100.0, 0.05, 0.08];
+
+    // Scale volatility for the requested timeframe (sqrt-of-time)
+    const m1PerInterval = intervalMs / 60_000;
+    const vol = m1Vol * Math.sqrt(m1PerInterval);
+    const wick = m1Wick * Math.sqrt(m1PerInterval);
+
+    // --- Multi-scale trend state ---
+    // htfBias changes every ~200 H4 candles (~33 days) → long-term trend
+    // mtfBias changes every ~30 M15 candles (~7.5 hours) → intraday swing
+    const H4_MS = 14_400_000;
+    const M15_MS = 900_000;
+
+    let htfBias = 1.0;        // +1 bullish, -1 bearish
+    let htfTimer = 0;
+    const htfPeriodMs = H4_MS * 200; // ~33 days
+
+    let mtfBias = 1.0;
+    let mtfTimer = 0;
+    const mtfPeriodMs = M15_MS * 30; // ~7.5 hours
+
+    // Small drift per candle contributed by each layer
+    const htfDriftPerMs = (basePrice * 0.0002) / htfPeriodMs;  // ~0.02% per HTF cycle
+    const mtfDriftPerMs = (basePrice * 0.0003) / mtfPeriodMs;  // ~0.03% per MTF cycle
 
     let currentPrice = basePrice;
     let currentTimestamp = startDate.getTime();
 
-    // Generate candles
     while (currentTimestamp <= endDate.getTime()) {
-      // Random walk with some mean reversion
-      const volatility = basePrice * 0.001; // 0.1% volatility per candle
-      const change = (Math.random() - 0.5) * 2 * volatility;
-      currentPrice = currentPrice + change;
+      // Advance timers and flip trend phases at boundaries
+      htfTimer += intervalMs;
+      mtfTimer += intervalMs;
 
-      // Generate OHLC
+      if (htfTimer >= htfPeriodMs) {
+        htfBias = -htfBias;
+        htfTimer = 0;
+      }
+
+      // MTF reversal is probabilistic near the end of the period to create natural-looking swings
+      if (mtfTimer >= mtfPeriodMs * 0.7 && Math.random() < intervalMs / (mtfPeriodMs * 0.3)) {
+        mtfBias = -mtfBias;
+        mtfTimer = 0;
+      }
+
+      // Composite drift: HTF adds slow persistent bias, MTF adds swing-level oscillation
+      const drift = htfBias * htfDriftPerMs * intervalMs
+                  + mtfBias * mtfDriftPerMs * intervalMs;
+
+      // M1-scale noise (gaussian approximation via CLT)
+      const noise = (Math.random() + Math.random() + Math.random() - 1.5) * vol * (2 / Math.sqrt(3));
+
       const open = currentPrice;
-      const high = open + Math.random() * volatility * 2;
-      const low = open - Math.random() * volatility * 2;
-      const close = low + Math.random() * (high - low);
+      const closeRaw = open + drift + noise;
+      const close = Math.max(closeRaw, open * 0.90); // guard against absurd values
+
+      // Wicks: realistic upper/lower shadows
+      const bodyHigh = Math.max(open, close);
+      const bodyLow  = Math.min(open, close);
+      const upperWick = Math.random() * wick;
+      const lowerWick = Math.random() * wick;
 
       candles.push({
         symbol,
         timestamp: currentTimestamp,
         open,
-        high: Math.max(open, high, close),
-        low: Math.min(open, low, close),
+        high:   bodyHigh + upperWick,
+        low:    bodyLow  - lowerWick,
         close,
         volume: Math.floor(Math.random() * 100) + 10,
       });
 
-      // Update currentPrice for next candle
       currentPrice = close;
       currentTimestamp += intervalMs;
     }

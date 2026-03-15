@@ -48,12 +48,21 @@ export interface StrategyProfileRow {
 
 export type AssignmentStatus = 'active' | 'paused' | 'stopped';
 
+export interface UserTradingConfig {
+  risk_mode?: 'percentage' | 'usd';
+  risk_per_trade_pct?: number;
+  risk_per_trade_usd?: number;
+  max_consecutive_losses?: number;
+  sessions?: Array<'asian' | 'london' | 'newyork'>;
+}
+
 export interface UserStrategyAssignment {
   id: string;
   user_id: string;
   mt5_account_id: string;
   strategy_profile_id: string;
   status: AssignmentStatus;
+  user_config: UserTradingConfig;
   started_at: string | null;
   stopped_at: string | null;
   created_at: string;
@@ -311,6 +320,44 @@ export class TenantRepository {
     return result.rows[0] || null;
   }
 
+  // ---------- System Settings ----------
+
+  async getSystemSetting(key: string): Promise<any | null> {
+    const pool = this.ensurePool();
+    const result = await pool.query(
+      `SELECT value FROM system_settings WHERE key = $1`,
+      [key]
+    );
+    return result.rows[0]?.value || null;
+  }
+
+  async getAllSystemSettings(): Promise<Array<{ key: string; value: any; description: string | null; updated_at: string }>> {
+    const pool = this.ensurePool();
+    const result = await pool.query(
+      `SELECT key, value, description, updated_at FROM system_settings ORDER BY key ASC`
+    );
+    return result.rows.map(row => ({
+      key: row.key,
+      value: row.value,
+      description: row.description,
+      updated_at: row.updated_at,
+    }));
+  }
+
+  async setSystemSetting(key: string, value: any, description: string | null, updatedBy: string | null): Promise<void> {
+    const pool = this.ensurePool();
+    await pool.query(
+      `INSERT INTO system_settings (key, value, description, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value,
+           description = EXCLUDED.description,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = NOW()`,
+      [key, JSON.stringify(value), description, updatedBy]
+    );
+  }
+
   // ---------- User Strategy Assignments ----------
 
   async getAssignmentsForUser(userId: string): Promise<UserStrategyAssignment[]> {
@@ -363,6 +410,23 @@ export class TenantRepository {
        WHERE id = $1 AND user_id = $2
        RETURNING *`,
       [id, userId, status, startedAt, stoppedAt]
+    );
+    return result.rows[0] || null;
+  }
+
+  async updateAssignmentUserConfig(
+    id: string,
+    userId: string,
+    userConfig: UserTradingConfig
+  ): Promise<UserStrategyAssignment | null> {
+    const pool = this.ensurePool();
+    const result = await pool.query(
+      `UPDATE user_strategy_assignments
+       SET user_config = $3,
+           updated_at = NOW()
+       WHERE id = $1 AND user_id = $2
+       RETURNING *`,
+      [id, userId, JSON.stringify(userConfig)]
     );
     return result.rows[0] || null;
   }

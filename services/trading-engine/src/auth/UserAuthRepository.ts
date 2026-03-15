@@ -75,9 +75,17 @@ export class UserAuthRepository {
 
   async createFromPrivy(identity: PrivyIdentity): Promise<UserRow> {
     const pool = this.ensurePool();
-    const email = (identity.email ?? null)?.toLowerCase() ?? null;
+    const email = (identity.email ?? null)?.toLowerCase()?.trim() ?? null;
     const externalAuthId = identity.privyUserId;
     const role: UserRole = 'user';
+
+    // Email is required
+    if (!email) {
+      logger.error(`[UserAuthRepository] Cannot create user: email is missing. Privy ID: ${externalAuthId}`);
+      throw new Error('Email is required for user creation');
+    }
+
+    logger.debug(`[UserAuthRepository] Creating user: email=${email}, external_auth_id=${externalAuthId}`);
 
     try {
       const res = await this.pool!.query(
@@ -88,7 +96,9 @@ export class UserAuthRepository {
          RETURNING id, email, external_auth_id, role, created_at, updated_at`,
         [email, externalAuthId, role]
       );
-      return this.mapRow(res.rows[0]);
+      const user = this.mapRow(res.rows[0]);
+      logger.info(`[UserAuthRepository] ✅ User created/updated: ${user.id} (email: ${user.email}, external_auth_id: ${user.external_auth_id})`);
+      return user;
     } catch (error: any) {
       // Handle unique constraint violation on email
       if (error.code === '23505' && error.constraint === 'users_email_key') {
@@ -102,10 +112,18 @@ export class UserAuthRepository {
           [externalAuthId, email]
         );
         if (res.rows[0]) {
-          return this.mapRow(res.rows[0]);
+          const user = this.mapRow(res.rows[0]);
+          logger.info(`[UserAuthRepository] ✅ User linked: ${user.id} (email: ${user.email}, external_auth_id: ${user.external_auth_id})`);
+          return user;
         }
       }
-      logger.error('[UserAuthRepository] Failed to create user from Privy identity', error);
+      logger.error('[UserAuthRepository] ❌ Failed to create user from Privy identity', {
+        error: error.message,
+        code: error.code,
+        constraint: error.constraint,
+        email,
+        externalAuthId,
+      });
       throw error;
     }
   }

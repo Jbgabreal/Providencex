@@ -122,6 +122,12 @@ export class ExecutionService {
         }
       }
 
+      // Resolve strategy_id: prefer value from signal metadata, fall back to strategy tier label
+      const resolvedStrategyId =
+        (signal.meta?.smcVersion === 'v2' ? signal.meta?.enhancedSignal?.meta?.strategyId : undefined) ||
+        signal.meta?.strategyId ||
+        `smc_${signal.meta?.smcVersion ?? 'v1'}`;
+
       // Build TradeRequest payload
       const tradeRequest: TradeRequest = {
         symbol: signal.symbol,
@@ -132,7 +138,7 @@ export class ExecutionService {
         lot_size: lotSize,
         stop_loss_price: signal.stopLoss,
         take_profit_price: signal.takeProfit,
-        strategy_id: 'smc_v1',
+        strategy_id: resolvedStrategyId,
         metadata: {
           signal_reason: signal.reason,
           strategy,

@@ -108,6 +108,9 @@ pnpm dev
 pnpm --filter @providencex/trading-engine dev
 pnpm --filter @providencex/mt5-connector dev
 pnpm --filter @providencex/news-guardrail dev
+pnpm --filter @providencex/client-portal dev
+pnpm --filter @providencex/admin-dashboard dev
+pnpm --filter @providencex/api-gateway dev
 
 
 pnpm --filter @providencex/trading-engine ai-optimize --symbol XAUUSD --data-source postgres --year 2023 --months 3

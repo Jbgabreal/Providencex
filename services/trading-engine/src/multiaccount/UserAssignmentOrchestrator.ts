@@ -1,6 +1,6 @@
 import { Logger } from '@providencex/shared-utils';
 import { TenantRepository, StrategyProfileRow, Mt5Account, UserStrategyAssignment } from '../db/TenantRepository';
-import { buildRiskConfigFromProfileConfig, StrategyProfileRiskConfig } from '../risk/RiskConfigFromProfile';
+import { buildRiskConfigFromProfileConfig, mergeUserConfig, StrategyProfileRiskConfig } from '../risk/RiskConfigFromProfile';
 import { PerAccountRiskService } from './PerAccountRiskService';
 import { PerAccountKillSwitch } from './PerAccountKillSwitch';
 import { AccountRegistry } from './AccountRegistry';
@@ -56,6 +56,7 @@ export class UserAssignmentOrchestrator {
           a.status as assignment_status,
           a.started_at,
           a.stopped_at,
+          a.user_config,
           ma.*,
           sp.id as sp_id,
           sp.key as sp_key,
@@ -88,6 +89,7 @@ export class UserAssignmentOrchestrator {
           mt5_account_id: row.mt5_account_id,
           strategy_profile_id: row.strategy_profile_id,
           status: row.assignment_status,
+          user_config: row.user_config || {},
           started_at: row.started_at,
           stopped_at: row.stopped_at,
           created_at: row.created_at,
@@ -122,7 +124,8 @@ export class UserAssignmentOrchestrator {
           updated_at: row.sp_updated_at,
         };
 
-        const profileRiskConfig = buildRiskConfigFromProfileConfig(profile.config);
+        const baseRiskConfig = buildRiskConfigFromProfileConfig(profile.config);
+        const profileRiskConfig = mergeUserConfig(baseRiskConfig, row.user_config);
 
         contexts.push({
           userId: assignment.user_id,
@@ -162,7 +165,7 @@ export class UserAssignmentOrchestrator {
     }
 
     for (const ctx of assignments) {
-      const account: AccountInfo = this.buildAccountInfoFromAssignment(ctx);
+      const account: AccountInfo = await this.buildAccountInfoFromAssignment(ctx);
       const accountKey = `mt5:${account.id}`;
 
       // Register account in AccountRegistry if not already registered
@@ -205,8 +208,19 @@ export class UserAssignmentOrchestrator {
     }
   }
 
-  private buildAccountInfoFromAssignment(ctx: ActiveAssignmentContext): AccountInfo {
+  private async buildAccountInfoFromAssignment(ctx: ActiveAssignmentContext): Promise<AccountInfo> {
     const meta = ctx.mt5Account.connection_meta || {};
+
+    // Get default MT5 connector URL from system settings (with env fallback)
+    let defaultBaseUrl = process.env.MT5_CONNECTOR_URL || 'http://localhost:3030';
+    try {
+      const { getSystemSettingsService } = await import('../services/SystemSettingsService');
+      const settingsService = getSystemSettingsService();
+      defaultBaseUrl = await settingsService.getSetting('mt5_connector_url', defaultBaseUrl);
+    } catch (error) {
+      // If settings service fails, use env fallback
+      this.logger.warn(`[UserAssignmentOrchestrator] Failed to get MT5 connector URL from settings, using env: ${defaultBaseUrl}`);
+    }
 
     return {
       id: ctx.mt5Account.id,
@@ -215,7 +229,7 @@ export class UserAssignmentOrchestrator {
         baseUrl:
           typeof meta.baseUrl === 'string'
             ? meta.baseUrl
-            : process.env.MT5_CONNECTOR_URL || 'http://localhost:3030',
+            : defaultBaseUrl,
         login: Number(meta.login || ctx.mt5Account.account_number),
       },
       symbols: ['XAUUSD'], // initial default; can be extended per-profile

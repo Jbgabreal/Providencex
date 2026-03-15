@@ -46,9 +46,15 @@ export default function createUserAnalyticsRouter(config: TradingEngineConfig) {
         total: result.total,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     logger.error('[UserAnalyticsRoutes] Failed to get trades', error);
-    res.status(500).json({ error: 'Internal server error' });
+    const errorMessage = error?.message || 'Unknown error';
+    const errorStack = process.env.NODE_ENV === 'development' ? error?.stack : undefined;
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: errorMessage,
+      ...(errorStack && { stack: errorStack }),
+    });
   }
 });
 
@@ -72,9 +78,15 @@ export default function createUserAnalyticsRouter(config: TradingEngineConfig) {
       positions,
       count: positions.length,
     });
-  } catch (error) {
+  } catch (error: any) {
     logger.error('[UserAnalyticsRoutes] Failed to get open positions', error);
-    res.status(500).json({ error: 'Internal server error' });
+    const errorMessage = error?.message || 'Unknown error';
+    const errorStack = process.env.NODE_ENV === 'development' ? error?.stack : undefined;
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: errorMessage,
+      ...(errorStack && { stack: errorStack }),
+    });
   }
 });
 
@@ -97,9 +109,15 @@ export default function createUserAnalyticsRouter(config: TradingEngineConfig) {
       success: true,
       summary,
     });
-  } catch (error) {
+  } catch (error: any) {
     logger.error('[UserAnalyticsRoutes] Failed to compute summary', error);
-    res.status(500).json({ error: 'Internal server error' });
+    const errorMessage = error?.message || 'Unknown error';
+    const errorStack = process.env.NODE_ENV === 'development' ? error?.stack : undefined;
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: errorMessage,
+      ...(errorStack && { stack: errorStack }),
+    });
   }
 });
 
@@ -126,9 +144,15 @@ export default function createUserAnalyticsRouter(config: TradingEngineConfig) {
       success: true,
       equityCurve,
     });
-  } catch (error) {
+  } catch (error: any) {
     logger.error('[UserAnalyticsRoutes] Failed to get equity curve', error);
-    res.status(500).json({ error: 'Internal server error' });
+    const errorMessage = error?.message || 'Unknown error';
+    const errorStack = process.env.NODE_ENV === 'development' ? error?.stack : undefined;
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: errorMessage,
+      ...(errorStack && { stack: errorStack }),
+    });
   }
 });
 

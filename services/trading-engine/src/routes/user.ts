@@ -1,6 +1,9 @@
 import express, { Request, Response, Router } from 'express';
 import { Logger } from '@providencex/shared-utils';
-import { TenantRepository } from '../db/TenantRepository';
+import { TenantRepository, UserTradingConfig } from '../db/TenantRepository';
+import { TradeHistoryRepository } from '../db/TradeHistoryRepository';
+import { StrategyPerformanceService } from '../services/StrategyPerformanceService';
+import { ExecutionService } from '../services/ExecutionService';
 import { TradingEngineConfig } from '../config';
 import { buildAuthMiddleware } from '../middleware/auth';
 
@@ -10,19 +13,55 @@ export default function createUserRouter(config: TradingEngineConfig) {
   const router: Router = express.Router();
   const { authMiddleware, requireUser } = buildAuthMiddleware(config);
   const tenantRepo = new TenantRepository();
+  const tradeHistoryRepo = new TradeHistoryRepository();
+  const strategyPerformanceService = new StrategyPerformanceService(tradeHistoryRepo, tenantRepo);
 
   // ---------- Strategy Catalog (read-only, public) ----------
   // These routes don't require authentication
-  router.get('/strategies', async (_req: Request, res: Response) => {
+  router.get('/strategies', async (req: Request, res: Response) => {
     try {
-      const profiles = await tenantRepo.getPublicStrategyProfiles();
-      const result = profiles.map((p) => ({
-        key: p.key,
-        name: p.name,
-        description: p.description,
-        risk_tier: p.risk_tier,
-      }));
-      res.json({ success: true, strategies: result });
+      // Optional filter by risk_tier
+      const riskTier = req.query.risk_tier as 'low' | 'medium' | 'high' | undefined;
+      
+      let profiles = await tenantRepo.getPublicStrategyProfiles();
+      
+      // Filter by risk tier if provided
+      if (riskTier && ['low', 'medium', 'high'].includes(riskTier)) {
+        profiles = profiles.filter(p => p.risk_tier === riskTier);
+      }
+
+      // Get performance data for each strategy
+      const strategies = await Promise.all(
+        profiles.map(async (p) => {
+          const performance = await strategyPerformanceService.getAggregatePerformance(p.key);
+          
+          return {
+            key: p.key,
+            name: p.name,
+            description: p.description,
+            risk_tier: p.risk_tier,
+            is_frozen: p.is_frozen,
+            is_available: p.is_public,
+            performance: performance || {
+              total_users: 0,
+              total_trades: 0,
+              closed_trades: 0,
+              win_rate: 0,
+              profit_factor: 0,
+              total_pnl: 0,
+              avg_daily_return: 0,
+              max_drawdown_percent: 0,
+              average_win: 0,
+              average_loss: 0,
+              largest_win: 0,
+              largest_loss: 0,
+              average_r: 0,
+            },
+          };
+        })
+      );
+
+      res.json({ success: true, strategies });
     } catch (error) {
       logger.error('[UserRoutes] Failed to get strategies', error);
       res.status(500).json({ error: 'Internal server error' });
@@ -35,6 +74,10 @@ export default function createUserRouter(config: TradingEngineConfig) {
       if (!profile || !profile.is_public) {
         return res.status(404).json({ error: 'Strategy not found' });
       }
+
+      // Get performance data
+      const performance = await strategyPerformanceService.getAggregatePerformance(profile.key);
+
       res.json({
         success: true,
         strategy: {
@@ -42,10 +85,53 @@ export default function createUserRouter(config: TradingEngineConfig) {
           name: profile.name,
           description: profile.description,
           risk_tier: profile.risk_tier,
+          is_frozen: profile.is_frozen,
+          is_available: profile.is_public,
+          implementation_key: profile.implementation_key,
+          performance: performance || {
+            total_users: 0,
+            total_trades: 0,
+            closed_trades: 0,
+            win_rate: 0,
+            profit_factor: 0,
+            total_pnl: 0,
+            avg_daily_return: 0,
+            max_drawdown_percent: 0,
+            average_win: 0,
+            average_loss: 0,
+            largest_win: 0,
+            largest_loss: 0,
+            average_r: 0,
+          },
         },
       });
     } catch (error) {
       logger.error('[UserRoutes] Failed to get strategy by key', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/user/strategies/:key/performance - Get performance history
+  router.get('/strategies/:key/performance', async (req: Request, res: Response) => {
+    try {
+      const profile = await tenantRepo.getStrategyProfileByKey(req.params.key);
+      if (!profile || !profile.is_public) {
+        return res.status(404).json({ error: 'Strategy not found' });
+      }
+
+      const period = (req.query.period as '7d' | '30d' | '90d' | 'all') || '30d';
+      const history = await strategyPerformanceService.getPerformanceHistory(profile.key, period);
+
+      if (!history) {
+        return res.status(500).json({ error: 'Failed to get performance history' });
+      }
+
+      res.json({
+        success: true,
+        history,
+      });
+    } catch (error) {
+      logger.error('[UserRoutes] Failed to get strategy performance history', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -208,6 +294,87 @@ router.post('/strategy-assignments/:id/resume', (req, res) =>
   router.post('/strategy-assignments/:id/stop', (req, res) =>
     updateAssignmentStatusRoute(req, res, 'stopped')
   );
+
+  // ---------- User Trading Config ----------
+
+  router.patch('/strategy-assignments/:id/config', async (req: Request, res: Response) => {
+    const userId = req.auth!.userId;
+    const id = req.params.id;
+    const body = req.body || {};
+
+    // Validate and sanitize user config
+    const VALID_SESSIONS = ['asian', 'london', 'newyork'] as const;
+    const userConfig: UserTradingConfig = {};
+
+    // Risk mode
+    if (body.risk_mode === 'percentage' || body.risk_mode === 'usd') {
+      userConfig.risk_mode = body.risk_mode;
+    }
+
+    // Risk per trade percentage (0.1% - 5%)
+    if (typeof body.risk_per_trade_pct === 'number') {
+      userConfig.risk_per_trade_pct = Math.max(0.1, Math.min(5, body.risk_per_trade_pct));
+    }
+
+    // Risk per trade USD ($1 - $10,000)
+    if (typeof body.risk_per_trade_usd === 'number') {
+      userConfig.risk_per_trade_usd = Math.max(1, Math.min(10000, body.risk_per_trade_usd));
+    }
+
+    // Max consecutive losses (1-10)
+    if (typeof body.max_consecutive_losses === 'number') {
+      userConfig.max_consecutive_losses = Math.max(1, Math.min(10, Math.floor(body.max_consecutive_losses)));
+    }
+
+    // Sessions (at least one required if provided)
+    if (Array.isArray(body.sessions)) {
+      const validSessions = body.sessions.filter(
+        (s: string) => VALID_SESSIONS.includes(s as any)
+      ) as UserTradingConfig['sessions'];
+      if (validSessions && validSessions.length > 0) {
+        userConfig.sessions = validSessions;
+      }
+    }
+
+    try {
+      const assignment = await tenantRepo.updateAssignmentUserConfig(id, userId, userConfig);
+      if (!assignment) {
+        return res.status(404).json({ error: 'Strategy assignment not found' });
+      }
+      res.json({ success: true, assignment });
+    } catch (error) {
+      logger.error('[UserRoutes] Failed to update assignment config', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ---------- Close Active Position ----------
+
+  router.post('/positions/:ticket/close', async (req: Request, res: Response) => {
+    const userId = req.auth!.userId;
+    const ticket = req.params.ticket;
+    const reason = req.body?.reason || 'User manual close';
+
+    try {
+      // Verify the position belongs to this user
+      const tradeResult = await tradeHistoryRepo.getTradeByTicket(Number(ticket), userId);
+      if (!tradeResult) {
+        return res.status(404).json({ error: 'Position not found or does not belong to you' });
+      }
+
+      const executionService = new ExecutionService();
+      const result = await executionService.closeTrade(ticket, reason);
+
+      if (result.success) {
+        res.json({ success: true, message: 'Position closed successfully' });
+      } else {
+        res.status(400).json({ success: false, error: result.error || 'Failed to close position' });
+      }
+    } catch (error) {
+      logger.error('[UserRoutes] Failed to close position', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   return router;
 }

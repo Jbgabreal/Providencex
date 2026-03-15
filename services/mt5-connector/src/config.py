@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 logger.info(f"Loading .env from ROOT: {env_path.absolute()} (exists: {env_path.exists()})")
 
 if not env_path.exists():
-    logger.warning(f"⚠️  .env file NOT FOUND at {env_path.absolute()}")
+    logger.warning(f"[WARN] .env file NOT FOUND at {env_path.absolute()}")
     logger.warning("Make sure MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, MT5_PATH are set in root .env file")
 
 load_dotenv(dotenv_path=env_path, override=True)
@@ -52,12 +52,12 @@ class MT5Config:
         if self.path:
             path_obj = Path(self.path)
             if not path_obj.exists():
-                logger.warning(f"⚠️  MT5_PATH file does not exist: {self.path}")
+                logger.warning(f"[WARN] MT5_PATH file does not exist: {self.path}")
                 logger.warning("   MT5 will try to auto-detect the terminal location or may fail")
                 logger.warning("   If MT5 is installed, check the path in your .env file")
                 # Don't set to None - let MT5 try and fail with better error message
             else:
-                logger.info(f"✓ MT5_PATH file exists: {self.path}")
+                logger.info(f"[OK] MT5_PATH file exists: {self.path}")
         else:
             logger.info("MT5_PATH not set - MT5 will auto-detect terminal location")
         
@@ -66,7 +66,7 @@ class MT5Config:
                    f"path='{self.path}', port={self.fastapi_port}, password_set={bool(self.password)}")
         
         if not self.validate():
-            logger.warning("⚠️  MT5 credentials are INVALID or MISSING!")
+            logger.warning("[WARN] MT5 credentials are INVALID or MISSING!")
             logger.warning("   Required: MT5_LOGIN, MT5_PASSWORD, MT5_SERVER in root .env file")
     
     def validate(self) -> bool:

@@ -16,3 +16,4 @@ export interface PrivyIdentity {
   [key: string]: any;
 }
 
+

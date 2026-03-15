@@ -65,11 +65,21 @@ try {
 
 app.use(express.json());
 
-// CORS middleware for admin dashboard
+// CORS middleware for admin dashboard and client portal
+// In production, ALLOWED_ORIGINS should be set explicitly via env var
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:3001,http://localhost:3002')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.includes(origin) || process.env.NODE_ENV !== 'production') {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+  }
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-privy-token, x-user-id, x-user-role');
+  res.header('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -137,13 +147,26 @@ app.get('/api/v1/status/exposure', async (req, res) => {
 
 // Initialize Market Data Layer (v2) - using MarketDataConfig
 import { getMarketDataConfig } from '@providencex/shared-config';
+import { getAdminMt5ConnectorUrl } from './services/AdminMt5Service';
+
+// Load admin MT5 connector URL for analysis services
+// This is separate from user MT5 accounts which are only used for execution
+let adminMt5Url = process.env.ADMIN_MT5_CONNECTOR_URL || process.env.MT5_CONNECTOR_URL || 'http://localhost:3030';
+
+// Try to load from database (async, non-blocking)
+getAdminMt5ConnectorUrl().then((url) => {
+  adminMt5Url = url;
+  logger.info(`[Server] Admin MT5 connector URL loaded from settings: ${adminMt5Url}`);
+}).catch((err) => {
+  logger.warn(`[Server] Failed to load admin MT5 URL from settings, using default: ${adminMt5Url}`, err);
+});
 
 const marketDataConfig = getMarketDataConfig();
 const candleStore = new CandleStore(marketDataConfig.maxCandlesPerSymbol);
 const candleBuilder = new CandleBuilder(candleStore);
 
 const priceFeed = new PriceFeedClient({
-  mt5ConnectorUrl: config.mt5ConnectorUrl || 'http://localhost:3030',
+  mt5ConnectorUrl: adminMt5Url, // Use admin MT5 URL for price feeds (analysis)
   pollIntervalSeconds: marketDataConfig.feedIntervalSec,
   symbols: marketDataConfig.symbols,
 });
@@ -164,7 +187,7 @@ logger.info(
 import { getOrderFlowConfig } from '@providencex/shared-config';
 const orderFlowConfig = getOrderFlowConfig();
 const orderFlowService = new OrderFlowService({
-  mt5ConnectorUrl: config.mt5ConnectorUrl || 'http://localhost:3030',
+  mt5ConnectorUrl: adminMt5Url, // Use admin MT5 URL for order flow analysis
   pollIntervalMs: orderFlowConfig.pollIntervalMs,
   largeOrderMultiplier: orderFlowConfig.largeOrderMultiplier,
   minDeltaTrendConfirmation: orderFlowConfig.minDeltaTrendConfirmation,
@@ -190,7 +213,7 @@ const backfillDays = Number(process.env.HISTORICAL_BACKFILL_DAYS ?? '90');
 const historicalBackfillService = new HistoricalBackfillService({
   candleStore,
   symbols: marketDataConfig.symbols, // Use same symbol list as PriceFeedClient and OrderFlowService
-  mt5BaseUrl: config.mt5ConnectorUrl || 'http://localhost:3030',
+  mt5BaseUrl: adminMt5Url, // Use admin MT5 URL for historical data backfill (analysis)
   backfillEnabled,
   backfillDays,
 });
@@ -208,8 +231,12 @@ const decisionLogger = new DecisionLogger();
 const executionFilterState = new ExecutionFilterState();
 
 // v4 Open Trades & Exposure Service
+// Note: OpenTradesService checks user accounts for open positions (execution)
+// But we still need to check admin account for exposure analysis
+// For now, we'll check user accounts only - this service is used for exposure limits
+// TODO: Consider if we need separate exposure tracking for admin vs users
 const openTradesService = new OpenTradesService({
-  mt5BaseUrl: config.mt5ConnectorUrl || 'http://localhost:3030',
+  mt5BaseUrl: config.mt5ConnectorUrl || 'http://localhost:3030', // Keep using default for user account checks
   pollIntervalSec: executionFilterConfig.exposurePollIntervalSec || 10,
   defaultRiskPerTrade: 75.0, // Conservative default risk per trade if no SL
 });
@@ -218,7 +245,7 @@ const openTradesService = new OpenTradesService({
 // Uses scheduled timers based on avoid window times from database (no polling)
 import { AvoidWindowManagerService } from './services/AvoidWindowManagerService';
 const avoidWindowManager = new AvoidWindowManagerService({
-  mt5BaseUrl: config.mt5ConnectorUrl || 'http://localhost:3030',
+  mt5BaseUrl: adminMt5Url, // Use admin MT5 URL for avoid window management (analysis)
   databaseUrl: config.databaseUrl || '',
   strategy: 'low', // Default strategy, can be made configurable
   refreshIntervalHours: 1, // Refresh windows from DB every hour (catches updates)
@@ -230,9 +257,12 @@ const lossStreakFilterService = new LossStreakFilterService(config.databaseUrl |
 
 // v7 Live PnL Service (pass Loss Streak Filter Service for win/loss tracking)
 // Note: LivePnlService constructor signature may have changed - check if second param is supported
+// LivePnlService tracks PnL for user accounts (execution tracking)
+// So it should use user account MT5 URLs, not admin
+// However, for now we'll keep it using the default - it will track user accounts via UserAssignmentOrchestrator
 const livePnlService = new LivePnlService({
   databaseUrl: config.databaseUrl || '',
-  mt5ConnectorUrl: config.mt5ConnectorUrl || 'http://localhost:3030',
+  mt5ConnectorUrl: config.mt5ConnectorUrl || 'http://localhost:3030', // Keep default for user account tracking
   enabled: true,
 });
 
@@ -257,11 +287,13 @@ const killSwitchService = new KillSwitchService(
 
 // v9 Exit Service
 import { ExitService } from './services/ExitService';
+// ExitService manages exits for user accounts (execution)
+// It should check user accounts, not admin account
 const exitService = new ExitService(
   {
     enabled: true,
     exitTickIntervalSec: 2,
-    mt5ConnectorUrl: config.mt5ConnectorUrl || 'http://localhost:3030',
+    mt5ConnectorUrl: config.mt5ConnectorUrl || 'http://localhost:3030', // Keep default for user account exits
     databaseUrl: config.databaseUrl || '',
     breakEvenEnabled: true,
     partialCloseEnabled: true,
@@ -1019,11 +1051,12 @@ async function processTradingDecision(
   if (executionResult.success && decisionId && executionResult.ticket) {
     try {
       // Calculate 1R in pips for break-even trigger (v15 improvement)
+      // Uses MT5-standard pip sizes: gold = 0.01, indices = 1.0, forex = 0.0001
       const riskAmount = Math.abs(signal.entry - signal.stopLoss);
-      const convertPriceDistanceToPips = (sym: string, distance: number): number => {
+      const convertPriceDistanceToExitPips = (sym: string, distance: number): number => {
         const upperSym = sym.toUpperCase();
         if (upperSym === 'XAUUSD' || upperSym === 'GOLD') {
-          return distance * 100; // Gold: 0.01 = 1 pip
+          return distance * 100; // Gold: 0.01 = 1 pip (MT5 standard)
         }
         if (upperSym.includes('30') || upperSym.includes('100') || upperSym.includes('500')) {
           return distance; // Indices: 1.0 = 1 pip
@@ -1033,7 +1066,7 @@ async function processTradingDecision(
         }
         return distance * 10000; // Default: forex-style
       };
-      const oneRInPips = convertPriceDistanceToPips(symbol, riskAmount);
+      const oneRInPips = convertPriceDistanceToExitPips(symbol, riskAmount);
       
       const exitPlan: import('@providencex/shared-types').ExitPlan = {
         symbol,

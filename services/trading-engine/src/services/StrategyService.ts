@@ -11,6 +11,8 @@ import {
 } from '../types';
 import { SMCStrategyV2 } from '../strategy/v2/SMCStrategyV2';
 import { EnhancedRawSignalV2 } from '@providencex/shared-types';
+import { MarketStructureStrategy } from '../strategy/v2/marketStructureModel/MarketStructureStrategy';
+import { MarketStructureConfig } from '../strategy/v2/marketStructureModel/types';
 
 const logger = new Logger('StrategyService');
 
@@ -27,6 +29,7 @@ export class StrategyService {
   private lastSmcReason: string | null = null; // Store last SMC rejection reason
   private lastSmcDebugReasons: string[] = []; // Store last SMC debug reasons
   private smcV2?: SMCStrategyV2; // Lazy initialization
+  private marketStructureStrategy?: MarketStructureStrategy; // Market Structure Strategy (market_structure_v1)
 
   constructor(
     marketDataService: MarketDataService,
@@ -34,8 +37,30 @@ export class StrategyService {
   ) {
     this.marketDataService = marketDataService;
     
-    // Initialize SMC v2 if enabled
-    if (this.config.useSMCV2) {
+    // Check if Market Structure Strategy is enabled
+    const useMarketStructureStrategy = 
+      process.env.USE_MARKET_STRUCTURE_STRATEGY === 'true' ||
+      process.env.STRATEGY_ID === 'market_structure_v1';
+    
+    if (useMarketStructureStrategy) {
+      // Initialize Market Structure Strategy
+      const msmConfig: MarketStructureConfig = {
+        m1LookbackSwings: parseInt(process.env.MSM_M1_LOOKBACK_SWINGS || '10', 10),
+        minRR: parseFloat(process.env.MSM_MIN_RR || '2.0'),
+        slBufferPips: parseFloat(process.env.MSM_SL_BUFFER_PIPS || '5.0'),
+        maxSpreadPips: parseFloat(process.env.MSM_MAX_SPREAD_PIPS || '2.0'),
+        discountThreshold: parseFloat(process.env.MSM_DISCOUNT_THRESHOLD || '0.5'),
+        premiumThreshold: parseFloat(process.env.MSM_PREMIUM_THRESHOLD || '0.5'),
+        minSwingPairs: parseInt(process.env.MSM_MIN_SWING_PAIRS || '1', 10),
+        equalHighTolerance: parseFloat(process.env.MSM_EQUAL_HIGH_TOLERANCE || '0.001'),
+      };
+      
+      this.marketStructureStrategy = new MarketStructureStrategy(marketDataService, msmConfig);
+      logger.info('[StrategyService] Market Structure Strategy (market_structure_v1) enabled');
+    }
+    
+    // Initialize SMC v2 if enabled (and not using Market Structure Strategy exclusively)
+    if (this.config.useSMCV2 && !useMarketStructureStrategy) {
       // ICT Model: Use H4 for bias when USE_ICT_MODEL is enabled, otherwise use M15
       const useICTModel = process.env.USE_ICT_MODEL === 'true';
       const htfTF = useICTModel ? 'H4' : 'M15';
@@ -56,18 +81,44 @@ export class StrategyService {
       if (paramOverrides) {
         logger.info('[StrategyService] Parameter overrides applied for optimization');
       }
-    } else {
+    } else if (!useMarketStructureStrategy) {
       logger.info('[StrategyService] SMC v1 enabled - using TradeSignal');
     }
   }
 
   /**
-   * Generate signal - uses v2 if enabled, otherwise v1
+   * Generate signal - routes to appropriate strategy
+   * Priority: Market Structure Strategy > SMC v2 > SMC v1
    */
   async generateSignal(symbol: string): Promise<TradeSignal | null> {
     // Reset reason state for new evaluation
     this.lastSmcReason = null;
     this.lastSmcDebugReasons = [];
+    
+    // If Market Structure Strategy is enabled, use it first
+    if (this.marketStructureStrategy) {
+      const result = await this.marketStructureStrategy.generateSignal(symbol);
+      
+      if (result.signal === null) {
+        // Store rejection reason for DecisionLogger
+        this.lastSmcReason = result.reason || 'No valid Market Structure setup found';
+        this.lastSmcDebugReasons = result.debugReasons || [];
+        
+        // Log detailed context for debugging
+        if (result.context) {
+          logger.debug(`[MSM] ${symbol}: ${result.reason}`, result.context);
+        }
+        
+        return null;
+      }
+      
+      // Store success (clear any previous rejection)
+      this.lastSmcReason = null;
+      this.lastSmcDebugReasons = [];
+      
+      // Convert EnhancedRawSignalV2 to TradeSignal for backward compatibility
+      return this.convertV2ToV1Signal(result.signal);
+    }
     
     // If SMC v2 is enabled, use it
     if (this.config.useSMCV2 && this.smcV2) {
@@ -509,9 +560,7 @@ export class StrategyService {
       }
     }
 
-    // Simplified: If we found a structure break, assume liquidity was swept
-    // In production, this should be more precise
-    return true;
+    return false;
   }
 
   /**

@@ -20,9 +20,13 @@ import {
 } from './types';
 import { LivePnlService } from '../services/LivePnlService';
 import { KillSwitchService } from '../services/KillSwitchService';
+import { TenantRepository } from '../db/TenantRepository';
+import { getSystemSettingsService } from '../services/SystemSettingsService';
 
 const logger = new Logger('AdminAPI');
 const router: Router = Router();
+const tenantRepo = new TenantRepository();
+const settingsService = getSystemSettingsService();
 
 /**
  * Get database connection pool (reuse DecisionLogger's connection pattern)
@@ -963,6 +967,98 @@ router.get('/accounts/:id/kill-switch', async (req: Request, res: Response) => {
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger.error('[AdminRoutes] Failed to get account kill switch', error);
+    res.status(500).json({
+      success: false,
+      error: errorMsg,
+    });
+  }
+});
+
+// ---------- System Settings ----------
+
+// GET /api/v1/admin/settings - Get all system settings
+router.get('/settings', async (req: Request, res: Response) => {
+  try {
+    const settings = await tenantRepo.getAllSystemSettings();
+    res.json({
+      success: true,
+      settings: settings.reduce((acc, s) => {
+        acc[s.key] = {
+          value: s.value,
+          description: s.description,
+          updated_at: s.updated_at,
+        };
+        return acc;
+      }, {} as Record<string, any>),
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger.error('[AdminRoutes] Failed to get system settings', error);
+    res.status(500).json({
+      success: false,
+      error: errorMsg,
+    });
+  }
+});
+
+// GET /api/v1/admin/settings/:key - Get a specific setting
+router.get('/settings/:key', async (req: Request, res: Response) => {
+  try {
+    const { key } = req.params;
+    const value = await tenantRepo.getSystemSetting(key);
+    if (value === null) {
+      return res.status(404).json({
+        success: false,
+        error: `Setting '${key}' not found`,
+      });
+    }
+    res.json({
+      success: true,
+      key,
+      value,
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger.error(`[AdminRoutes] Failed to get system setting ${req.params.key}`, error);
+    res.status(500).json({
+      success: false,
+      error: errorMsg,
+    });
+  }
+});
+
+// PUT /api/v1/admin/settings/:key - Update a system setting
+router.put('/settings/:key', async (req: Request, res: Response) => {
+  try {
+    const { key } = req.params;
+    const { value, description } = req.body;
+    
+    if (value === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'value is required',
+      });
+    }
+
+    // Get user ID from auth (if available)
+    const updatedBy = (req as any).auth?.userId || null;
+
+    await tenantRepo.setSystemSetting(key, value, description || null, updatedBy);
+    
+    // Invalidate cache so services pick up the new value
+    settingsService.invalidateCache();
+    
+    logger.info(`[AdminRoutes] System setting '${key}' updated by ${updatedBy || 'unknown'}`);
+    
+    res.json({
+      success: true,
+      key,
+      value,
+      message: `Setting '${key}' updated successfully. Services will pick up the new value within 1 minute (cache TTL).`,
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger.error(`[AdminRoutes] Failed to update system setting ${req.params.key}`, error);
     res.status(500).json({
       success: false,
       error: errorMsg,

@@ -409,5 +409,107 @@ export class TradeHistoryRepository {
 
     return result.rows;
   }
+
+  /**
+   * Get trades for a strategy across all users (for aggregate performance)
+   */
+  async getTradesForStrategy(params: {
+    strategyProfileId: string;
+    includeOpen?: boolean;
+    fromDate?: string;
+    toDate?: string;
+    limit?: number;
+  }): Promise<{ trades: ExecutedTrade[]; total: number }> {
+    const pool = this.ensurePool();
+    const conditions: string[] = ['strategy_profile_id = $1'];
+    const paramsList: any[] = [params.strategyProfileId];
+    let paramIndex = 2;
+
+    if (params.includeOpen === false) {
+      conditions.push('closed_at IS NOT NULL');
+    }
+
+    if (params.fromDate) {
+      conditions.push(`opened_at >= $${paramIndex++}`);
+      paramsList.push(params.fromDate);
+    }
+
+    if (params.toDate) {
+      conditions.push(`opened_at <= $${paramIndex++}`);
+      paramsList.push(params.toDate);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+    const limit = params.limit || 10000; // Large limit for aggregate queries
+
+    // Get total count
+    const countResult = await pool.query(
+      `SELECT COUNT(*) as total FROM executed_trades ${whereClause}`,
+      paramsList
+    );
+    const total = parseInt(countResult.rows[0]?.total || '0', 10);
+
+    // Get trades
+    paramsList.push(limit);
+    const result = await pool.query(
+      `SELECT * FROM executed_trades
+       ${whereClause}
+       ORDER BY opened_at DESC
+       LIMIT $${paramIndex++}`,
+      paramsList
+    );
+
+    return { trades: result.rows, total };
+  }
+
+  /**
+   * Get daily metrics for a strategy across all users (for aggregate performance)
+   */
+  async getDailyMetricsForStrategy(params: {
+    strategyProfileId: string;
+    fromDate?: string;
+    toDate?: string;
+    limit?: number;
+  }): Promise<DailyAccountMetric[]> {
+    const pool = this.ensurePool();
+    const conditions: string[] = ['strategy_profile_id = $1'];
+    const paramsList: any[] = [params.strategyProfileId];
+    let paramIndex = 2;
+
+    if (params.fromDate) {
+      conditions.push(`date >= $${paramIndex++}`);
+      paramsList.push(params.fromDate);
+    }
+
+    if (params.toDate) {
+      conditions.push(`date <= $${paramIndex++}`);
+      paramsList.push(params.toDate);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+    const limit = params.limit || 365; // Default to 1 year
+
+    paramsList.push(limit);
+    const result = await pool.query(
+      `SELECT * FROM daily_account_metrics
+       ${whereClause}
+       ORDER BY date ASC
+       LIMIT $${paramIndex++}`,
+      paramsList
+    );
+
+    return result.rows;
+  }
+
+  async getTradeByTicket(mt5Ticket: number, userId: string): Promise<ExecutedTrade | null> {
+    const pool = this.ensurePool();
+    const result = await pool.query(
+      `SELECT * FROM executed_trades
+       WHERE mt5_ticket = $1 AND user_id = $2
+       LIMIT 1`,
+      [mt5Ticket, userId]
+    );
+    return result.rows[0] || null;
+  }
 }
 

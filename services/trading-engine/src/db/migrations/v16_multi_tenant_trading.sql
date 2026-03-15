@@ -2,6 +2,7 @@
 -- Users, MT5 accounts, strategy profiles, and user strategy assignments
 
 -- 1) users
+-- Note: email is required for all users
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT NOT NULL UNIQUE,

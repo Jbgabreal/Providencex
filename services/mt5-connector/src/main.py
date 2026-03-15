@@ -1064,6 +1064,7 @@ async def get_history(
             
             start_time = (end_time - timedelta(days=days)).replace(microsecond=0)
         
+        count = 0  # will be set in the legacy branch; keep here to avoid UnboundLocalError in error paths
         if use_historical_dates:
             # For historical date ranges, use copy_rates_range directly
             logger.info(f"Fetching historical data for {resolved_symbol}: {timeframe}, date range: {start_time} to {end_time}")

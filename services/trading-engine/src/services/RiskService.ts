@@ -157,13 +157,14 @@ export class RiskService {
     const pipValue = 10; // USD per pip per standard lot (simplified)
     const lotSize = riskAmount / (clampedStopLossPips * pipValue);
 
-    // Apply realistic lot size constraints for v1:
+    // Apply lot size constraints:
     // - Minimum: 0.01 lots
-    // - Maximum: 0.10 lots (safety cap for testing)
-    const MAX_TEST_LOT_SIZE = 0.10;
+    // - Maximum: configurable via MAX_LOT_SIZE env var (default 10.0 for live trading)
+    //   Override with a lower value (e.g. 0.10) during testing to limit exposure
+    const maxLotSize = parseFloat(process.env.MAX_LOT_SIZE || '10.0');
     const minLotSize = 0.01;
-    
-    const clampedLotSize = Math.max(minLotSize, Math.min(MAX_TEST_LOT_SIZE, lotSize));
+
+    const clampedLotSize = Math.max(minLotSize, Math.min(maxLotSize, lotSize));
 
     return clampedLotSize;
   }

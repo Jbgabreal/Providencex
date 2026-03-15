@@ -29,5 +29,10 @@
     "@providencex/shared-utils": "workspace:*",
     "@providencex/shared-types": "workspace:*",
     "pg": "^8.11.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "lucide-react": "^0.555.0"
+    }
   }
 }
