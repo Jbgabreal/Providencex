@@ -20,7 +20,7 @@ echo ""
 # Start MT5 connector in background
 echo "[1/2] Starting MT5 connector on port 3030..."
 cd "$MT5_DIR" || { echo "ERROR: Cannot find mt5-connector directory"; exit 1; }
-/c/Python313/python src/main.py &
+/c/Python313/python.exe src/main.py &
 MT5_PID=$!
 sleep 3
 
