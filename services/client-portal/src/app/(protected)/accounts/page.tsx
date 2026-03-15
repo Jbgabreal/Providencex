@@ -349,7 +349,7 @@ export default function AccountsPage() {
         <div className="text-center py-12 bg-white rounded-lg shadow">
           <p className="text-gray-500">No trading accounts connected yet.</p>
           <p className="text-sm text-gray-400 mt-2">
-            Click "Add Account" to connect your MT5 or Deriv account.
+            Click &quot;Add Account&quot; to connect your MT5 or Deriv account.
           </p>
         </div>
       )}
