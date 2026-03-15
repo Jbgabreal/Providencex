@@ -25,7 +25,16 @@ export default function createCopyTradingRouter(config: TradingEngineConfig) {
       const limit = parseInt(req.query.limit as string) || 20;
       const offset = parseInt(req.query.offset as string) || 0;
       const mentors = await repo.getPublicMentors(limit, offset);
-      res.json({ success: true, mentors });
+
+      // Attach performance stats to each mentor
+      const mentorsWithPerformance = await Promise.all(
+        mentors.map(async (mentor) => {
+          const performance = await repo.getMentorPerformance(mentor.id);
+          return { ...mentor, performance };
+        })
+      );
+
+      res.json({ success: true, mentors: mentorsWithPerformance });
     } catch (error) {
       logger.error('[CopyTrading] List mentors failed', error);
       res.status(500).json({ error: 'Internal server error' });
@@ -39,10 +48,10 @@ export default function createCopyTradingRouter(config: TradingEngineConfig) {
         return res.status(404).json({ error: 'Mentor not found' });
       }
 
-      // Get recent signals (public view)
-      const { signals } = await repo.getSignalsByMentor(mentor.id, 'active', 10, 0);
+      const { signals } = await repo.getSignalsByMentor(mentor.id, undefined, 10, 0);
+      const performance = await repo.getMentorPerformance(mentor.id);
 
-      res.json({ success: true, mentor, recent_signals: signals });
+      res.json({ success: true, mentor, recent_signals: signals, performance });
     } catch (error) {
       logger.error('[CopyTrading] Get mentor failed', error);
       res.status(500).json({ error: 'Internal server error' });

@@ -371,6 +371,108 @@ export class CopyTradingRepository {
     return result.rows[0] || null;
   }
 
+  // ==================== Mentor Performance Analytics ====================
+
+  async getMentorPerformance(mentorProfileId: string): Promise<{
+    total_signals: number;
+    active_signals: number;
+    closed_signals: number;
+    total_copied_trades: number;
+    winning_trades: number;
+    losing_trades: number;
+    win_rate: number;
+    total_pnl: number;
+    avg_profit_per_trade: number;
+    profit_factor: number;
+    best_trade: number;
+    worst_trade: number;
+    avg_pips_per_signal: number;
+  }> {
+    const pool = this.ensurePool();
+
+    // Signal stats
+    const signalStats = await pool.query(
+      `SELECT
+        COUNT(*) as total_signals,
+        COUNT(*) FILTER (WHERE status = 'active') as active_signals,
+        COUNT(*) FILTER (WHERE status IN ('closed', 'partially_closed')) as closed_signals
+       FROM mentor_signals WHERE mentor_profile_id = $1`,
+      [mentorProfileId]
+    );
+
+    // Copied trade stats (across all followers for this mentor's signals)
+    const tradeStats = await pool.query(
+      `SELECT
+        COUNT(*) as total_trades,
+        COUNT(*) FILTER (WHERE ct.profit > 0) as winning_trades,
+        COUNT(*) FILTER (WHERE ct.profit < 0) as losing_trades,
+        COALESCE(SUM(ct.profit), 0) as total_pnl,
+        COALESCE(AVG(ct.profit) FILTER (WHERE ct.status = 'closed'), 0) as avg_profit,
+        COALESCE(SUM(ct.profit) FILTER (WHERE ct.profit > 0), 0) as gross_profit,
+        COALESCE(ABS(SUM(ct.profit) FILTER (WHERE ct.profit < 0)), 0.01) as gross_loss,
+        COALESCE(MAX(ct.profit), 0) as best_trade,
+        COALESCE(MIN(ct.profit), 0) as worst_trade
+       FROM copied_trades ct
+       JOIN mentor_signals ms ON ms.id = ct.mentor_signal_id
+       WHERE ms.mentor_profile_id = $1 AND ct.status = 'closed'`,
+      [mentorProfileId]
+    );
+
+    const ss = signalStats.rows[0];
+    const ts = tradeStats.rows[0];
+    const totalClosed = Number(ts.winning_trades) + Number(ts.losing_trades);
+
+    return {
+      total_signals: parseInt(ss.total_signals),
+      active_signals: parseInt(ss.active_signals),
+      closed_signals: parseInt(ss.closed_signals),
+      total_copied_trades: parseInt(ts.total_trades),
+      winning_trades: parseInt(ts.winning_trades),
+      losing_trades: parseInt(ts.losing_trades),
+      win_rate: totalClosed > 0 ? (Number(ts.winning_trades) / totalClosed) * 100 : 0,
+      total_pnl: Number(ts.total_pnl),
+      avg_profit_per_trade: Number(ts.avg_profit),
+      profit_factor: Number(ts.gross_loss) > 0 ? Number(ts.gross_profit) / Number(ts.gross_loss) : 0,
+      best_trade: Number(ts.best_trade),
+      worst_trade: Number(ts.worst_trade),
+      avg_pips_per_signal: 0, // TODO: calculate from entry/exit prices
+    };
+  }
+
+  async getSignalPerformance(signalId: string): Promise<{
+    total_copies: number;
+    open: number;
+    closed: number;
+    failed: number;
+    total_pnl: number;
+    winning: number;
+    losing: number;
+  }> {
+    const pool = this.ensurePool();
+    const result = await pool.query(
+      `SELECT
+        COUNT(*) as total_copies,
+        COUNT(*) FILTER (WHERE status = 'open') as open,
+        COUNT(*) FILTER (WHERE status = 'closed') as closed,
+        COUNT(*) FILTER (WHERE status = 'failed') as failed,
+        COALESCE(SUM(profit) FILTER (WHERE status = 'closed'), 0) as total_pnl,
+        COUNT(*) FILTER (WHERE profit > 0) as winning,
+        COUNT(*) FILTER (WHERE profit < 0) as losing
+       FROM copied_trades WHERE mentor_signal_id = $1`,
+      [signalId]
+    );
+    const r = result.rows[0];
+    return {
+      total_copies: parseInt(r.total_copies),
+      open: parseInt(r.open),
+      closed: parseInt(r.closed),
+      failed: parseInt(r.failed),
+      total_pnl: Number(r.total_pnl),
+      winning: parseInt(r.winning),
+      losing: parseInt(r.losing),
+    };
+  }
+
   async getCopiedTradesSummaryBySignal(signalId: string): Promise<{ total: number; open: number; closed: number; failed: number }> {
     const pool = this.ensurePool();
     const result = await pool.query(

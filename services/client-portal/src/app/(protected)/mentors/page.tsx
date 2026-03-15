@@ -62,6 +62,48 @@ export default function MentorsPage() {
                 </span>
               </div>
 
+              {/* Performance Stats */}
+              {mentor.performance && mentor.performance.total_signals > 0 && (
+                <div className="mb-3 p-3 bg-gray-50 rounded text-xs">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <span className="text-gray-500 block">Win Rate</span>
+                      <span className={`font-semibold text-sm ${mentor.performance.win_rate >= 50 ? 'text-green-700' : 'text-red-600'}`}>
+                        {mentor.performance.win_rate.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block">Total PnL</span>
+                      <span className={`font-semibold text-sm ${mentor.performance.total_pnl >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                        ${mentor.performance.total_pnl.toFixed(0)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block">Profit Factor</span>
+                      <span className="font-semibold text-sm">
+                        {mentor.performance.profit_factor.toFixed(2)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block">Signals</span>
+                      <span className="font-semibold text-sm">{mentor.performance.total_signals}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block">W / L</span>
+                      <span className="font-semibold text-sm">
+                        {mentor.performance.winning_trades} / {mentor.performance.losing_trades}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block">Avg Trade</span>
+                      <span className={`font-semibold text-sm ${mentor.performance.avg_profit_per_trade >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                        ${mentor.performance.avg_profit_per_trade.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {subscribedIds.has(mentor.id) ? (
                 <div className="flex items-center justify-center px-4 py-2 bg-green-50 text-green-700 rounded-lg text-sm font-medium">
                   <TrendingUp className="mr-2 h-4 w-4" /> Subscribed
