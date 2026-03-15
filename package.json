@@ -12,7 +12,10 @@
     "build": "pnpm --recursive build",
     "test": "pnpm --recursive test",
     "lint": "pnpm --recursive lint",
-    "test-db": "tsx scripts/test-db-connection.ts"
+    "test-db": "tsx scripts/test-db-connection.ts",
+    "mt5:tunnel": "bash scripts/start-mt5-tunnel.sh",
+    "migrate": "tsx scripts/migrate.ts",
+    "deploy": "for svc in trading-engine news-guardrail api-gateway client-portal admin-dashboard; do railway up --service $svc --detach; done"
   },
   "engines": {
     "node": ">=18.0.0",

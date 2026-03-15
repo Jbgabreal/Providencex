@@ -1,311 +1,173 @@
 # ProvidenceX
 
-> **God-aligned, risk-first wealth automation platform** (trading + farming + portfolios)
+> Automated trading platform powered by institutional-grade ICT strategies with multi-broker support.
 
-ProvidenceX is a microservices-based backend platform for automated trading, portfolio management, and farming investment cycles.
+## Live URLs (Railway)
+
+| Service | URL |
+|---------|-----|
+| Client Portal | https://client-portal-production-e444.up.railway.app |
+| Admin Dashboard | https://admin-dashboard-production-2539.up.railway.app |
+| Trading Engine API | https://trading-engine-production-dd29.up.railway.app |
+| API Gateway | https://api-gateway-production-43e6.up.railway.app |
 
 ## Architecture
 
-This is a **monorepo** containing multiple microservices:
+```
+Client Portal (Next.js) ──→ Trading Engine (Node.js) ──→ Broker Adapters
+Admin Dashboard (Next.js)        │                           ├── MT5 (via ngrok tunnel)
+                                 │                           └── Deriv (WebSocket API)
+                           News Guardrail
+                                 │
+                            PostgreSQL (Railway)
+```
 
-- **news-guardrail** - Daily news risk scanner (ScreenshotOne + OpenAI Vision)
-- **trading-engine** - Algorithmic trading engine (SMC + Order Block strategies)
-- **mt5-connector** - MT5/MT4 broker integration bridge
-- **portfolio-engine** - Investment products and portfolio management
-- **farming-engine** - Farming investment cycle management
-- **api-gateway** - Single entry point for frontend/external clients
+### Services
 
-See `docs/ProvidenceX_Full_System_Architecture_and_Master_Prompt.md` for the complete architecture documentation.
+| Service | Port | Description |
+|---------|------|-------------|
+| **client-portal** | 3002 | User-facing app: onboarding, trading settings, dashboard |
+| **admin-dashboard** | 3001 | Admin monitoring: metrics, decisions, exposure |
+| **api-gateway** | 3000 | Proxy to all backend services |
+| **trading-engine** | 3020 | Core: ICT strategy, risk management, trade execution |
+| **news-guardrail** | 3010 | News event scanner, blocks trading during high-impact events |
+| **mt5-connector** | 3030 | Python/FastAPI bridge to MetaTrader 5 terminal (local only) |
 
-## Prerequisites
+### Broker Support (Hybrid Model)
 
-- Node.js >= 18.0.0
-- pnpm >= 8.0.0
-- PostgreSQL database
-- OpenAI API key
-- ScreenshotOne API key (for news-guardrail)
+- **MetaTrader 5** — Any MT5 broker (XM, IC Markets, FXTM, etc.) via local connector + ngrok tunnel
+- **Deriv** — Direct WebSocket API integration, no local software needed
 
-## Setup
-
-### 1. Install Dependencies
+## Quick Start (Local Development)
 
 ```bash
+# Install dependencies
 pnpm install
-```
 
-### 2. Configure Environment Variables
-
-Copy `.env.example` to `.env` and fill in your values:
-
-```bash
-# Copy the example file
-cp .env.example .env
-
-# Edit .env with your actual values
-```
-
-Required variables:
-- `DATABASE_URL` - PostgreSQL connection string
-- `OPENAI_API_KEY` - OpenAI API key
-- `SCREENSHOTONE_ACCESS_KEY` - ScreenshotOne API key
-
-### 3. Initialize Database
-
-The news-guardrail service will automatically create its database schema on startup. For manual setup:
-
-```bash
-# Connect to your PostgreSQL database
-psql $DATABASE_URL
-
-# Run the schema (optional - auto-created on startup)
-\i services/news-guardrail/src/db/schema.sql
-```
-
-### 4. Build Shared Packages
-
-```bash
+# Build shared packages
 pnpm --filter './packages/*' build
+
+# Start all services
+pnpm dev
 ```
 
-### 5. Start Services
+## MT5 Connector (Required for MT5 Brokers)
 
-**Option A: Start all services in parallel (development)**
+The MT5 connector runs on your Windows machine (requires MetaTrader 5 terminal).
+
+**One command to start connector + tunnel:**
 
 ```bash
-pnpm dev
+pnpm mt5:tunnel
 ```
 
-**Option B: Start services individually**
+This starts the Python MT5 connector, connects to your MetaTrader 5 terminal, and opens a tunnel at:
+```
+https://inbond-undisputatiously-arlena.ngrok-free.dev
+```
+
+**Prerequisites:**
+- MetaTrader 5 terminal installed and running
+- Python with `MetaTrader5` package installed
+- ngrok installed and authenticated
+- MT5 credentials in `.env` (MT5_LOGIN, MT5_PASSWORD, MT5_SERVER)
+
+**Stop:** Press `Ctrl+C`
+
+## Database Migrations
 
 ```bash
-# News Guardrail
-cd services/news-guardrail
-pnpm dev
-
-# Trading Engine
-cd services/trading-engine
-pnpm dev
-
-# MT5 Connector
-cd services/mt5-connector
-pnpm dev
-
-# Portfolio Engine
-cd services/portfolio-engine
-pnpm dev
-
-# Farming Engine
-cd services/farming-engine
-pnpm dev
-
-# API Gateway
-cd services/api-gateway
-pnpm dev
+# Run all migrations against DATABASE_URL
+pnpm migrate
 ```
 
-**Option B: Start services individually from root**
-```bash
-pnpm --filter @providencex/trading-engine dev
-pnpm --filter @providencex/mt5-connector dev
-pnpm --filter @providencex/news-guardrail dev
-pnpm --filter @providencex/client-portal dev
-pnpm --filter @providencex/admin-dashboard dev
-pnpm --filter @providencex/api-gateway dev
+Migrations are tracked in a `_migrations` table. Running the command multiple times is safe — already-applied migrations are skipped.
 
-
-pnpm --filter @providencex/trading-engine ai-optimize --symbol XAUUSD --data-source postgres --year 2023 --months 3
-
-cd services/trading-engine
-pnpm --filter @providencex/trading-engine backtest --symbol XAUUSD --from 2024-05-01 --to 2024-06-30 --data-source postgres
-
-pnpm --filter @providencex/trading-engine optimize-single --from 2024-05-01 --to 2024-06-30 --symbol XAUUSD --data-source postgres
-
-```
-
-## Service Ports (Default)
-
-- News Guardrail: `3010`
-- Trading Engine: `3020`
-- MT5 Connector: `3030`
-- Admin Dashboard: `3001` (Next.js)
-- Portfolio Engine: `3040`
-- Farming Engine: `3050`
-- API Gateway: `3000`
-
-## Admin Dashboard
-
-A read-only admin monitoring dashboard is available for the Trading Engine:
-
-- **Overview**: Daily metrics, trades by symbol/strategy, top skip reasons
-- **Decisions**: Table of recent trade decisions with filters and pagination
-- **Exposure**: Real-time exposure snapshot per symbol and globally (auto-refresh every 10s)
-- **Backtests**: History of backtest runs with performance metrics
-
-**Run the dashboard:**
-```bash
-cd services/admin-dashboard
-pnpm install
-pnpm dev
-```
-
-Dashboard runs on: http://localhost:3001
-
-**Environment Variable:**
-```env
-NEXT_PUBLIC_TRADING_ENGINE_BASE_URL=http://localhost:3020
-```
-
-See [Admin Dashboard README](services/admin-dashboard/README.md) for details.
-
-## Testing Endpoints
-
-### News Guardrail
+## Deploy to Railway
 
 ```bash
-# Check if trading is safe
-curl http://localhost:3010/can-i-trade-now
+# Deploy all services
+pnpm deploy
 
-# Get today's news map
-curl http://localhost:3010/news-map/today
-
-# Manually trigger news scan (dev)
-curl -X POST http://localhost:3010/admin/trigger-scan
+# Deploy a single service
+railway up --service trading-engine --detach
 ```
+
+## Environment Variables
+
+### Required (all services)
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `PX_TIMEZONE` | Timezone (default: America/New_York) |
 
 ### Trading Engine
 
-```bash
-# Health check
-curl http://localhost:3020/health
+| Variable | Description |
+|----------|-------------|
+| `MT5_CONNECTOR_URL` | MT5 connector URL (ngrok static domain) |
+| `NEWS_GUARDRAIL_URL` | News guardrail internal URL |
+| `PRIVY_APP_ID` | Privy authentication app ID |
+| `USE_ICT_MODEL` | Enable ICT strategy (true/false) |
+| `DERIV_APP_ID` | ProvidenceX Deriv App ID (default: 32Irfb5O7IuciwD02q5J1) |
 
-# Simulate signal (test endpoint)
-curl -X POST http://localhost:3020/simulate-signal \
-  -H "Content-Type: application/json" \
-  -d '{"symbol": "XAUUSD"}'
-```
+### Client Portal
 
-### Performance Reports
+| Variable | Description |
+|----------|-------------|
+| `NEXT_PUBLIC_PRIVY_APP_ID` | Privy app ID (build-time) |
+| `NEXT_PUBLIC_BACKEND_BASE_URL` | Trading engine public URL (build-time) |
 
-The trading engine now generates detailed performance reports that cover setups, executed trades, and skipped opportunities (false negatives).
+### MT5 Connector (local .env)
 
-- **Automatic schedule (America/New_York):** 6 AM, 12 PM, 6 PM, 12 AM.  
-  Each run analyzes the previous 6 hours.
-- **Includes:** setup counts, skip reasons, win/loss/break-even trades, PnL metrics, and skipped setups that would have been profitable.
+| Variable | Description |
+|----------|-------------|
+| `MT5_LOGIN` | MT5 account number |
+| `MT5_PASSWORD` | MT5 account password |
+| `MT5_SERVER` | MT5 broker server name |
+| `MT5_PATH` | Path to MT5 terminal executable |
 
-API endpoints (all served by `@providencex/trading-engine`):
+## User Flow
 
-```bash
-# Get latest reports (default 10)
-curl http://localhost:3020/api/v1/performance-reports
-
-# Fetch a specific report
-curl http://localhost:3020/api/v1/performance-reports/<reportId>
-
-# Manually trigger a report (optional period override)
-curl -X POST http://localhost:3020/api/v1/performance-reports/generate \
-  -H "Content-Type: application/json" \
-  -d '{"periodStart": "2025-02-01T06:00:00Z", "periodEnd": "2025-02-01T12:00:00Z"}'
-```
-
-Reports are stored in the shared Postgres database (`performance_reports` table) for later review.
-
-### MT5 Connector
-
-```bash
-# Health check
-curl http://localhost:3030/health
-
-# Open trade (example - currently stubbed)
-curl -X POST http://localhost:3030/api/v1/trades/open \
-  -H "Content-Type: application/json" \
-  -d '{
-    "symbol": "XAUUSD",
-    "direction": "BUY",
-    "entry_type": "MARKET",
-    "lot_size": 0.01,
-    "stop_loss_price": 2000,
-    "take_profit_price": 2100,
-    "strategy_id": "smc_v1"
-  }'
-```
+1. **Sign up** via Privy (email) on the client portal
+2. **Onboarding wizard**: Connect MT5 or Deriv account → Select strategy → Start trading
+3. **Trading settings**: Risk per trade (% or USD), max consecutive losses, session selection (Asian/London/NY)
+4. **Dashboard**: Active strategy status, pause/resume, close positions, equity curve
+5. **Strategies page**: ICT Sweep & Shift with backtest stats, "How It Works" explanation
 
 ## Project Structure
 
 ```
 providencex/
-├── services/          # Microservices
-│   ├── news-guardrail/
-│   ├── trading-engine/
-│   ├── mt5-connector/
-│   ├── admin-dashboard/  # Admin monitoring dashboard (Next.js)
-│   ├── portfolio-engine/
-│   ├── farming-engine/
-│   └── api-gateway/
-├── packages/          # Shared packages
-│   ├── shared-types/  # TypeScript types
-│   ├── shared-utils/  # Utility functions
-│   └── shared-config/ # Configuration loaders
-├── docs/              # Documentation
-│   ├── ProvidenceX_Full_System_Architecture_and_Master_Prompt.md
-│   └── ProvidenceX_News_Guardrail_Master_Prompt_and_PRD.md
-├── LOG.md             # Build log
-├── package.json       # Monorepo config
-├── pnpm-workspace.yaml
+├── services/
+│   ├── client-portal/       # User app (Next.js + Privy auth)
+│   ├── admin-dashboard/     # Admin monitoring (Next.js)
+│   ├── api-gateway/         # Proxy (Express)
+│   ├── trading-engine/      # Core engine (Express + strategy pipeline)
+│   ├── news-guardrail/      # News scanner (Express + OpenAI)
+│   └── mt5-connector/       # MT5 bridge (Python/FastAPI)
+├── packages/
+│   ├── shared-types/        # TypeScript types
+│   ├── shared-utils/        # Utility functions
+│   └── shared-config/       # Configuration loaders
+├── scripts/
+│   ├── start-mt5-tunnel.sh  # MT5 connector + ngrok tunnel
+│   └── migrate.ts           # Database migration runner
 └── tsconfig.base.json
 ```
 
-## Development
+## ICT Strategy (Sweep & Shift)
 
-### Building
+The core trading strategy based on ICT (Inner Circle Trader) concepts:
 
-```bash
-# Build all packages and services
-pnpm build
+1. **Identify Liquidity** — Finds key highs/lows where stop losses cluster
+2. **Wait for Sweep** — Price runs past a key level, trapping retail traders
+3. **Confirm Shift** — BOS/CHoCH confirms smart money has reversed
+4. **Enter at OTE** — Entry on opposing candle in the 62-79% Fibonacci zone
 
-# Build specific package
-pnpm --filter @providencex/shared-types build
-
-# Build specific service
-pnpm --filter @providencex/news-guardrail build
-```
-
-### Adding Dependencies
-
-```bash
-# Add to a specific service/package
-pnpm --filter @providencex/news-guardrail add express
-
-# Add to root (dev dependencies)
-pnpm add -D -w typescript
-```
-
-## Implementation Status
-
-### ✅ Phase 1 - Complete
-- [x] Monorepo structure
-- [x] Shared packages
-- [x] News Guardrail (full implementation)
-
-### 🚧 Phase 2 - In Progress
-- [x] Trading Engine skeleton
-- [x] MT5 Connector skeleton
-- [ ] Full strategy implementation
-- [ ] Real MT5 integration
-
-### 📋 Phase 3 - Planned
-- [ ] Portfolio Engine implementation
-- [ ] Farming Engine implementation
-- [ ] API Gateway with auth
-- [ ] Full integration testing
-
-## Notes
-
-- **News Guardrail**: Fully implemented with cron job, database, and all endpoints
-- **Trading Engine**: Service structure complete, strategy logic stubbed (TODOs)
-- **MT5 Connector**: Endpoints ready, MT5 integration stubbed (TODOs)
-- **Other services**: Basic scaffolding, implementation pending
+Backtest results: **85.7% win rate, 6.0 profit factor, 137% return** on XAUUSD M5.
 
 ## License
 
-[Your License Here]
-
+Proprietary — All rights reserved.
