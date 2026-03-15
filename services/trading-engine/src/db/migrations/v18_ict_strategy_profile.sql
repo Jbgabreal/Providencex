@@ -15,8 +15,7 @@ INSERT INTO strategy_profiles (
   risk_tier,
   config,
   is_frozen,
-  is_public,
-  is_available
+  is_public
 ) VALUES (
   'ict_sweep_shift_v1',
   'ICT Sweep & Shift',
@@ -25,10 +24,8 @@ INSERT INTO strategy_profiles (
   'low',
   '{"risk_per_trade_pct": 0.5, "max_trades_per_day": 2, "symbols": ["XAUUSD"], "timeframe": "M5"}',
   TRUE,
-  TRUE,
   TRUE
 ) ON CONFLICT (key) DO UPDATE SET
   name = EXCLUDED.name,
   description = EXCLUDED.description,
-  is_public = EXCLUDED.is_public,
-  is_available = EXCLUDED.is_available;
+  is_public = EXCLUDED.is_public;
