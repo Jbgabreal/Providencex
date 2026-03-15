@@ -226,7 +226,7 @@ export default function SettingsPage() {
             <li>Market structure analysis</li>
           </ul>
           <p className="text-xs text-green-700 mt-2">
-            This is the "master" account that runs the trading strategies and decides when to trade.
+            This is the &quot;master&quot; account that runs the trading strategies and decides when to trade.
           </p>
         </div>
 

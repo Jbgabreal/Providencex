@@ -183,18 +183,23 @@ logger.info(
   `(poll interval: ${marketDataConfig.feedIntervalSec}s, max candles: ${marketDataConfig.maxCandlesPerSymbol} per symbol)`
 );
 
-// v14 Order Flow Service
+// v14 Order Flow Service (lazy init to avoid circular dependency in production builds)
 import { getOrderFlowConfig } from '@providencex/shared-config';
-const orderFlowConfig = getOrderFlowConfig();
-const orderFlowService = new OrderFlowService({
-  mt5ConnectorUrl: adminMt5Url, // Use admin MT5 URL for order flow analysis
-  pollIntervalMs: orderFlowConfig.pollIntervalMs,
-  largeOrderMultiplier: orderFlowConfig.largeOrderMultiplier,
-  minDeltaTrendConfirmation: orderFlowConfig.minDeltaTrendConfirmation,
-  exhaustionThreshold: orderFlowConfig.exhaustionThreshold,
-  absorptionLookback: orderFlowConfig.absorptionLookback,
-  enabled: orderFlowConfig.enabled,
-});
+let orderFlowService: OrderFlowService | undefined;
+try {
+  const orderFlowConfig = getOrderFlowConfig();
+  orderFlowService = new OrderFlowService({
+    mt5ConnectorUrl: adminMt5Url,
+    pollIntervalMs: orderFlowConfig.pollIntervalMs,
+    largeOrderMultiplier: orderFlowConfig.largeOrderMultiplier,
+    minDeltaTrendConfirmation: orderFlowConfig.minDeltaTrendConfirmation,
+    exhaustionThreshold: orderFlowConfig.exhaustionThreshold,
+    absorptionLookback: orderFlowConfig.absorptionLookback,
+    enabled: orderFlowConfig.enabled,
+  });
+} catch (err) {
+  console.warn('[Server] OrderFlowService initialization failed, continuing without it:', (err as Error).message);
+}
 
 // Start order flow service if enabled
 if (orderFlowConfig.enabled) {

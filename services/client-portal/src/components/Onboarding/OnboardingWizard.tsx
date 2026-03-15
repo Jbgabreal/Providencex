@@ -143,7 +143,7 @@ export function OnboardingWizard() {
             <div>
               <h2 className="text-2xl font-bold text-gray-900 mb-1">Connect Your MT5 Account</h2>
               <p className="text-sm text-gray-500 mb-6">
-                Enter your MetaTrader 5 credentials. We'll connect securely to execute trades on your behalf.
+                Enter your MetaTrader 5 credentials. We&apos;ll connect securely to execute trades on your behalf.
               </p>
 
               {error && (
@@ -324,7 +324,7 @@ export function OnboardingWizard() {
               <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <CheckCircle className="h-10 w-10 text-green-600" />
               </div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">You're Live!</h2>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">You&apos;re Live!</h2>
               <p className="text-gray-600 mb-6">
                 Your strategy is now active and monitoring the markets.
               </p>
