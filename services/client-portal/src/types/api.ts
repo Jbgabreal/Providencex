@@ -175,36 +175,43 @@ export interface ApiResponse<T> {
 export interface StrategiesResponse {
   success: boolean;
   strategies: Strategy[];
+  error?: string;
 }
 
 export interface Mt5AccountsResponse {
   success: boolean;
   accounts: Mt5Account[];
+  error?: string;
 }
 
 export interface StrategyAssignmentsResponse {
   success: boolean;
   assignments: StrategyAssignment[];
+  error?: string;
 }
 
 export interface TradesResponse {
   success: boolean;
   trades: Trade[];
   total: number;
+  error?: string;
 }
 
 export interface OpenPositionsResponse {
   success: boolean;
   positions: OpenPosition[];
+  error?: string;
 }
 
 export interface AnalyticsSummaryResponse {
   success: boolean;
   summary: AnalyticsSummary;
+  error?: string;
 }
 
 export interface EquityCurveResponse {
   success: boolean;
   curve: EquityCurvePoint[];
+  error?: string;
 }
 

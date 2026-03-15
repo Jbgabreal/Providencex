@@ -14,7 +14,7 @@ export function PrivyProviderWrapper({ children }: { children: React.ReactNode }
           accentColor: '#22c55e',
         },
         embeddedWallets: {
-          createOnLogin: 'off',
+          ethereum: { createOnLogin: 'off' },
         },
       }}
     >
