@@ -10,6 +10,9 @@ import {
   Activity,
   Settings,
   LogOut,
+  Users,
+  Copy,
+  Radio,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -23,6 +26,9 @@ const navigation: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Accounts', href: '/accounts', icon: Wallet },
   { name: 'Strategies', href: '/strategies', icon: Target },
+  { name: 'Mentors', href: '/mentors', icon: Users },
+  { name: 'Copy Trading', href: '/copy-trading', icon: Copy },
+  { name: 'Mentor Dashboard', href: '/mentor-dashboard', icon: Radio },
   { name: 'Activity', href: '/activity', icon: Activity },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];

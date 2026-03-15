@@ -133,6 +133,35 @@ export class MT5BrokerAdapter implements BrokerAdapter {
     }
   }
 
+  async modifyTrade(ticket: string | number, params: { stopLoss?: number; takeProfit?: number }): Promise<NormalizedTradeResult> {
+    try {
+      const payload: any = { ticket, stop_loss: params.stopLoss, take_profit: params.takeProfit };
+      if (this.config.login && this.config.password) {
+        payload.account = {
+          mt5_login: this.config.login,
+          mt5_password: this.config.password,
+          mt5_server: this.config.server || '',
+        };
+      }
+      const response = await axios.post(
+        `${this.baseUrl}/api/v1/trades/modify`,
+        payload,
+        { timeout: 10000 }
+      );
+      if (response.status >= 200 && response.status < 300) {
+        logger.info(`[MT5] Trade modified: ticket ${ticket}`);
+        return { success: true, ticket, brokerType: 'mt5' };
+      }
+      return { success: false, error: `MT5 connector returned ${response.status}`, brokerType: 'mt5' };
+    } catch (error) {
+      const msg = axios.isAxiosError(error)
+        ? error.response?.data?.error || error.message
+        : error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`[MT5] modifyTrade error: ${msg}`);
+      return { success: false, error: msg, brokerType: 'mt5' };
+    }
+  }
+
   async getBalance(): Promise<BrokerAccountBalance> {
     try {
       const response = await axios.get(`${this.baseUrl}/api/v1/account/balance`, { timeout: 5000 });

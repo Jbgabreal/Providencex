@@ -21,6 +21,7 @@ const MIGRATION_FILES = [
   'v18_ict_strategy_profile.sql',
   'v19_user_trading_config.sql',
   'v20_broker_adapter.sql',
+  'v21_copy_trading.sql',
 ];
 
 async function main() {

@@ -31,6 +31,9 @@ export interface BrokerAdapter {
   /** Close / sell an open position */
   closeTrade(ticket: string | number, reason?: string): Promise<NormalizedTradeResult>;
 
+  /** Modify SL/TP on an open position */
+  modifyTrade(ticket: string | number, params: { stopLoss?: number; takeProfit?: number }): Promise<NormalizedTradeResult>;
+
   /** Get account balance */
   getBalance(): Promise<BrokerAccountBalance>;
 }

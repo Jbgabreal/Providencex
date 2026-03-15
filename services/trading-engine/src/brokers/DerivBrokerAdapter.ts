@@ -278,6 +278,30 @@ export class DerivBrokerAdapter implements BrokerAdapter {
     }
   }
 
+  async modifyTrade(ticket: string | number, params: { stopLoss?: number; takeProfit?: number }): Promise<NormalizedTradeResult> {
+    if (!this.isConnected()) {
+      try { await this.connect(); } catch (err: any) {
+        return { success: false, error: `Deriv connect failed: ${err.message}`, brokerType: 'deriv' };
+      }
+    }
+    try {
+      const updatePayload: any = { contract_update: 1, contract_id: String(ticket) };
+      if (params.stopLoss !== undefined) {
+        updatePayload.limit_order = { ...(updatePayload.limit_order || {}), stop_loss: params.stopLoss };
+      }
+      if (params.takeProfit !== undefined) {
+        updatePayload.limit_order = { ...(updatePayload.limit_order || {}), take_profit: params.takeProfit };
+      }
+      const result = await this.sendRequest(updatePayload);
+      if (result.error) {
+        return { success: false, error: `Deriv modify failed: ${result.error.message}`, brokerType: 'deriv' };
+      }
+      return { success: true, ticket, brokerType: 'deriv' };
+    } catch (error: any) {
+      return { success: false, error: error.message, brokerType: 'deriv' };
+    }
+  }
+
   async getBalance(): Promise<BrokerAccountBalance> {
     if (!this.isConnected()) {
       return { balance: this.accountBalance, equity: this.accountBalance, currency: this.accountCurrency };
