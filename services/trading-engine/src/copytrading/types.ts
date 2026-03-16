@@ -7,8 +7,13 @@ export interface MentorProfile {
   user_id: string;
   display_name: string;
   bio: string | null;
+  trading_style: string[];
+  markets_traded: string[];
   is_active: boolean;
   is_approved: boolean;
+  is_verified: boolean;
+  is_featured: boolean;
+  profile_image_url: string | null;
   total_followers: number;
   created_at: string;
   updated_at: string;

@@ -22,6 +22,7 @@ const MIGRATION_FILES = [
   'v19_user_trading_config.sql',
   'v20_broker_adapter.sql',
   'v21_copy_trading.sql',
+  'v22_mentor_profile_metadata.sql',
 ];
 
 async function main() {

@@ -38,7 +38,7 @@ export default function createMentorRouter(config: TradingEngineConfig) {
   });
 
   router.post('/profile', async (req: Request, res: Response) => {
-    const { display_name, bio } = req.body || {};
+    const { display_name, bio, trading_style, markets_traded } = req.body || {};
     if (!display_name) return res.status(400).json({ error: 'display_name is required' });
 
     try {

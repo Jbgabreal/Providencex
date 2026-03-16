@@ -25,6 +25,7 @@ import createAdminStrategyProfilesRouter from './routes/adminStrategyProfiles';
 import createUserRouter from './routes/user';
 import createMentorRouter from './routes/mentorSignals';
 import createCopyTradingRouter from './routes/copyTrading';
+import createPublicMentorRouter from './routes/publicMentors';
 import createUserAnalyticsRouter from './routes/userAnalytics';
 import createAuthRouter from './routes/auth';
 import { validatePrivyConfig } from './config';
@@ -96,6 +97,7 @@ app.use('/api/user', createUserRouter(config)); // Multi-tenant user API
 app.use('/api/user/analytics', createUserAnalyticsRouter(config)); // User analytics API
 app.use('/api/user/mentor', createMentorRouter(config)); // Mentor signal publishing
 app.use('/api/user/copy-trading', createCopyTradingRouter(config)); // Follower copy trading
+app.use('/api/public/mentors', createPublicMentorRouter()); // Public mentor marketplace (no auth)
 app.use('/api/auth', createAuthRouter(config)); // Authentication API
 app.use('/api/v1', orderEventsRoutes); // v3 order events webhook
 app.use('/strategy-config', strategyConfigRoutes); // Strategy configuration verification
