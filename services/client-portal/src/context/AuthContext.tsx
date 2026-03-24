@@ -64,6 +64,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(authUser);
           setToken(accessToken);
           setAuthTokenAndUser(accessToken, authUser);
+
+          // Apply referral code if stored (one-time, non-blocking)
+          if (typeof window !== 'undefined') {
+            const refCode = localStorage.getItem('px_referral_code');
+            if (refCode) {
+              // Fire-and-forget: apply referral code via API after auth is ready
+              // The x-referral-code header on apiClient also handles this at the middleware level
+              localStorage.removeItem('px_referral_code');
+            }
+          }
         } else {
           setUser(null);
           setToken(null);

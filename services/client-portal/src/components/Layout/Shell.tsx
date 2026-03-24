@@ -13,8 +13,19 @@ import {
   Users,
   Copy,
   Radio,
+  CreditCard,
+  Tag,
+  Gift,
+  Bell,
+  Trophy,
+  MessageSquare,
+  Eye,
+  ShieldCheck,
+  Sparkles,
+  BarChart3,
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useUnreadNotificationCount } from '@/hooks/useNotifications';
 
 interface NavItem {
   name: string;
@@ -27,11 +38,34 @@ const navigation: NavItem[] = [
   { name: 'Accounts', href: '/accounts', icon: Wallet },
   { name: 'Strategies', href: '/strategies', icon: Target },
   { name: 'Mentors', href: '/mentors', icon: Users },
+  { name: 'Leaderboard', href: '/leaderboard', icon: Trophy },
+  { name: 'Discover', href: '/discover', icon: Sparkles },
   { name: 'Copy Trading', href: '/copy-trading', icon: Copy },
+  { name: 'Shadow Mode', href: '/shadow', icon: Eye },
   { name: 'Mentor Dashboard', href: '/mentor-dashboard', icon: Radio },
+  { name: 'Signal Imports', href: '/mentor-imports', icon: MessageSquare },
+  { name: 'Mentor Insights', href: '/mentor-insights', icon: BarChart3 },
+  { name: 'Referrals', href: '/referrals', icon: Gift },
+  { name: 'Pricing', href: '/pricing', icon: Tag },
+  { name: 'Billing', href: '/billing', icon: CreditCard },
   { name: 'Activity', href: '/activity', icon: Activity },
   { name: 'Settings', href: '/settings', icon: Settings },
+  { name: 'Admin', href: '/admin', icon: ShieldCheck },
 ];
+
+function NotificationBell() {
+  const { data: count } = useUnreadNotificationCount();
+  return (
+    <Link href="/notifications" className="relative p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100">
+      <Bell className="h-5 w-5" />
+      {count != null && count > 0 && (
+        <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center h-4 min-w-[16px] px-1 text-xs font-bold text-white bg-red-500 rounded-full">
+          {count > 99 ? '99+' : String(count)}
+        </span>
+      )}
+    </Link>
+  );
+}
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -114,6 +148,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 Live
               </span>
             </div>
+            <NotificationBell />
           </div>
         </div>
 

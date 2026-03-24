@@ -26,6 +26,15 @@ import createUserRouter from './routes/user';
 import createMentorRouter from './routes/mentorSignals';
 import createCopyTradingRouter from './routes/copyTrading';
 import createPublicMentorRouter from './routes/publicMentors';
+import createBillingRouter from './routes/billing';
+import createFollowerSafetyRouter from './routes/followerSafety';
+import createReferralRouter from './routes/referrals';
+import createNotificationRouter from './routes/notifications';
+import createMarketplaceRouter from './routes/marketplace';
+import createIngestionRouter from './routes/ingestion';
+import createShadowRouter from './routes/shadow';
+import createAdminOpsRouter from './routes/adminOps';
+import createIntelligenceRouter from './routes/intelligence';
 import createUserAnalyticsRouter from './routes/userAnalytics';
 import createAuthRouter from './routes/auth';
 import { validatePrivyConfig } from './config';
@@ -81,7 +90,7 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', origin || '*');
   }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-privy-token, x-user-id, x-user-role');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-privy-token, x-user-id, x-user-role, x-user-email, x-referral-code');
   res.header('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
@@ -93,11 +102,20 @@ app.use('/health', healthRoutes);
 app.use('/simulate-signal', simulateSignalRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/admin/strategy-profiles', createAdminStrategyProfilesRouter(config));
+app.use('/api/admin/ops', createAdminOpsRouter(config)); // Admin operations & moderation
 app.use('/api/user', createUserRouter(config)); // Multi-tenant user API
 app.use('/api/user/analytics', createUserAnalyticsRouter(config)); // User analytics API
 app.use('/api/user/mentor', createMentorRouter(config)); // Mentor signal publishing
+app.use('/api/user/mentor/imports', createIngestionRouter(config)); // External signal ingestion
 app.use('/api/user/copy-trading', createCopyTradingRouter(config)); // Follower copy trading
+app.use('/api/user/copy-trading', createFollowerSafetyRouter(config)); // Follower safety controls
+app.use('/api/user/shadow', createShadowRouter(config)); // Shadow / simulation mode
 app.use('/api/public/mentors', createPublicMentorRouter()); // Public mentor marketplace (no auth)
+app.use('/api/public/marketplace', createMarketplaceRouter(config)); // Marketplace: leaderboard, badges, reviews
+app.use('/api/billing', createBillingRouter(config)); // Crypto billing & subscriptions
+app.use('/api/referrals', createReferralRouter(config)); // Referral program
+app.use('/api/notifications', createNotificationRouter(config)); // In-app notifications
+app.use('/api/intelligence', createIntelligenceRouter(config)); // BI, recommendations, risk assistant
 app.use('/api/auth', createAuthRouter(config)); // Authentication API
 app.use('/api/v1', orderEventsRoutes); // v3 order events webhook
 app.use('/strategy-config', strategyConfigRoutes); // Strategy configuration verification

@@ -15,6 +15,9 @@ export interface MentorProfile {
   is_featured: boolean;
   profile_image_url: string | null;
   total_followers: number;
+  featured_order: number;
+  avg_rating: number;
+  review_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -58,7 +61,7 @@ export interface MentorSignalUpdate {
   created_at: string;
 }
 
-export type SubscriptionMode = 'auto_trade' | 'view_only';
+export type SubscriptionMode = 'auto_trade' | 'view_only' | 'shadow';
 export type RiskMode = 'percentage' | 'usd' | 'fixed_lot';
 export type SubscriptionStatus = 'active' | 'paused' | 'stopped';
 

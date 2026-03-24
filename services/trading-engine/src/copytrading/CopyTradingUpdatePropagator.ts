@@ -8,15 +8,21 @@ import { Logger } from '@providencex/shared-utils';
 import { CopyTradingRepository } from './CopyTradingRepository';
 import { TenantRepository } from '../db/TenantRepository';
 import { BrokerAdapterFactory } from '../brokers/BrokerAdapterFactory';
+import { ShadowExecutionService } from '../shadow/ShadowExecutionService';
+import { ShadowRepository } from '../shadow/ShadowRepository';
 import type { MentorSignalUpdate, CopiedTrade, PropagationSummary } from './types';
 
 const logger = new Logger('CopyTradingUpdatePropagator');
 
 export class CopyTradingUpdatePropagator {
+  private shadowService: ShadowExecutionService;
+
   constructor(
     private readonly repo: CopyTradingRepository,
     private readonly tenantRepo: TenantRepository
-  ) {}
+  ) {
+    this.shadowService = new ShadowExecutionService(new ShadowRepository());
+  }
 
   async propagateUpdate(updateId: string): Promise<PropagationSummary> {
     const pool = (this.repo as any).ensurePool();
@@ -68,6 +74,16 @@ export class CopyTradingUpdatePropagator {
       }
     } catch (err: any) {
       logger.error(`[Propagation] Error: ${err.message}`);
+    }
+
+    // Phase 8: Propagate to shadow trades (non-blocking)
+    try {
+      await this.shadowService.propagateUpdate(signal.id, update.update_type, {
+        newSl: update.new_sl ? Number(update.new_sl) : undefined,
+        closeTpLevel: update.close_tp_level || undefined,
+      });
+    } catch (err: any) {
+      logger.error(`[Propagation] Shadow propagation failed (non-fatal): ${err.message}`);
     }
 
     const status = failed === 0 ? 'completed' : propagated > 0 ? 'completed' : 'failed';

@@ -18,16 +18,32 @@ import { CopyTradingRepository } from './CopyTradingRepository';
 import { CopyTradingRiskService } from './CopyTradingRiskService';
 import { TenantRepository } from '../db/TenantRepository';
 import { BrokerAdapterFactory } from '../brokers/BrokerAdapterFactory';
+import { SafetyGuardService } from './SafetyGuardService';
+import { SafetyRepository } from './SafetyRepository';
 import type { MentorSignal, FollowerSubscription, FanoutSummary } from './types';
+import type { SafetySettings } from './SafetyTypes';
+import { NotificationService } from '../notifications/NotificationService';
+import { ShadowExecutionService } from '../shadow/ShadowExecutionService';
+import { ShadowRepository } from '../shadow/ShadowRepository';
 
 const logger = new Logger('CopyTradingOrchestrator');
 
 export class CopyTradingOrchestrator {
+  private readonly safetyGuard: SafetyGuardService;
+  private readonly safetyRepo: SafetyRepository;
+  private readonly shadowService: ShadowExecutionService;
+  private readonly shadowRepo: ShadowRepository;
+
   constructor(
     private readonly repo: CopyTradingRepository,
     private readonly tenantRepo: TenantRepository,
     private readonly riskService: CopyTradingRiskService
-  ) {}
+  ) {
+    this.safetyRepo = new SafetyRepository();
+    this.safetyGuard = new SafetyGuardService(this.safetyRepo);
+    this.shadowRepo = new ShadowRepository();
+    this.shadowService = new ShadowExecutionService(this.shadowRepo);
+  }
 
   /**
    * Fan out a newly published signal to all eligible followers.
@@ -38,12 +54,25 @@ export class CopyTradingOrchestrator {
 
     const subscriptions = await this.repo.getActiveAutoTradeSubscriptions(signal.mentor_profile_id);
 
-    if (subscriptions.length === 0) {
-      logger.info(`[Fanout] Signal ${signalId}: no active auto-trade subscribers`);
-      return { total_subscribers: 0, trades_created: 0, trades_failed: 0 };
+    // Phase 8: Also fan out to shadow subscriptions
+    const shadowSubs = await this.shadowRepo.getActiveShadowSubscriptions(signal.mentor_profile_id);
+    if (shadowSubs.length > 0) {
+      logger.info(`[Fanout] Signal ${signalId}: fanning out to ${shadowSubs.length} shadow subscriber(s)`);
+      await Promise.all(
+        shadowSubs.map(sub =>
+          this.shadowService.executeForSubscriber(signal, sub).catch(err => {
+            logger.error(`[Fanout] Shadow error for sub ${sub.id}: ${err.message}`);
+          })
+        )
+      );
     }
 
-    logger.info(`[Fanout] Signal ${signalId} (${signal.symbol} ${signal.direction}): fanning out to ${subscriptions.length} subscriber(s)`);
+    if (subscriptions.length === 0) {
+      logger.info(`[Fanout] Signal ${signalId}: no active auto-trade subscribers (${shadowSubs.length} shadow)`);
+      return { total_subscribers: shadowSubs.length, trades_created: 0, trades_failed: 0 };
+    }
+
+    logger.info(`[Fanout] Signal ${signalId} (${signal.symbol} ${signal.direction}): fanning out to ${subscriptions.length} live + ${shadowSubs.length} shadow subscriber(s)`);
 
     let tradesCreated = 0;
     let tradesFailed = 0;
@@ -78,6 +107,34 @@ export class CopyTradingOrchestrator {
     signal: MentorSignal,
     sub: FollowerSubscription
   ): Promise<{ created: number; failed: number }> {
+    // ===== Phase 4: Safety Guardrail Checks =====
+    // Load extended subscription data with safety settings
+    const subWithSafety = await this.safetyRepo.getSubscriptionWithSafety(sub.id);
+    const safetySettings: SafetySettings = subWithSafety?.safety_settings || {};
+    const extendedSub = { ...sub, safety_settings: safetySettings, blocked_symbols: subWithSafety?.blocked_symbols || [], auto_disabled_at: subWithSafety?.auto_disabled_at || null };
+
+    // Run all safety guardrails
+    const guardResult = await this.safetyGuard.evaluateAll(extendedSub, signal);
+    if (!guardResult.allowed) {
+      // Record blocked attempt
+      await this.safetyRepo.createBlockedAttempt({
+        followerSubscriptionId: sub.id,
+        mentorSignalId: signal.id,
+        userId: sub.user_id,
+        blockReason: guardResult.blockReason!,
+        guardrailType: guardResult.guardrailType!,
+        thresholdValue: guardResult.thresholdValue,
+        actualValue: guardResult.actualValue,
+        signalSymbol: signal.symbol,
+        signalDirection: signal.direction,
+        signalEntryPrice: Number(signal.entry_price),
+      });
+      logger.info(`[Fanout] BLOCKED sub=${sub.id}: ${guardResult.blockReason} (${guardResult.guardrailType})`);
+      // Phase 5: Notify user of blocked trade
+      NotificationService.getInstance().tradeBlocked(sub.user_id, signal.symbol, guardResult.blockReason!, guardResult.guardrailType!);
+      return { created: 0, failed: 0 };
+    }
+
     // Check symbol filter — skip if follower doesn't want this pair
     const selectedSymbols = sub.selected_symbols || [];
     if (selectedSymbols.length > 0 && !selectedSymbols.includes(signal.symbol.toUpperCase())) {
@@ -113,6 +170,25 @@ export class CopyTradingOrchestrator {
       tpLevels.length,
       signal.symbol
     );
+
+    // Phase 4: Max lot guard
+    const lotGuard = this.safetyGuard.checkMaxLot(safetySettings, lotResult.lotSize);
+    if (!lotGuard.allowed) {
+      await this.safetyRepo.createBlockedAttempt({
+        followerSubscriptionId: sub.id,
+        mentorSignalId: signal.id,
+        userId: sub.user_id,
+        blockReason: lotGuard.blockReason!,
+        guardrailType: lotGuard.guardrailType!,
+        thresholdValue: lotGuard.thresholdValue,
+        actualValue: lotGuard.actualValue,
+        signalSymbol: signal.symbol,
+        signalDirection: signal.direction,
+        signalEntryPrice: Number(signal.entry_price),
+      });
+      logger.info(`[Fanout] BLOCKED sub=${sub.id}: max_lot_exceeded (calculated=${lotResult.lotSize}, max=${safetySettings.max_lot_size})`);
+      return { created: 0, failed: 0 };
+    }
 
     // Create broker adapter
     const credentials = account.broker_credentials || account.connection_meta || {};
@@ -156,6 +232,15 @@ export class CopyTradingOrchestrator {
             return;
           }
 
+          // Phase 4: Record lifecycle event — trade created
+          await this.safetyRepo.createTradeEvent({
+            copiedTradeId: copiedTrade.id,
+            followerSubscriptionId: sub.id,
+            mentorSignalId: signal.id,
+            eventType: 'trade_created',
+            details: { tp_level: tpLevel, lot_size: lotResult.lotSize, symbol: signal.symbol, direction: signal.direction },
+          });
+
           // Mark executing
           await this.repo.updateCopiedTradeExecution(copiedTrade.id, { status: 'executing' });
 
@@ -183,14 +268,34 @@ export class CopyTradingOrchestrator {
               entryPrice: result.rawResponse?.price || Number(signal.entry_price),
             });
             created++;
+            // Phase 4: Record lifecycle event — order filled
+            await this.safetyRepo.createTradeEvent({
+              copiedTradeId: copiedTrade.id,
+              followerSubscriptionId: sub.id,
+              mentorSignalId: signal.id,
+              eventType: 'order_filled',
+              details: { ticket: result.ticket, entry_price: result.rawResponse?.price || Number(signal.entry_price) },
+            });
             logger.info(`[Fanout] Trade opened: sub=${sub.id} tp=${tpLevel} ticket=${result.ticket}`);
+            // Phase 5: Notify user
+            NotificationService.getInstance().tradeFilled(sub.user_id, signal.symbol, signal.direction, result.ticket || 0, result.rawResponse?.price || Number(signal.entry_price));
           } else {
             await this.repo.updateCopiedTradeExecution(copiedTrade.id, {
               status: 'failed',
               errorMessage: result.error || 'Unknown error',
             });
             failed++;
+            // Phase 4: Record lifecycle event — trade failed
+            await this.safetyRepo.createTradeEvent({
+              copiedTradeId: copiedTrade.id,
+              followerSubscriptionId: sub.id,
+              mentorSignalId: signal.id,
+              eventType: 'trade_failed',
+              details: { error: result.error },
+            });
             logger.error(`[Fanout] Trade failed: sub=${sub.id} tp=${tpLevel} error=${result.error}`);
+            // Phase 5: Notify user
+            NotificationService.getInstance().tradeFailed(sub.user_id, signal.symbol, signal.direction, result.error || 'Unknown error');
           }
         } catch (err: any) {
           failed++;

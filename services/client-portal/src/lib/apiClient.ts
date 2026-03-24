@@ -41,6 +41,15 @@ apiClient.interceptors.request.use(
       config.headers['x-user-role'] = 'user';
     }
 
+    // Attach referral code if stored (for new user attribution)
+    if (typeof window !== 'undefined') {
+      const refCode = localStorage.getItem('px_referral_code');
+      if (refCode) {
+        config.headers = config.headers || {};
+        config.headers['x-referral-code'] = refCode;
+      }
+    }
+
     return config;
   },
   (error) => {

@@ -3,7 +3,136 @@
 import { useState } from 'react';
 import { useMentorProfile, useCreateMentorProfile } from '@/hooks/useMentorProfile';
 import { useMentorSignals, usePublishSignal, useSignalUpdate } from '@/hooks/useMentorSignals';
-import { Send, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { useMyMentorPlans, useCreateMentorPlan, useUpdateMentorPlan, useMentorEarnings } from '@/hooks/useBilling';
+import { Send, AlertCircle, ChevronDown, ChevronUp, DollarSign, Package, Plus } from 'lucide-react';
+
+function MentorPlansSection() {
+  const { data: plans, isLoading } = useMyMentorPlans();
+  const createPlan = useCreateMentorPlan();
+  const updatePlan = useUpdateMentorPlan();
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ name: '', description: '', price_usd: '', features: '' });
+
+  const handleCreate = async () => {
+    if (!form.name) return;
+    await createPlan.mutateAsync({
+      name: form.name,
+      description: form.description || undefined,
+      price_usd: Number(form.price_usd) || 0,
+      features: form.features ? form.features.split('\n').filter(Boolean) : [],
+    });
+    setShowForm(false);
+    setForm({ name: '', description: '', price_usd: '', features: '' });
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6 mb-6">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+          <Package className="h-5 w-5" /> Subscription Plans
+        </h2>
+        <button onClick={() => setShowForm(!showForm)}
+          className="flex items-center px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700">
+          <Plus className="h-3 w-3 mr-1" /> New Plan
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="mb-4 p-4 bg-gray-50 rounded-lg space-y-3">
+          <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Plan name (e.g. Basic, Premium)" />
+          <input type="text" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Description" />
+          <input type="number" min="0" step="0.01" value={form.price_usd}
+            onChange={(e) => setForm({ ...form, price_usd: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Price USD/month (0 = free)" />
+          <textarea value={form.features} onChange={(e) => setForm({ ...form, features: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" rows={3}
+            placeholder="Features (one per line)" />
+          <div className="flex gap-2">
+            <button onClick={handleCreate} disabled={!form.name || createPlan.isPending}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-50">
+              {createPlan.isPending ? 'Creating...' : 'Create Plan'}
+            </button>
+            <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <p className="text-sm text-gray-500">Loading plans...</p>
+      ) : (!plans || plans.length === 0) ? (
+        <p className="text-sm text-gray-500">No plans yet. Create one so followers can subscribe.</p>
+      ) : (
+        <div className="space-y-2">
+          {plans.map((plan: any) => (
+            <div key={plan.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+              <div>
+                <p className="font-medium text-sm text-gray-900">{plan.name}</p>
+                <p className="text-xs text-gray-500">
+                  {Number(plan.price_usd) > 0 ? `$${plan.price_usd}/month` : 'Free'}
+                  {plan.description && ` · ${plan.description}`}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                  plan.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                }`}>{plan.is_active ? 'Active' : 'Inactive'}</span>
+                <button
+                  onClick={() => updatePlan.mutate({ id: plan.id, is_active: !plan.is_active })}
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  {plan.is_active ? 'Deactivate' : 'Activate'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MentorEarningsSection() {
+  const { data: earnings, isLoading } = useMentorEarnings();
+
+  if (isLoading) return null;
+  if (!earnings) return null;
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6 mb-6">
+      <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-4">
+        <DollarSign className="h-5 w-5" /> Earnings
+      </h2>
+      <div className="grid grid-cols-3 gap-4 mb-4">
+        <div className="text-center">
+          <p className="text-xs text-gray-500">Gross Revenue</p>
+          <p className="text-xl font-bold text-gray-900">${earnings.totalGross.toFixed(2)}</p>
+        </div>
+        <div className="text-center">
+          <p className="text-xs text-gray-500">Platform Fee</p>
+          <p className="text-xl font-bold text-red-600">-${earnings.totalPlatformFee.toFixed(2)}</p>
+        </div>
+        <div className="text-center">
+          <p className="text-xs text-gray-500">Net Earnings</p>
+          <p className="text-xl font-bold text-green-700">${earnings.totalNet.toFixed(2)}</p>
+        </div>
+      </div>
+      {earnings.entries.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs text-gray-500 font-medium">Recent transactions</p>
+          {earnings.entries.slice(0, 5).map((e: any) => (
+            <div key={e.id} className="flex justify-between text-xs text-gray-600 py-1 border-b border-gray-50">
+              <span>{new Date(e.created_at).toLocaleDateString()}</span>
+              <span>{e.payment_rail}</span>
+              <span className="font-medium text-green-700">+${Number(e.mentor_net_fiat).toFixed(2)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function MentorDashboardPage() {
   const { data: profile, isLoading: profileLoading } = useMentorProfile();
@@ -189,6 +318,10 @@ export default function MentorDashboardPage() {
           </form>
         </div>
       )}
+
+      {/* Mentor Plans & Earnings */}
+      <MentorPlansSection />
+      <MentorEarningsSection />
 
       {/* Signals List */}
       <h2 className="text-lg font-semibold text-gray-900 mb-3">Your Signals</h2>

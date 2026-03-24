@@ -4,6 +4,8 @@ import { PrivyTokenVerifier, InvalidPrivyTokenError } from '../auth/PrivyTokenVe
 import { UserAuthRepository } from '../auth/UserAuthRepository';
 import { PrivyIdentity, UserRole } from '../auth/types';
 import { TradingEngineConfig } from '../config';
+import { ReferralRepository } from '../referrals/ReferralRepository';
+import { AttributionService } from '../referrals/AttributionService';
 
 const logger = new Logger('AuthMiddleware');
 
@@ -13,6 +15,27 @@ export function buildAuthMiddleware(config: TradingEngineConfig) {
     : null;
   const userRepo = new UserAuthRepository(config.databaseUrl);
   const devMode = config.authDevMode;
+
+  // Referral attribution for new users
+  const referralRepo = new ReferralRepository(config.databaseUrl);
+  const attributionService = new AttributionService(referralRepo);
+
+  /**
+   * Try to apply referral code from x-referral-code header (non-blocking).
+   */
+  async function tryApplyReferralCode(userId: string, req: Request) {
+    const referralCode = req.headers['x-referral-code'] as string | undefined;
+    if (!referralCode) return;
+    try {
+      await attributionService.applyReferralCode({
+        referredUserId: userId,
+        referralCode: referralCode.trim(),
+        source: 'signup',
+      });
+    } catch (err) {
+      logger.warn(`[AuthMiddleware] Referral attribution failed (non-fatal): ${err}`);
+    }
+  }
 
   // Log Privy configuration status
   if (verifier) {
@@ -161,8 +184,11 @@ export function buildAuthMiddleware(config: TradingEngineConfig) {
       };
       
       logger.debug(`[AuthMiddleware] Creating/finding user for Privy ID: ${identity.privyUserId}, email: ${email}`);
-      const user = await userRepo.findOrCreateForPrivy(identityWithEmail);
-      logger.info(`[AuthMiddleware] ✅ User found/created: ${user.id} (Privy: ${identity.privyUserId}), email: ${email}, role: ${user.role}`);
+      // Check if user exists before creation to detect new signups
+      const existingUser = await userRepo.findByExternalAuthId(identity.privyUserId);
+      const user = existingUser || await userRepo.createFromPrivy(identityWithEmail);
+      const isNewUser = !existingUser;
+      logger.info(`[AuthMiddleware] ✅ User ${isNewUser ? 'created' : 'found'}: ${user.id} (Privy: ${identity.privyUserId}), email: ${email}, role: ${user.role}`);
 
       req.auth = {
         userId: user.id,
@@ -170,6 +196,11 @@ export function buildAuthMiddleware(config: TradingEngineConfig) {
         privyUserId: identity.privyUserId,
         identity,
       };
+
+      // Apply referral code for new users (non-blocking)
+      if (isNewUser) {
+        tryApplyReferralCode(user.id, req);
+      }
 
       logger.debug(`[AuthMiddleware] Authenticated user: ${user.id} (Privy: ${identity.privyUserId}), email: ${identity.email}, role: ${user.role}`);
 

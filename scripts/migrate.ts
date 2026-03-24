@@ -23,6 +23,24 @@ const MIGRATION_FILES = [
   'v20_broker_adapter.sql',
   'v21_copy_trading.sql',
   'v22_mentor_profile_metadata.sql',
+  // Phase 2: Crypto billing
+  'v23_crypto_billing.sql',
+  // Phase 3: Referral program
+  'v24_referral_program.sql',
+  // Phase 4: Follower safety controls
+  'v25_follower_safety.sql',
+  // Phase 5: Notifications
+  'v26_notifications.sql',
+  // Phase 6: Marketplace maturity
+  'v27_marketplace_maturity.sql',
+  // Phase 7: Signal ingestion
+  'v28_signal_ingestion.sql',
+  // Phase 8: Shadow mode
+  'v29_shadow_mode.sql',
+  // Phase 9: Admin operations
+  'v30_admin_operations.sql',
+  // Phase 10: Intelligence
+  'v31_intelligence.sql',
 ];
 
 async function main() {

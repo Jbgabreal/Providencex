@@ -1,13 +1,22 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 
 export default function LoginPage() {
   const { isAuthenticated, loading, login } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const hasRedirected = useRef(false);
+
+  // Capture referral code from URL (?ref=CODE) and store in localStorage
+  useEffect(() => {
+    const refCode = searchParams.get('ref');
+    if (refCode) {
+      localStorage.setItem('px_referral_code', refCode.trim().toUpperCase());
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     // Only redirect if authenticated and we haven't already redirected

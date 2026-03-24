@@ -1,25 +1,41 @@
 'use client';
 
 import { useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { usePublicMentorProfile } from '@/hooks/usePublicMentors';
 import { useFollowerSubscriptions, useSubscribeToMentor } from '@/hooks/useFollowerSubscriptions';
 import { useMt5Accounts } from '@/hooks/useMt5Accounts';
-import { Users, Shield, TrendingUp, TrendingDown, ChevronDown, ChevronUp, ArrowLeft } from 'lucide-react';
+import { useMentorPlans, useSupportedPaymentRails, useCreateMentorInvoice } from '@/hooks/useBilling';
+import { useMentorBadges, useMentorReviews, useCreateMentorReview, useSimilarMentors } from '@/hooks/useMarketplace';
+import { Users, Shield, TrendingUp, TrendingDown, ChevronDown, ChevronUp, ArrowLeft, CreditCard, Star, Award } from 'lucide-react';
 import Link from 'next/link';
 
 export default function MentorProfilePage() {
   const { id } = useParams() as { id: string };
+  const router = useRouter();
   const { data, isLoading } = usePublicMentorProfile(id);
   const { data: subscriptions } = useFollowerSubscriptions();
   const { data: accounts } = useMt5Accounts();
+  const { data: mentorPlans } = useMentorPlans(id);
+  const { data: rails } = useSupportedPaymentRails();
   const subscribeMutation = useSubscribeToMentor();
+  const createMentorInvoice = useCreateMentorInvoice();
+  const { data: badges } = useMentorBadges(id);
+  const { data: reviewsData } = useMentorReviews(id);
+  const createReview = useCreateMentorReview();
+  const { data: similarMentors } = useSimilarMentors(id);
 
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState('');
   const [riskAmount, setRiskAmount] = useState(1);
   const [selectedTps, setSelectedTps] = useState([1, 2]);
   const [showMonthly, setShowMonthly] = useState(false);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [selectedRail, setSelectedRail] = useState('');
+  const [showCheckout, setShowCheckout] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewText, setReviewText] = useState('');
+  const [showReviewForm, setShowReviewForm] = useState(false);
 
   const connectedAccounts = accounts?.filter((a) => a.status === 'connected') || [];
   const isSubscribed = subscriptions?.some((s: any) => s.mentor_profile_id === id);
@@ -65,7 +81,18 @@ export default function MentorProfilePage() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold text-gray-900">{mentor.display_name}</h1>
-              {mentor.is_verified && (
+              {/* Badges */}
+              {badges && badges.map((b: any) => (
+                <span key={b.badge_type} className={`px-2 py-0.5 rounded text-xs font-medium ${
+                  b.badge_type === 'verified' ? 'bg-blue-100 text-blue-700' :
+                  b.badge_type === 'top_performer' ? 'bg-yellow-100 text-yellow-800' :
+                  b.badge_type === 'featured' ? 'bg-amber-100 text-amber-800' :
+                  b.badge_type === 'low_drawdown' ? 'bg-teal-100 text-teal-800' :
+                  b.badge_type === 'high_win_rate' ? 'bg-green-100 text-green-800' :
+                  'bg-gray-100 text-gray-700'
+                }`} title={b.description}>{b.label}</span>
+              ))}
+              {(!badges || badges.length === 0) && mentor.is_verified && (
                 <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">Verified</span>
               )}
               {a && (
@@ -141,6 +168,94 @@ export default function MentorProfilePage() {
           )}
         </div>
       </div>
+
+      {/* Mentor Subscription Plans */}
+      {mentorPlans && mentorPlans.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <CreditCard className="h-5 w-5" /> Subscription Plans
+          </h2>
+          <div className="grid md:grid-cols-2 gap-4">
+            {mentorPlans.map((plan: any) => (
+              <div key={plan.id} className="border border-gray-200 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-900">{plan.name}</h3>
+                {plan.description && <p className="text-sm text-gray-500 mt-1">{plan.description}</p>}
+                <p className="text-2xl font-bold text-gray-900 mt-2">
+                  {Number(plan.price_usd) > 0 ? `$${plan.price_usd}/mo` : 'Free'}
+                </p>
+                {plan.features && plan.features.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {plan.features.map((f: string, i: number) => (
+                      <li key={i} className="text-xs text-gray-600 flex items-center gap-1">
+                        <span className="text-green-500">&#10003;</span> {f}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <button
+                  onClick={() => {
+                    if (Number(plan.price_usd) > 0) {
+                      setSelectedPlanId(plan.id);
+                      setShowCheckout(true);
+                    }
+                  }}
+                  className="mt-3 w-full px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+                >
+                  {Number(plan.price_usd) > 0 ? 'Subscribe' : 'Free Access'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Checkout Modal for Mentor Plan */}
+      {showCheckout && selectedPlanId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Select Payment Method</h3>
+            <div className="space-y-3 mb-6">
+              {(rails || []).map((rail: any) => (
+                <label key={rail.rail}
+                  className={`flex items-center p-3 border-2 rounded-lg cursor-pointer transition-colors ${
+                    selectedRail === rail.rail ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                  }`}>
+                  <input type="radio" name="mentor_rail" value={rail.rail}
+                    checked={selectedRail === rail.rail}
+                    onChange={(e) => setSelectedRail(e.target.value)} className="mr-3" />
+                  <div>
+                    <p className="font-medium text-sm text-gray-900">{rail.displayName}</p>
+                    <p className="text-xs text-gray-500">{rail.chain} network</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  if (!selectedRail) return;
+                  try {
+                    const invoice = await createMentorInvoice.mutateAsync({
+                      mentor_plan_id: selectedPlanId,
+                      payment_rail: selectedRail,
+                    });
+                    router.push(`/billing/invoice/${invoice.id}`);
+                  } catch (err: any) {
+                    alert(err?.response?.data?.error || 'Failed to create invoice');
+                  }
+                }}
+                disabled={!selectedRail || createMentorInvoice.isPending}
+                className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 text-sm"
+              >
+                {createMentorInvoice.isPending ? 'Creating...' : 'Continue to Payment'}
+              </button>
+              <button
+                onClick={() => { setShowCheckout(false); setSelectedPlanId(null); setSelectedRail(''); }}
+                className="px-4 py-2.5 bg-gray-200 text-gray-700 rounded-lg text-sm">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {a && (
         <>
@@ -287,6 +402,104 @@ export default function MentorProfilePage() {
             </div>
           )}
         </>
+      )}
+
+      {/* Reviews Section */}
+      <div className="bg-white rounded-lg shadow p-5 mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <Star className="h-5 w-5 text-yellow-500" /> Reviews
+            {reviewsData?.ratingSummary && reviewsData.ratingSummary.reviewCount > 0 && (
+              <span className="text-sm text-gray-500 font-normal">
+                ({reviewsData.ratingSummary.avgRating.toFixed(1)} avg, {reviewsData.ratingSummary.reviewCount} reviews)
+              </span>
+            )}
+          </h2>
+          {isSubscribed && !showReviewForm && (
+            <button onClick={() => setShowReviewForm(true)}
+              className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700">
+              Write Review
+            </button>
+          )}
+        </div>
+
+        {/* Review Form */}
+        {showReviewForm && (
+          <div className="mb-4 p-4 bg-gray-50 rounded-lg space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">Rating:</span>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button key={star} onClick={() => setReviewRating(star)}>
+                  <Star className={`h-5 w-5 ${star <= reviewRating ? 'text-yellow-500 fill-yellow-500' : 'text-gray-300'}`} />
+                </button>
+              ))}
+            </div>
+            <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" rows={3}
+              placeholder="Share your experience (optional, max 500 chars)" maxLength={500} />
+            <div className="flex gap-2">
+              <button
+                onClick={async () => {
+                  try {
+                    await createReview.mutateAsync({ mentorId: id, rating: reviewRating, review_text: reviewText || undefined });
+                    setShowReviewForm(false);
+                    setReviewText('');
+                  } catch (err: any) {
+                    alert(err?.response?.data?.error || 'Failed to submit review');
+                  }
+                }}
+                disabled={createReview.isPending}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50">
+                {createReview.isPending ? 'Submitting...' : 'Submit Review'}
+              </button>
+              <button onClick={() => setShowReviewForm(false)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {/* Reviews List */}
+        {reviewsData?.reviews && reviewsData.reviews.length > 0 ? (
+          <div className="space-y-3">
+            {reviewsData.reviews.map((r: any) => (
+              <div key={r.id} className="p-3 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-1 mb-1">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <Star key={star} className={`h-3 w-3 ${star <= r.rating ? 'text-yellow-500 fill-yellow-500' : 'text-gray-300'}`} />
+                  ))}
+                  <span className="text-xs text-gray-400 ml-2">{new Date(r.created_at).toLocaleDateString()}</span>
+                </div>
+                {r.review_text && <p className="text-sm text-gray-700">{r.review_text}</p>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">No reviews yet. {isSubscribed ? 'Be the first to review!' : ''}</p>
+        )}
+      </div>
+
+      {/* Similar Mentors */}
+      {similarMentors && similarMentors.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-5 mb-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">Similar Mentors</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {similarMentors.map((m: any) => (
+              <Link key={m.id} href={`/mentors/${m.id}`}
+                className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                <p className="font-medium text-sm text-gray-900">{m.display_name}</p>
+                <div className="flex items-center gap-1 mt-1">
+                  {m.badges?.slice(0, 2).map((b: any) => (
+                    <span key={b.badge_type} className="px-1 py-0.5 bg-gray-200 text-gray-600 rounded text-xs">{b.label}</span>
+                  ))}
+                </div>
+                {m.analytics && (
+                  <div className="mt-1 text-xs text-gray-500">
+                    {m.analytics.win_rate?.toFixed(0)}% WR &middot; {m.analytics.total_signals} signals
+                  </div>
+                )}
+              </Link>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
