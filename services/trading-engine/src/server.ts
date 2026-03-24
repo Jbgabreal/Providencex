@@ -412,7 +412,7 @@ accountRegistry.loadAccounts()
   });
 
 // Initialize admin routes with services
-initializeAdminServices(livePnlService, killSwitchService);
+initializeAdminServices(livePnlService, killSwitchService, priceFeed, candleStore);
 
 // Initialize Performance Report Service
 const performanceReportService = new PerformanceReportService();

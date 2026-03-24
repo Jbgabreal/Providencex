@@ -20,6 +20,8 @@ import {
 } from './types';
 import { LivePnlService } from '../services/LivePnlService';
 import { KillSwitchService } from '../services/KillSwitchService';
+import { PriceFeedClient } from '../marketData/PriceFeedClient';
+import { CandleStore } from '../marketData/CandleStore';
 import { TenantRepository } from '../db/TenantRepository';
 import { getSystemSettingsService } from '../services/SystemSettingsService';
 
@@ -476,11 +478,20 @@ router.get('/backtests', async (req: Request, res: Response) => {
  */
 let livePnlService: LivePnlService | null = null;
 let killSwitchService: KillSwitchService | null = null;
+let priceFeedClient: PriceFeedClient | null = null;
+let candleStoreRef: CandleStore | null = null;
 
-export function initializeAdminServices(lpnl: LivePnlService, kswitch: KillSwitchService): void {
+export function initializeAdminServices(
+  lpnl: LivePnlService,
+  kswitch: KillSwitchService,
+  priceFeed?: PriceFeedClient,
+  candleStore?: CandleStore,
+): void {
   livePnlService = lpnl;
   killSwitchService = kswitch;
-  logger.info('[AdminAPI] Services initialized: LivePnlService, KillSwitchService');
+  if (priceFeed) priceFeedClient = priceFeed;
+  if (candleStore) candleStoreRef = candleStore;
+  logger.info('[AdminAPI] Services initialized: LivePnlService, KillSwitchService, PriceFeed, CandleStore');
 }
 
 /**
@@ -1063,6 +1074,91 @@ router.put('/settings/:key', async (req: Request, res: Response) => {
       success: false,
       error: errorMsg,
     });
+  }
+});
+
+// GET /api/v1/admin/engine-status
+// Returns live engine state: price feed health, candle counts, recent decisions
+router.get('/engine-status', async (req: Request, res: Response) => {
+  try {
+    // Price feed status
+    const symbols = candleStoreRef?.getTrackedSymbols() || [];
+    const feedStatus = symbols.map((symbol) => {
+      const tick = priceFeedClient?.getLatestTick(symbol);
+      const candleCount = candleStoreRef?.getCandleCount(symbol) || 0;
+      const lastCandles = candleStoreRef?.getCandles(symbol, 1) || [];
+      const lastCandle = lastCandles[lastCandles.length - 1];
+      return {
+        symbol,
+        lastTickTime: tick?.time || null,
+        lastTickBid: tick?.bid || null,
+        lastTickAsk: tick?.ask || null,
+        candleCount,
+        lastCandleTime: lastCandle?.startTime || null,
+        lastCandleClose: lastCandle?.close || null,
+        tickAgeMs: tick?.time ? Date.now() - new Date(tick.time).getTime() : null,
+      };
+    });
+
+    // Recent decisions from DB (last 30)
+    const pool = getPool();
+    let recentDecisions: any[] = [];
+    if (pool) {
+      try {
+        const result = await pool.query(
+          `SELECT id, timestamp, symbol, strategy, decision,
+                  guardrail_mode, guardrail_reason, risk_reason, signal_reason,
+                  execution_filter_action, execution_filter_reasons,
+                  kill_switch_active, kill_switch_reasons,
+                  trade_request, execution_result
+           FROM trade_decisions
+           ORDER BY timestamp DESC
+           LIMIT 30`
+        );
+        recentDecisions = result.rows;
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // Summary counts
+    let decisionCounts = { total: 0, trades: 0, skips: 0, last1h: 0 };
+    if (pool) {
+      try {
+        const countResult = await pool.query(
+          `SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE decision = 'trade') as trades,
+            COUNT(*) FILTER (WHERE decision = 'skip') as skips,
+            COUNT(*) FILTER (WHERE timestamp > NOW() - INTERVAL '1 hour') as last_1h
+           FROM trade_decisions`
+        );
+        const r = countResult.rows[0];
+        decisionCounts = {
+          total: parseInt(r.total),
+          trades: parseInt(r.trades),
+          skips: parseInt(r.skips),
+          last1h: parseInt(r.last_1h),
+        };
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    res.json({
+      success: true,
+      engine: {
+        feedRunning: !!priceFeedClient,
+        symbolCount: symbols.length,
+        uptime: process.uptime(),
+      },
+      feedStatus,
+      decisionCounts,
+      recentDecisions,
+    });
+  } catch (error) {
+    logger.error('[AdminRoutes] engine-status failed', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

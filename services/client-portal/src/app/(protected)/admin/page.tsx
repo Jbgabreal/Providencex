@@ -8,13 +8,14 @@ import {
   useAdminReviews, useModerateReview,
   useAdminSubscriptions, useAdminCopiedTrades, useAdminBlockedAttempts,
   useAdminImports, useAdminShadowTrades, useAdminActionLogs,
+  useEngineStatus,
 } from '@/hooks/useAdmin';
 import {
   LayoutDashboard, Users, CreditCard, Gift, Star, Shield, Activity,
-  Check, X, Eye, AlertTriangle, ChevronDown, ChevronUp,
+  Check, X, Eye, AlertTriangle, ChevronDown, ChevronUp, Radio,
 } from 'lucide-react';
 
-type Tab = 'overview' | 'mentors' | 'billing' | 'referrals' | 'reviews' | 'support' | 'logs';
+type Tab = 'overview' | 'mentors' | 'billing' | 'referrals' | 'reviews' | 'support' | 'logs' | 'engine';
 
 const statusBadge = (status: string) => {
   const colors: Record<string, string> = {
@@ -39,6 +40,7 @@ export default function AdminPage() {
     { key: 'reviews', label: 'Reviews', icon: Star },
     { key: 'support', label: 'Support', icon: Shield },
     { key: 'logs', label: 'Audit Log', icon: Activity },
+    { key: 'engine', label: 'Engine Monitor', icon: Radio },
   ];
 
   return (
@@ -66,6 +68,7 @@ export default function AdminPage() {
       {tab === 'reviews' && <ReviewsTab />}
       {tab === 'support' && <SupportTab />}
       {tab === 'logs' && <LogsTab />}
+      {tab === 'engine' && <EngineTab />}
     </div>
   );
 }
@@ -360,6 +363,173 @@ function LogsTab() {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// ==================== Engine Monitor ====================
+
+function EngineTab() {
+  const { data, isLoading } = useEngineStatus();
+
+  if (isLoading) return <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto" />;
+  if (!data) return <p className="text-gray-500">Engine status unavailable.</p>;
+
+  const { engine, feedStatus, decisionCounts, recentDecisions } = data;
+
+  const formatAge = (ms: number | null) => {
+    if (ms === null) return 'No data';
+    if (ms < 1000) return `${ms}ms ago`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(0)}s ago`;
+    if (ms < 3600000) return `${(ms / 60000).toFixed(0)}m ago`;
+    return `${(ms / 3600000).toFixed(1)}h ago`;
+  };
+
+  const feedHealthColor = (ageMs: number | null) => {
+    if (ageMs === null) return 'bg-gray-100 text-gray-600';
+    if (ageMs < 30000) return 'bg-green-100 text-green-800';
+    if (ageMs < 120000) return 'bg-yellow-100 text-yellow-800';
+    return 'bg-red-100 text-red-800';
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Engine Status Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Feed Status</p>
+          <p className={`text-lg font-bold ${engine.feedRunning ? 'text-green-700' : 'text-red-600'}`}>
+            {engine.feedRunning ? 'Running' : 'Stopped'}
+          </p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Symbols Tracked</p>
+          <p className="text-lg font-bold text-gray-900">{engine.symbolCount}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Decisions (last 1h)</p>
+          <p className="text-lg font-bold text-gray-900">{decisionCounts.last1h}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Trades / Skips (all time)</p>
+          <p className="text-lg font-bold text-gray-900">
+            <span className="text-green-700">{decisionCounts.trades}</span>
+            {' / '}
+            <span className="text-gray-500">{decisionCounts.skips}</span>
+          </p>
+        </div>
+      </div>
+
+      {/* Price Feed Per Symbol */}
+      <div className="bg-white rounded-lg shadow p-5">
+        <h2 className="text-lg font-semibold text-gray-900 mb-3">Price Feed Status</h2>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-500 uppercase">
+                <th className="pb-2">Symbol</th>
+                <th className="pb-2">Last Tick</th>
+                <th className="pb-2">Bid / Ask</th>
+                <th className="pb-2">Candles</th>
+                <th className="pb-2">Last Candle</th>
+                <th className="pb-2">Health</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {feedStatus.map((f: any) => (
+                <tr key={f.symbol}>
+                  <td className="py-2 font-medium">{f.symbol}</td>
+                  <td className="py-2 text-gray-500">{formatAge(f.tickAgeMs)}</td>
+                  <td className="py-2 font-mono text-xs">
+                    {f.lastTickBid ? `${Number(f.lastTickBid).toFixed(5)} / ${Number(f.lastTickAsk).toFixed(5)}` : '—'}
+                  </td>
+                  <td className="py-2">{f.candleCount}</td>
+                  <td className="py-2 text-gray-500 text-xs">
+                    {f.lastCandleTime ? new Date(f.lastCandleTime).toLocaleTimeString() : '—'}
+                  </td>
+                  <td className="py-2">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${feedHealthColor(f.tickAgeMs)}`}>
+                      {f.tickAgeMs === null ? 'No Data' : f.tickAgeMs < 30000 ? 'Live' : f.tickAgeMs < 120000 ? 'Stale' : 'Dead'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {feedStatus.length === 0 && (
+                <tr><td colSpan={6} className="py-4 text-center text-gray-500">No symbols being tracked</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Recent Decisions */}
+      <div className="bg-white rounded-lg shadow p-5">
+        <h2 className="text-lg font-semibold text-gray-900 mb-3">Recent Strategy Decisions</h2>
+        <p className="text-xs text-gray-400 mb-3">Auto-refreshes every 10 seconds</p>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-500 uppercase">
+                <th className="pb-2">Time</th>
+                <th className="pb-2">Symbol</th>
+                <th className="pb-2">Decision</th>
+                <th className="pb-2">Guardrail</th>
+                <th className="pb-2">Reason</th>
+                <th className="pb-2">Exec Filter</th>
+                <th className="pb-2">Kill Switch</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {recentDecisions.map((d: any) => (
+                <tr key={d.id} className={d.decision === 'trade' ? 'bg-green-50/50' : ''}>
+                  <td className="py-2 text-xs text-gray-500 whitespace-nowrap">
+                    {new Date(d.timestamp).toLocaleTimeString()}
+                  </td>
+                  <td className="py-2 font-medium">{d.symbol}</td>
+                  <td className="py-2">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      d.decision === 'trade' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                    }`}>
+                      {d.decision === 'trade' ? 'TRADE' : 'SKIP'}
+                    </span>
+                  </td>
+                  <td className="py-2">
+                    <span className={`px-1.5 py-0.5 rounded text-xs ${
+                      d.guardrail_mode === 'normal' ? 'bg-green-50 text-green-700' :
+                      d.guardrail_mode === 'reduced' ? 'bg-yellow-50 text-yellow-700' :
+                      'bg-red-50 text-red-700'
+                    }`}>
+                      {d.guardrail_mode}
+                    </span>
+                  </td>
+                  <td className="py-2 text-xs text-gray-600 max-w-[200px] truncate" title={d.signal_reason || d.risk_reason || ''}>
+                    {d.signal_reason || d.risk_reason || '—'}
+                  </td>
+                  <td className="py-2 text-xs">
+                    {d.execution_filter_action ? (
+                      <span className={`px-1.5 py-0.5 rounded ${
+                        d.execution_filter_action === 'allow' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                      }`}>
+                        {d.execution_filter_action}
+                      </span>
+                    ) : '—'}
+                  </td>
+                  <td className="py-2 text-xs">
+                    {d.kill_switch_active != null ? (
+                      <span className={`px-1.5 py-0.5 rounded ${d.kill_switch_active ? 'bg-red-100 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                        {d.kill_switch_active ? 'ACTIVE' : 'off'}
+                      </span>
+                    ) : '—'}
+                  </td>
+                </tr>
+              ))}
+              {recentDecisions.length === 0 && (
+                <tr><td colSpan={7} className="py-4 text-center text-gray-500">No decisions recorded yet</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

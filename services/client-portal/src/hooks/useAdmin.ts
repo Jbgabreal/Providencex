@@ -14,6 +14,7 @@ const K = {
   blocked: ['admin-blocked'] as const,
   imports: ['admin-imports'] as const,
   shadow: ['admin-shadow'] as const,
+  engineStatus: ['admin-engine-status'] as const,
 };
 
 export function useAdminOverview() {
@@ -158,4 +159,15 @@ export function useAdminShadowTrades() {
     const r = await apiClient.get<{ success: boolean; trades: any[] }>('/api/admin/ops/support/shadow');
     return r.data.trades || [];
   }});
+}
+
+export function useEngineStatus() {
+  return useQuery({
+    queryKey: K.engineStatus,
+    queryFn: async () => {
+      const r = await apiClient.get<{ success: boolean; engine: any; feedStatus: any[]; decisionCounts: any; recentDecisions: any[] }>('/api/v1/admin/engine-status');
+      return r.data;
+    },
+    refetchInterval: 10000, // Auto-refresh every 10s
+  });
 }
