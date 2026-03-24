@@ -168,6 +168,6 @@ export function useEngineStatus() {
       const r = await apiClient.get<{ success: boolean; engine: any; feedStatus: any[]; decisionCounts: any; recentDecisions: any[] }>('/api/v1/admin/engine-status');
       return r.data;
     },
-    refetchInterval: 10000, // Auto-refresh every 10s
+    refetchInterval: 120000, // Auto-refresh every 2 minutes
   });
 }

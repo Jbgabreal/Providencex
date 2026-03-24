@@ -466,7 +466,7 @@ function EngineTab() {
       {/* Recent Decisions */}
       <div className="bg-white rounded-lg shadow p-5">
         <h2 className="text-lg font-semibold text-gray-900 mb-3">Recent Strategy Decisions</h2>
-        <p className="text-xs text-gray-400 mb-3">Auto-refreshes every 10 seconds</p>
+        <p className="text-xs text-gray-400 mb-3">Auto-refreshes every 2 minutes</p>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
