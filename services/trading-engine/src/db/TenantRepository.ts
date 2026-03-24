@@ -373,10 +373,11 @@ export class TenantRepository {
   async getAssignmentsForUser(userId: string): Promise<UserStrategyAssignment[]> {
     const pool = this.ensurePool();
     const result = await pool.query(
-      `SELECT *
-       FROM user_strategy_assignments
-       WHERE user_id = $1
-       ORDER BY created_at ASC`,
+      `SELECT usa.*, sp.key AS strategy_key, sp.name AS strategy_name
+       FROM user_strategy_assignments usa
+       LEFT JOIN strategy_profiles sp ON sp.id = usa.strategy_profile_id
+       WHERE usa.user_id = $1
+       ORDER BY usa.created_at ASC`,
       [userId]
     );
     return result.rows;

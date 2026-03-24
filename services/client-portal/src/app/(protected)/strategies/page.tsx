@@ -233,18 +233,15 @@ export default function StrategiesPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {assignments.map((assignment) => {
+                {assignments.map((assignment: any) => {
                   const account = accounts?.find((acc) => acc.id === assignment.mt5_account_id);
-                  const strategy = strategies?.find(
-                    (s) => assignment.strategy_profile_id === s.key
-                  );
                   return (
                     <tr key={assignment.id}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {account?.label || account?.account_number || 'Unknown'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {strategy?.name || 'Unknown Strategy'}
+                        {assignment.strategy_name || 'Unknown Strategy'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {getAssignmentStatusBadge(assignment.status)}
