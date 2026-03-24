@@ -284,16 +284,16 @@ export default function DashboardPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {position.entry_price.toFixed(5)}
+                      {Number(position.entry_price).toFixed(5)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {position.lot_size}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {position.stop_loss_price?.toFixed(5) || '-'}
+                      {position.stop_loss_price != null ? Number(position.stop_loss_price).toFixed(5) : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {position.take_profit_price?.toFixed(5) || '-'}
+                      {position.take_profit_price != null ? Number(position.take_profit_price).toFixed(5) : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <button

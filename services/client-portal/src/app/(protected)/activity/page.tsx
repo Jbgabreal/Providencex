@@ -113,7 +113,7 @@ export default function ActivityPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {position.entry_price.toFixed(5)}
+                      {Number(position.entry_price).toFixed(5)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {position.lot_size}
@@ -194,10 +194,10 @@ export default function ActivityPage() {
                       {trade.lot_size}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {trade.entry_price.toFixed(5)}
+                      {Number(trade.entry_price).toFixed(5)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {trade.exit_price?.toFixed(5) || '-'}
+                      {trade.exit_price != null ? Number(trade.exit_price).toFixed(5) : '-'}
                     </td>
                     <td
                       className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${
@@ -205,7 +205,7 @@ export default function ActivityPage() {
                       }`}
                     >
                       {trade.profit !== null
-                        ? `$${trade.profit.toFixed(2)}`
+                        ? `$${Number(trade.profit).toFixed(2)}`
                         : '-'}
                     </td>
                   </tr>

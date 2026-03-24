@@ -123,14 +123,14 @@ export default function ReferralsPage() {
             <DollarSign className="h-4 w-4" />
             <span className="text-xs">Total Earned</span>
           </div>
-          <p className="text-2xl font-bold text-green-700">${(summary?.totalEarned || 0).toFixed(2)}</p>
+          <p className="text-2xl font-bold text-green-700">${Number(summary?.totalEarned || 0).toFixed(2)}</p>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center gap-2 text-gray-500 mb-1">
             <Clock className="h-4 w-4" />
             <span className="text-xs">Pending</span>
           </div>
-          <p className="text-2xl font-bold text-yellow-600">${(summary?.pending || 0).toFixed(2)}</p>
+          <p className="text-2xl font-bold text-yellow-600">${Number(summary?.pending || 0).toFixed(2)}</p>
         </div>
       </div>
 

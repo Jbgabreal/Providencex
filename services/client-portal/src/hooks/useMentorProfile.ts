@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/apiClient';
+import { CURRENT_USER_KEY } from '@/hooks/useCurrentUser';
 
 const KEYS = { profile: ['mentor-profile'] as const };
 
@@ -24,6 +25,9 @@ export function useCreateMentorProfile() {
       );
       return res.data.mentor_profile;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.profile }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.profile });
+      qc.invalidateQueries({ queryKey: [...CURRENT_USER_KEY] });
+    },
   });
 }

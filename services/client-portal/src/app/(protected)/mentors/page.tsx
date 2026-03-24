@@ -5,7 +5,8 @@ import { usePublicMentors } from '@/hooks/usePublicMentors';
 import { useFollowerSubscriptions, useSubscribeToMentor } from '@/hooks/useFollowerSubscriptions';
 import { useMt5Accounts } from '@/hooks/useMt5Accounts';
 import Link from 'next/link';
-import { Users, TrendingUp, TrendingDown, Search, Shield, ChevronRight, Filter } from 'lucide-react';
+import { Users, TrendingUp, TrendingDown, Search, Shield, ChevronRight, Filter, Radio } from 'lucide-react';
+import { useCurrentUser } from '@/hooks/useCurrentUser';
 
 const SORT_OPTIONS = [
   { value: 'followers', label: 'Most Followers' },
@@ -41,6 +42,7 @@ export default function MentorsPage() {
   });
 
   const { data: subscriptions } = useFollowerSubscriptions();
+  const { isMentor } = useCurrentUser();
   const subscribedIds = new Set(subscriptions?.map((s: any) => s.mentor_profile_id) || []);
 
   const getRiskBadge = (label: string, score: number) => {
@@ -65,6 +67,19 @@ export default function MentorsPage() {
           Discover verified traders. All stats are platform-computed from real trade data.
         </p>
       </div>
+
+      {/* Become a Mentor CTA */}
+      {!isMentor && (
+        <div className="mb-6 flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Are you a trader?</h3>
+            <p className="text-xs text-gray-600 mt-0.5">Share your signals, build a following, and earn from your expertise.</p>
+          </div>
+          <Link href="/mentor-dashboard" className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 whitespace-nowrap">
+            <Radio className="mr-1.5 h-4 w-4" /> Become a Mentor
+          </Link>
+        </div>
+      )}
 
       {/* Search & Filters */}
       <div className="mb-6 space-y-3">

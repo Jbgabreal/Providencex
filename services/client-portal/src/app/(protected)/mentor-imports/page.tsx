@@ -7,7 +7,9 @@ import {
   useImportedCandidates, useUpdateImportedCandidate,
   useApproveImportedCandidate, useRejectImportedCandidate,
 } from '@/hooks/useIngestion';
-import { MessageSquare, Plus, Check, X, Edit3, Send, ChevronDown, ChevronUp, Zap } from 'lucide-react';
+import { MessageSquare, Plus, Check, X, Edit3, Send, ChevronDown, ChevronUp, Zap, Radio } from 'lucide-react';
+import { useCurrentUser } from '@/hooks/useCurrentUser';
+import Link from 'next/link';
 
 const statusColors: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
@@ -20,6 +22,7 @@ const statusColors: Record<string, string> = {
 };
 
 export default function MentorImportsPage() {
+  const { isMentor, isLoading: userLoading } = useCurrentUser();
   const { data: sources } = useImportSources();
   const createSource = useCreateImportSource();
   const toggleSource = useToggleImportSource();
@@ -71,6 +74,18 @@ export default function MentorImportsPage() {
     await updateCandidate.mutateAsync({ id, ...editFields });
     setEditingCandidate(null);
   };
+
+  if (userLoading) return <div className="p-6"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto" /></div>;
+  if (!isMentor) return (
+    <div className="p-6 text-center py-16">
+      <Radio className="h-10 w-10 text-gray-400 mx-auto mb-3" />
+      <h2 className="text-lg font-semibold text-gray-900 mb-1">Mentor access required</h2>
+      <p className="text-sm text-gray-500 mb-4">Create a mentor profile to access signal imports.</p>
+      <Link href="/mentor-dashboard" className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+        Become a Mentor
+      </Link>
+    </div>
+  );
 
   return (
     <div className="p-6 max-w-5xl mx-auto">

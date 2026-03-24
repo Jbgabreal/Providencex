@@ -26,11 +26,13 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useUnreadNotificationCount } from '@/hooks/useNotifications';
+import { useCurrentUser } from '@/hooks/useCurrentUser';
 
 interface NavItem {
   name: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  visibility?: 'all' | 'mentor' | 'admin';
 }
 
 const navigation: NavItem[] = [
@@ -42,15 +44,15 @@ const navigation: NavItem[] = [
   { name: 'Discover', href: '/discover', icon: Sparkles },
   { name: 'Copy Trading', href: '/copy-trading', icon: Copy },
   { name: 'Shadow Mode', href: '/shadow', icon: Eye },
-  { name: 'Mentor Dashboard', href: '/mentor-dashboard', icon: Radio },
-  { name: 'Signal Imports', href: '/mentor-imports', icon: MessageSquare },
-  { name: 'Mentor Insights', href: '/mentor-insights', icon: BarChart3 },
+  { name: 'Mentor Dashboard', href: '/mentor-dashboard', icon: Radio, visibility: 'mentor' },
+  { name: 'Signal Imports', href: '/mentor-imports', icon: MessageSquare, visibility: 'mentor' },
+  { name: 'Mentor Insights', href: '/mentor-insights', icon: BarChart3, visibility: 'mentor' },
   { name: 'Referrals', href: '/referrals', icon: Gift },
   { name: 'Pricing', href: '/pricing', icon: Tag },
   { name: 'Billing', href: '/billing', icon: CreditCard },
   { name: 'Activity', href: '/activity', icon: Activity },
   { name: 'Settings', href: '/settings', icon: Settings },
-  { name: 'Admin', href: '/admin', icon: ShieldCheck },
+  { name: 'Admin', href: '/admin', icon: ShieldCheck, visibility: 'admin' },
 ];
 
 function NotificationBell() {
@@ -71,6 +73,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const { isAdmin, isMentor } = useCurrentUser();
+
+  const visibleNav = navigation.filter((item) => {
+    if (item.visibility === 'admin') return isAdmin;
+    if (item.visibility === 'mentor') return isMentor || isAdmin;
+    return true;
+  });
 
   const handleLogout = async () => {
     try {
@@ -93,7 +102,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
           {/* Navigation */}
           <nav className="flex-1 px-4 py-6 space-y-1">
-            {navigation.map((item) => {
+            {visibleNav.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
               return (
