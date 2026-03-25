@@ -208,18 +208,21 @@ export class DerivCandleProvider extends EventEmitter {
       setTimeout(() => {
         if (!this.ws || this.ws.readyState !== 1) return; // WebSocket.OPEN = 1
 
+        // Request 7 days of M1 candles (7 * 24 * 60 = 10080 candles)
+        // This gives enough data for H4 aggregation (42+ H4 candles)
+        const sevenDaysAgo = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000);
         const reqId = this.reqIdCounter++;
         const request = {
           ticks_history: derivSymbol,
           style: 'candles',
           granularity: 60, // M1
-          count: 5000,
+          start: sevenDaysAgo,
           end: 'latest',
           subscribe: 1,
           req_id: reqId,
         };
 
-        logger.info(`[DerivCandleProvider] Requesting history + subscription for ${symbol} (${derivSymbol}) [${index + 1}/${this.supportedSymbols.length}]`);
+        logger.info(`[DerivCandleProvider] Requesting 7d history + subscription for ${symbol} (${derivSymbol}) [${index + 1}/${this.supportedSymbols.length}]`);
         this.ws!.send(JSON.stringify(request));
       }, index * 2000);
     });

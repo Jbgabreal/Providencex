@@ -182,7 +182,7 @@ export class ICTEntryService {
   private determineH4Bias(h4Candles: Candle[]): ICTBias {
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
-    if (h4Candles.length < 20) {
+    if (h4Candles.length < 6) {
       return { direction: 'sideways' };
     }
 
