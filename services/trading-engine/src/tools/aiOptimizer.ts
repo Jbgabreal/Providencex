@@ -151,7 +151,7 @@ class AIStrategyOptimizer {
       try {
         // BacktestRunner requires dataLoaderConfig as second parameter
         const dataLoaderConfig = {
-          dataSource: dataSource as 'csv' | 'postgres' | 'mt5' | 'mock',
+          dataSource: dataSource as 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv',
           databaseUrl: process.env.DATABASE_URL,
           mt5BaseUrl: process.env.MT5_CONNECTOR_URL,
         };

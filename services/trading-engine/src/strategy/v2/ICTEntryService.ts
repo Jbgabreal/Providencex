@@ -957,12 +957,31 @@ export class ICTEntryService {
 
     // 5. TP = M15 swing point (the HH for bullish, LL for bearish)
     let takeProfit: number;
+    const risk = Math.abs(entryPrice - stopLoss);
+
     if (setupZone.tpTarget && setupZone.tpTarget > 0) {
       takeProfit = setupZone.tpTarget;
     } else {
-      // Fallback: use R:R ratio
-      const risk = Math.abs(entryPrice - stopLoss);
       takeProfit = dir === 'bullish' ? entryPrice + risk * this.riskRewardRatio : entryPrice - risk * this.riskRewardRatio;
+    }
+
+    // CRITICAL: Validate TP is in the right direction
+    // Bullish: TP must be ABOVE entry
+    // Bearish: TP must be BELOW entry
+    const tpValid = (dir === 'bullish' && takeProfit > entryPrice) ||
+                    (dir === 'bearish' && takeProfit < entryPrice);
+    if (!tpValid) {
+      // TP target is wrong direction — use R:R fallback
+      if (ictLog) logger.info(`[ICT] TP ${takeProfit.toFixed(5)} wrong direction for ${dir} entry ${entryPrice.toFixed(5)}, using R:R fallback`);
+      takeProfit = dir === 'bullish' ? entryPrice + risk * this.riskRewardRatio : entryPrice - risk * this.riskRewardRatio;
+    }
+
+    // Validate SL is in the right direction
+    const slValid = (dir === 'bullish' && stopLoss < entryPrice) ||
+                    (dir === 'bearish' && stopLoss > entryPrice);
+    if (!slValid) {
+      if (ictLog) logger.info(`[ICT] SL ${stopLoss.toFixed(5)} wrong direction for ${dir} entry ${entryPrice.toFixed(5)}, using fixed SL`);
+      stopLoss = dir === 'bullish' ? entryPrice - risk : entryPrice + risk;
     }
 
     // Validate entry/SL/TP

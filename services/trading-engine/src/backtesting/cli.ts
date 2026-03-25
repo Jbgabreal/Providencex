@@ -84,7 +84,7 @@ function parseArgs(): {
   strategies: ('low' | 'high')[];
   from: string;
   to: string;
-  dataSource: 'csv' | 'postgres' | 'mt5' | 'mock';
+  dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv';
   csvPath?: string;
   initialBalance: number;
   outputDir?: string;
@@ -96,7 +96,7 @@ function parseArgs(): {
   let strategies: ('low' | 'high')[] = ['low'];
   let from = '2024-01-01';
   let to = '2024-12-31';
-  let dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' = 'mock';
+  let dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv' = 'deriv';
   let csvPath: string | undefined;
   let initialBalance = 100;
   let outputDir: string | undefined;
@@ -142,7 +142,7 @@ function parseArgs(): {
 
       case '--data-source':
         if (nextArg) {
-          dataSource = nextArg as 'csv' | 'postgres' | 'mt5' | 'mock';
+          dataSource = nextArg as 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv';
         }
         i++;
         break;

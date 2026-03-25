@@ -130,7 +130,7 @@ class SingleBacktestOptimizer {
     logger.info(`📄 Human-readable summary saved to: ${summaryPath}`);
   }
 
-  async runBacktest(config: BacktestConfig, dataSource: 'mt5' | 'postgres' | 'csv' | 'mock'): Promise<BacktestResults | null> {
+  async runBacktest(config: BacktestConfig, dataSource: 'mt5' | 'postgres' | 'csv' | 'mock' | 'deriv'): Promise<BacktestResults | null> {
     try {
       logger.info(`Running backtest: ${config.symbol} from ${config.startDate} to ${config.endDate}`);
       logger.info(`⏱️  This may take 2-5 minutes. Progress will be shown in terminal...`);

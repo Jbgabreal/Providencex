@@ -81,7 +81,7 @@ export class BacktestRunner {
   private startTime: number = 0; // Track backtest start time for progress logging
 
   constructor(config: BacktestConfig, dataLoaderConfig: {
-    dataSource: 'csv' | 'postgres' | 'mt5' | 'mock';
+    dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv';
     csvPath?: string;
     databaseUrl?: string;
     mt5BaseUrl?: string;

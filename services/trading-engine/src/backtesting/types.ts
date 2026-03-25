@@ -47,7 +47,7 @@ export interface BacktestConfig {
   riskPerTradePercent?: number; // Risk per trade (overrides strategy default)
   spreadPips?: number; // Simulated spread in pips
   slippagePips?: number; // Simulated slippage in pips
-  dataSource?: 'csv' | 'postgres' | 'mt5' | 'mock'; // Where to load candles from
+  dataSource?: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv'; // Where to load candles from
   csvPath?: string; // Path to CSV file if dataSource === 'csv'
   // v3 filter overrides (optional)
   executionFilterOverrides?: Record<string, any>;

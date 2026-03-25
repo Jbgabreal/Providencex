@@ -18,10 +18,11 @@ import { HistoricalCandle } from './types';
 const logger = new Logger('DataLoader');
 
 export interface DataLoaderConfig {
-  dataSource: 'csv' | 'postgres' | 'mt5' | 'mock';
+  dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv';
   csvPath?: string;
   databaseUrl?: string;
-  mt5BaseUrl?: string; // MT5 Connector base URL (e.g., http://localhost:3030)
+  mt5BaseUrl?: string;
+  derivAppId?: string;
   symbol?: string;
 }
 
@@ -82,10 +83,13 @@ export class HistoricalDataLoader {
       
       case 'mt5':
         return await this.loadFromMT5(symbol, startDate, endDate, timeframe);
-      
+
+      case 'deriv':
+        return await this.loadFromDeriv(symbol, startDate, endDate, timeframe);
+
       case 'mock':
         return await this.generateMockData(symbol, startDate, endDate, timeframe);
-      
+
       default:
         throw new Error(`Unsupported data source: ${this.config.dataSource}`);
     }
@@ -489,6 +493,113 @@ export class HistoricalDataLoader {
    * - Medium-term M15 swing highs/lows within H4 trends
    * - Realistic OHLC wick/body sizes
    */
+
+  /**
+   * Load candles from Deriv WebSocket API (live historical data)
+   * Uses ticks_history with style=candles
+   */
+  private async loadFromDeriv(
+    symbol: string,
+    startDate: Date,
+    endDate: Date,
+    timeframe: string = 'M1'
+  ): Promise<HistoricalCandle[]> {
+    const SYMBOL_MAP: Record<string, string> = {
+      XAUUSD: 'frxXAUUSD', EURUSD: 'frxEURUSD', GBPUSD: 'frxGBPUSD',
+      USDJPY: 'frxUSDJPY', AUDUSD: 'frxAUDUSD', US30: 'OTC_DJI',
+      US100: 'OTC_NDX', XAGUSD: 'frxXAGUSD',
+    };
+    const TF_MAP: Record<string, number> = {
+      'M1': 60, 'M5': 300, 'M15': 900, 'H1': 3600, 'H4': 14400, 'D1': 86400,
+    };
+
+    const derivSymbol = SYMBOL_MAP[symbol.toUpperCase()];
+    if (!derivSymbol) throw new Error(`Unknown Deriv symbol for ${symbol}`);
+
+    const granularity = TF_MAP[timeframe] || 60;
+    const appId = this.config.derivAppId || process.env.DERIV_APP_ID || '1089';
+    const startEpoch = Math.floor(startDate.getTime() / 1000);
+    const endEpoch = Math.floor(endDate.getTime() / 1000);
+
+    logger.info(`[DataLoader] Fetching ${symbol} (${derivSymbol}) from Deriv API: ${startDate.toISOString()} → ${endDate.toISOString()}, tf=${timeframe}`);
+
+    // Deriv API has a 5000 candle limit per request, so we may need multiple requests
+    const allCandles: HistoricalCandle[] = [];
+    let currentStart = startEpoch;
+
+    while (currentStart < endEpoch) {
+      const candles = await this.fetchDerivBatch(derivSymbol, granularity, currentStart, endEpoch, appId, symbol);
+      if (candles.length === 0) break;
+
+      allCandles.push(...candles);
+      // Move start to after the last candle
+      const lastEpoch = candles[candles.length - 1].timestamp / 1000;
+      currentStart = lastEpoch + granularity;
+
+      logger.info(`[DataLoader] Fetched ${candles.length} candles (total: ${allCandles.length}), next start: ${new Date(currentStart * 1000).toISOString()}`);
+
+      // Small delay to avoid rate limiting
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    logger.info(`[DataLoader] Total loaded from Deriv: ${allCandles.length} ${timeframe} candles for ${symbol}`);
+    return allCandles;
+  }
+
+  private fetchDerivBatch(
+    derivSymbol: string, granularity: number, startEpoch: number, endEpoch: number, appId: string, symbol: string
+  ): Promise<HistoricalCandle[]> {
+    return new Promise((resolve, reject) => {
+      const WebSocket = require('ws');
+      const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
+      let resolved = false;
+
+      const timeout = setTimeout(() => {
+        if (!resolved) { resolved = true; ws.close(); resolve([]); }
+      }, 30000);
+
+      ws.on('open', () => {
+        ws.send(JSON.stringify({
+          ticks_history: derivSymbol,
+          style: 'candles',
+          granularity,
+          start: startEpoch,
+          end: Math.min(endEpoch, startEpoch + granularity * 5000), // Max 5000 candles
+          adjust_start_time: 1,
+        }));
+      });
+
+      ws.on('message', (data: any) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.error) {
+            logger.error(`[DataLoader] Deriv API error: ${msg.error.message}`);
+            if (!resolved) { resolved = true; clearTimeout(timeout); ws.close(); resolve([]); }
+            return;
+          }
+          if (msg.candles) {
+            const candles: HistoricalCandle[] = msg.candles.map((c: any) => ({
+              symbol,
+              timestamp: c.epoch * 1000,
+              open: Number(c.open),
+              high: Number(c.high),
+              low: Number(c.low),
+              close: Number(c.close),
+              volume: Number(c.volume || 1),
+            }));
+            if (!resolved) { resolved = true; clearTimeout(timeout); ws.close(); resolve(candles); }
+          }
+        } catch (e) {
+          if (!resolved) { resolved = true; clearTimeout(timeout); ws.close(); resolve([]); }
+        }
+      });
+
+      ws.on('error', () => {
+        if (!resolved) { resolved = true; clearTimeout(timeout); ws.close(); resolve([]); }
+      });
+    });
+  }
+
   private async generateMockData(
     symbol: string,
     startDate: Date,

@@ -87,7 +87,7 @@ async function runMonthlyBacktest(
   startDate: string,
   endDate: string,
   month: string,
-  dataSource: 'csv' | 'postgres' | 'mt5' | 'mock',
+  dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv',
   csvPath?: string
 ): Promise<MonthlyResult> {
   const startTime = Date.now();
@@ -279,7 +279,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   
   let symbol = 'XAUUSD';
-  let dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' = 'postgres';
+  let dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv' = 'postgres';
   let year = 2023;
   let csvPath: string | undefined;
   
@@ -298,7 +298,7 @@ async function main(): Promise<void> {
       
       case '--data-source':
         if (nextArg) {
-          dataSource = nextArg as 'csv' | 'postgres' | 'mt5' | 'mock';
+          dataSource = nextArg as 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv';
         }
         i++;
         break;
