@@ -177,54 +177,201 @@ export class ICTEntryService {
    * Bearish = last 2+ swing highs are LH AND last 2+ swing lows are LL
    * Otherwise = sideways
    *
-   * Only structural swings formed by 3+ consecutive candles count as external.
+   * Multi-stage H4 bias engine:
+   *   Stage 1: Raw pivot detection (price-based, no candle color)
+   *   Stage 2: Compress consecutive same-side pivots (keep extreme)
+   *   Stage 3: Filter insignificant pivots (ATR-based threshold)
+   *   Stage 4: Classify HH/HL/LH/LL → bullish/bearish/neutral
    */
   private determineH4Bias(h4Candles: Candle[]): ICTBias {
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
-    if (h4Candles.length < 6) {
+    if (h4Candles.length < 5) {
+      if (ictLog) logger.info(`[H4-BIAS] Insufficient candles: ${h4Candles.length} (need ≥5)`);
       return { direction: 'sideways' };
     }
 
-    // Detect external swings: 3+ consecutive bullish/bearish candles form a swing.
-    // A bullish swing = 3+ candles where close > open → swing HIGH = max high of the run
-    // A bearish swing = 3+ candles where close < open → swing LOW = min low of the run
-    // Neutral/doji candles don't break the run.
-    const structuralSwings = this.detectExternalSwings(h4Candles);
-
-    const swingHighs = structuralSwings.filter(s => s.type === 'high').sort((a, b) => a.index - b.index);
-    const swingLows = structuralSwings.filter(s => s.type === 'low').sort((a, b) => a.index - b.index);
-
+    // ── Stage 1: Raw pivot detection ──
+    const rawPivots = this.detectRawPivots(h4Candles, 2);
     if (ictLog) {
-      logger.info(
-        `[ICT] H4 structural swings: ${swingHighs.length} highs, ${swingLows.length} lows ` +
-        `(${structuralSwings.length} total from ${h4Candles.length} candles)`
-      );
-      if (swingHighs.length >= 2) {
-        const h1 = swingHighs[swingHighs.length - 2];
-        const h2 = swingHighs[swingHighs.length - 1];
-        logger.info(`[ICT] H4 last 2 highs: ${h1.price.toFixed(2)} → ${h2.price.toFixed(2)} (${h2.price > h1.price ? 'HH' : 'LH'})`);
-      }
-      if (swingLows.length >= 2) {
-        const l1 = swingLows[swingLows.length - 2];
-        const l2 = swingLows[swingLows.length - 1];
-        logger.info(`[ICT] H4 last 2 lows: ${l1.price.toFixed(2)} → ${l2.price.toFixed(2)} (${l2.price > l1.price ? 'HL' : 'LL'})`);
+      logger.info(`[H4-BIAS] Stage 1 — Raw pivots: ${rawPivots.length} (from ${h4Candles.length} candles)`);
+      for (const p of rawPivots) {
+        logger.info(`  [RAW] idx=${p.index} ${p.type} ${p.price.toFixed(2)}`);
       }
     }
 
-    // Need at least 2 highs and 2 lows for pattern detection
-    if (swingHighs.length < 2 || swingLows.length < 2) {
+    // ── Stage 2: Compress same-side pivots ──
+    const compressed = this.compressSameSidePivots(rawPivots);
+    if (ictLog) {
+      logger.info(`[H4-BIAS] Stage 2 — Compressed: ${compressed.length} (was ${rawPivots.length})`);
+      for (const p of compressed) {
+        logger.info(`  [COMPRESSED] idx=${p.index} ${p.type} ${p.price.toFixed(2)}`);
+      }
+    }
+
+    // ── Stage 3: Filter insignificant swings (ATR threshold) ──
+    const atr = this.computeATR(h4Candles, Math.min(14, h4Candles.length - 1));
+    // Minimum swing significance: 30% of ATR (configurable via env)
+    const sigThresholdPct = Number(process.env.H4_SWING_SIG_PCT || '0.3');
+    const sigThreshold = atr * sigThresholdPct;
+    const meaningful = this.filterMeaningfulSwings(compressed, sigThreshold);
+    if (ictLog) {
+      logger.info(`[H4-BIAS] Stage 3 — ATR=${atr.toFixed(2)}, threshold=${sigThreshold.toFixed(2)} (${(sigThresholdPct * 100).toFixed(0)}% ATR), meaningful swings: ${meaningful.length}`);
+      for (const p of meaningful) {
+        logger.info(`  [MEANINGFUL] idx=${p.index} ${p.type} ${p.price.toFixed(2)}`);
+      }
+    }
+
+    // ── Stage 4: Classify external structure ──
+    const result = this.classifyExternalStructure(meaningful, ictLog);
+    if (ictLog) {
+      logger.info(`[H4-BIAS] Stage 4 — Final bias: ${result.direction} (method: swing-structure)`);
+    }
+
+    return result;
+  }
+
+  // ═══════════════════════════════════════════════════
+  // Stage 1: Raw pivot detection
+  // ═══════════════════════════════════════════════════
+
+  /**
+   * Detect candidate pivot highs and lows.
+   * Pivot high: candle.high > N candles on each side.
+   * Pivot low:  candle.low  < N candles on each side.
+   * No candle-color dependency.
+   */
+  private detectRawPivots(candles: Candle[], lookback: number): SwingPoint[] {
+    const pivots: SwingPoint[] = [];
+
+    for (let i = lookback; i < candles.length - lookback; i++) {
+      const c = candles[i];
+
+      let isHigh = true;
+      let isLow = true;
+
+      for (let j = 1; j <= lookback; j++) {
+        if (candles[i - j].high >= c.high || candles[i + j].high >= c.high) isHigh = false;
+        if (candles[i - j].low <= c.low || candles[i + j].low <= c.low) isLow = false;
+        if (!isHigh && !isLow) break;
+      }
+
+      if (isHigh) {
+        pivots.push({ index: i, type: 'high', price: c.high, timestamp: c.startTime.getTime() });
+      }
+      if (isLow) {
+        pivots.push({ index: i, type: 'low', price: c.low, timestamp: c.startTime.getTime() });
+      }
+    }
+
+    return pivots.sort((a, b) => a.index - b.index);
+  }
+
+  // ═══════════════════════════════════════════════════
+  // Stage 2: Compress consecutive same-side pivots
+  // ═══════════════════════════════════════════════════
+
+  /**
+   * If multiple consecutive highs appear before a low, keep only the HIGHEST.
+   * If multiple consecutive lows appear before a high, keep only the LOWEST.
+   * Enforces strictly alternating high-low-high-low structure.
+   */
+  private compressSameSidePivots(pivots: SwingPoint[]): SwingPoint[] {
+    if (pivots.length <= 1) return [...pivots];
+
+    const result: SwingPoint[] = [];
+    let group: SwingPoint[] = [pivots[0]];
+
+    for (let i = 1; i < pivots.length; i++) {
+      if (pivots[i].type === group[0].type) {
+        // Same side — add to group
+        group.push(pivots[i]);
+      } else {
+        // Side changed — flush group, keep extreme
+        result.push(this.pickExtreme(group));
+        group = [pivots[i]];
+      }
+    }
+    // Flush last group
+    result.push(this.pickExtreme(group));
+
+    return result;
+  }
+
+  /** From a group of same-side pivots, keep highest high or lowest low. */
+  private pickExtreme(group: SwingPoint[]): SwingPoint {
+    if (group[0].type === 'high') {
+      return group.reduce((best, p) => (p.price > best.price ? p : best), group[0]);
+    } else {
+      return group.reduce((best, p) => (p.price < best.price ? p : best), group[0]);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════
+  // Stage 3: Filter insignificant swings
+  // ═══════════════════════════════════════════════════
+
+  /**
+   * Remove swings whose displacement from the previous opposite swing
+   * is below the significance threshold.
+   * Keeps the first swing unconditionally.
+   */
+  private filterMeaningfulSwings(pivots: SwingPoint[], threshold: number): SwingPoint[] {
+    if (pivots.length <= 2) return [...pivots];
+
+    const result: SwingPoint[] = [pivots[0]];
+
+    for (let i = 1; i < pivots.length; i++) {
+      const prev = result[result.length - 1];
+      const curr = pivots[i];
+      const displacement = Math.abs(curr.price - prev.price);
+
+      if (displacement >= threshold) {
+        result.push(curr);
+      }
+      // If below threshold, skip this pivot (noise)
+    }
+
+    return result;
+  }
+
+  // ═══════════════════════════════════════════════════
+  // Stage 4: Classify external structure
+  // ═══════════════════════════════════════════════════
+
+  /**
+   * From cleaned alternating swings, determine HH/HL/LH/LL pattern.
+   * bullish  = latest high > previous high AND latest low > previous low
+   * bearish  = latest high < previous high AND latest low < previous low
+   * sideways = mixed or insufficient swings
+   */
+  private classifyExternalStructure(swings: SwingPoint[], log: boolean): ICTBias {
+    const highs = swings.filter(s => s.type === 'high');
+    const lows = swings.filter(s => s.type === 'low');
+
+    if (highs.length < 2 || lows.length < 2) {
+      if (log) logger.info(`[H4-BIAS] Not enough swings for classification: ${highs.length} highs, ${lows.length} lows`);
+      // Fallback: use simple price position if we have any swings
+      if (highs.length >= 1 && lows.length >= 1) {
+        return this.fallbackBias(swings, highs, lows, log);
+      }
       return { direction: 'sideways' };
     }
 
-    // Check last 2 swing highs and last 2 swing lows
-    const lastHighs = swingHighs.slice(-2);
-    const lastLows = swingLows.slice(-2);
+    const prevHigh = highs[highs.length - 2];
+    const lastHigh = highs[highs.length - 1];
+    const prevLow = lows[lows.length - 2];
+    const lastLow = lows[lows.length - 1];
 
-    const isHH = lastHighs[1].price > lastHighs[0].price; // Higher High
-    const isHL = lastLows[1].price > lastLows[0].price;    // Higher Low
-    const isLH = lastHighs[1].price < lastHighs[0].price;  // Lower High
-    const isLL = lastLows[1].price < lastLows[0].price;    // Lower Low
+    const isHH = lastHigh.price > prevHigh.price;
+    const isHL = lastLow.price > prevLow.price;
+    const isLH = lastHigh.price < prevHigh.price;
+    const isLL = lastLow.price < prevLow.price;
+
+    if (log) {
+      logger.info(`[H4-BIAS] Structure: prevHigh=${prevHigh.price.toFixed(2)} → lastHigh=${lastHigh.price.toFixed(2)} (${isHH ? 'HH' : 'LH'})`);
+      logger.info(`[H4-BIAS] Structure: prevLow=${prevLow.price.toFixed(2)} → lastLow=${lastLow.price.toFixed(2)} (${isHL ? 'HL' : 'LL'})`);
+    }
 
     let direction: 'bullish' | 'bearish' | 'sideways' = 'sideways';
 
@@ -232,20 +379,76 @@ export class ICTEntryService {
       direction = 'bullish';
     } else if (isLH && isLL) {
       direction = 'bearish';
+    } else if (isHH && isLL) {
+      // Expansion — use most recent swing direction as tie-breaker
+      const lastSwing = swings[swings.length - 1];
+      direction = lastSwing.type === 'high' ? 'bullish' : 'bearish';
+      if (log) logger.info(`[H4-BIAS] Expansion pattern (HH+LL) — tie-break by last swing: ${direction}`);
+    } else if (isLH && isHL) {
+      // Compression/consolidation — truly sideways
+      direction = 'sideways';
+      if (log) logger.info(`[H4-BIAS] Compression pattern (LH+HL) — sideways`);
     }
 
-    if (ictLog) {
-      logger.info(`[ICT] H4 Bias: ${direction} (HH=${isHH}, HL=${isHL}, LH=${isLH}, LL=${isLL})`);
+    if (log) {
+      logger.info(`[H4-BIAS] Final: ${direction} (HH=${isHH}, HL=${isHL}, LH=${isLH}, LL=${isLL})`);
     }
-
-    const lastSwingHigh = swingHighs[swingHighs.length - 1];
-    const lastSwingLow = swingLows[swingLows.length - 1];
 
     return {
       direction,
-      swingHigh: lastSwingHigh.price,
-      swingLow: lastSwingLow.price,
+      swingHigh: lastHigh.price,
+      swingLow: lastLow.price,
     };
+  }
+
+  /**
+   * Fallback bias when we have swings but not enough for full HH/HL/LH/LL.
+   * Uses the trend implied by the sequence of swings.
+   */
+  private fallbackBias(
+    swings: SwingPoint[], highs: SwingPoint[], lows: SwingPoint[], log: boolean
+  ): ICTBias {
+    // Look at overall direction: is the last swing higher or lower than the first?
+    const first = swings[0];
+    const last = swings[swings.length - 1];
+    const range = Math.abs(highs[highs.length - 1].price - lows[lows.length - 1].price);
+
+    let direction: 'bullish' | 'bearish' | 'sideways' = 'sideways';
+    if (last.price > first.price && (last.price - first.price) > range * 0.3) {
+      direction = 'bullish';
+    } else if (last.price < first.price && (first.price - last.price) > range * 0.3) {
+      direction = 'bearish';
+    }
+
+    if (log) logger.info(`[H4-BIAS] Fallback: first=${first.price.toFixed(2)} → last=${last.price.toFixed(2)}, direction=${direction}`);
+
+    return {
+      direction,
+      swingHigh: highs[highs.length - 1].price,
+      swingLow: lows[lows.length - 1].price,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════
+  // Helpers
+  // ═══════════════════════════════════════════════════
+
+  /** Compute Average True Range over last N candles. */
+  private computeATR(candles: Candle[], period: number): number {
+    if (candles.length < 2) return 0;
+    let sum = 0;
+    const start = Math.max(1, candles.length - period);
+    let count = 0;
+    for (let i = start; i < candles.length; i++) {
+      const tr = Math.max(
+        candles[i].high - candles[i].low,
+        Math.abs(candles[i].high - candles[i - 1].close),
+        Math.abs(candles[i].low - candles[i - 1].close)
+      );
+      sum += tr;
+      count++;
+    }
+    return count > 0 ? sum / count : 0;
   }
 
   /**
@@ -597,56 +800,8 @@ export class ICTEntryService {
    * Bullish run → swing HIGH at the max high of the run
    * Bearish run → swing LOW at the min low of the run
    */
-  /**
-   * Detect external swing highs and lows using pivot-point method.
-   * A swing high: candle high is higher than the N candles before and after it.
-   * A swing low: candle low is lower than the N candles before and after it.
-   * This works regardless of candle color (bullish/bearish).
-   */
-  private detectExternalSwings(candles: Candle[]): SwingPoint[] {
-    const swings: SwingPoint[] = [];
-    const lookback = 2; // Check 2 candles on each side
-
-    for (let i = lookback; i < candles.length - lookback; i++) {
-      const c = candles[i];
-
-      // Check swing high: high is greater than surrounding candles
-      let isSwingHigh = true;
-      for (let j = 1; j <= lookback; j++) {
-        if (candles[i - j].high >= c.high || candles[i + j].high >= c.high) {
-          isSwingHigh = false;
-          break;
-        }
-      }
-      if (isSwingHigh) {
-        swings.push({
-          index: i,
-          type: 'high',
-          price: c.high,
-          timestamp: c.startTime.getTime(),
-        });
-      }
-
-      // Check swing low: low is less than surrounding candles
-      let isSwingLow = true;
-      for (let j = 1; j <= lookback; j++) {
-        if (candles[i - j].low <= c.low || candles[i + j].low <= c.low) {
-          isSwingLow = false;
-          break;
-        }
-      }
-      if (isSwingLow) {
-        swings.push({
-          index: i,
-          type: 'low',
-          price: c.low,
-          timestamp: c.startTime.getTime(),
-        });
-      }
-    }
-
-    return swings.sort((a, b) => a.index - b.index);
-  }
+  // detectExternalSwings removed — replaced by multi-stage pipeline:
+  // detectRawPivots → compressSameSidePivots → filterMeaningfulSwings → classifyExternalStructure
 
   private invalidEntry(direction: 'bullish' | 'bearish', reasons: string[]): ICTEntry {
     return {
