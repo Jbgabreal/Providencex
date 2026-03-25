@@ -581,103 +581,148 @@ export class ICTEntryService {
       return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons: ['Insufficient M15 candles'] };
     }
 
-    // 1. Get BOS-confirmed swings for structural range
-    const confirmedSwings = this.m15SwingService.detectSwings(m15Candles);
-    let swingHighs = confirmedSwings.filter(s => s.type === 'high').sort((a, b) => a.index - b.index);
-    let swingLows = confirmedSwings.filter(s => s.type === 'low').sort((a, b) => a.index - b.index);
+    // ═══════════════════════════════════════════════════════
+    // ICT M15 Setup: MSB + Order Block approach
+    // Inspired by PineScript MSB-OB indicator logic:
+    // 1. Find swing highs/lows (zigzag-style)
+    // 2. Detect Market Structure Break (MSB/BOS)
+    // 3. Find Order Block: last opposing candle before the impulse
+    // 4. Check if price has retraced to the OB zone
+    // ═══════════════════════════════════════════════════════
 
-    // Fallback: if BOS-confirmed swings are insufficient, use fractal swings
-    if (swingHighs.length === 0 || swingLows.length === 0) {
-      const fallbackService = new SwingService({ method: 'fractal', pivotLeft: 3, pivotRight: 3 });
-      const fallbackSwings = fallbackService.detectSwings(m15Candles);
-      swingHighs = fallbackSwings.filter(s => s.type === 'high').sort((a, b) => a.index - b.index);
-      swingLows = fallbackSwings.filter(s => s.type === 'low').sort((a, b) => a.index - b.index);
-      if (swingHighs.length === 0 || swingLows.length === 0) {
-        reasons.push(`Not enough M15 swings: ${swingHighs.length} highs, ${swingLows.length} lows`);
-        return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
+    // 1. Detect swings using fractal method
+    const fallbackService = new SwingService({ method: 'fractal', pivotLeft: 5, pivotRight: 5 });
+    const allSwings = fallbackService.detectSwings(m15Candles);
+    const swingHighs = allSwings.filter(s => s.type === 'high').sort((a, b) => a.index - b.index);
+    const swingLows = allSwings.filter(s => s.type === 'low').sort((a, b) => a.index - b.index);
+
+    if (swingHighs.length < 2 || swingLows.length < 2) {
+      reasons.push(`Not enough M15 swings: ${swingHighs.length} highs, ${swingLows.length} lows`);
+      return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
+    }
+
+    // 2. Detect Market Structure Break (MSB)
+    // Bullish MSB: latest swing high > previous swing high (HH)
+    // Bearish MSB: latest swing low < previous swing low (LL)
+    const lastSH = swingHighs[swingHighs.length - 1];
+    const prevSH = swingHighs[swingHighs.length - 2];
+    const lastSL = swingLows[swingLows.length - 1];
+    const prevSL = swingLows[swingLows.length - 2];
+
+    const bullishMSB = lastSH.price > prevSH.price; // Higher High
+    const bearishMSB = lastSL.price < prevSL.price;  // Lower Low
+
+    const hasMSB = (bias.direction === 'bullish' && bullishMSB) ||
+                   (bias.direction === 'bearish' && bearishMSB);
+
+    if (!hasMSB) {
+      reasons.push(`No M15 MSB in ${bias.direction} direction (bullishHH=${bullishMSB}, bearishLL=${bearishMSB})`);
+      if (ictLog) logger.info(`[ICT] No M15 ${bias.direction} MSB — HH=${bullishMSB}, LL=${bearishMSB}`);
+      return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
+    }
+
+    if (ictLog) {
+      logger.info(`[ICT] M15 ${bias.direction} MSB confirmed — ${bias.direction === 'bullish' ? `HH: ${prevSH.price.toFixed(5)} → ${lastSH.price.toFixed(5)}` : `LL: ${prevSL.price.toFixed(5)} → ${lastSL.price.toFixed(5)}`}`);
+    }
+
+    // 3. Find Order Block: last opposing candle before the MSB impulse
+    // Bullish OB: scan backward from the swing high to find the last BEARISH candle (open > close)
+    // Bearish OB: scan backward from the swing low to find the last BULLISH candle (open < close)
+    let obHigh = 0;
+    let obLow = 0;
+    let obFound = false;
+    let obIndex = -1;
+
+    if (bias.direction === 'bullish') {
+      // Scan from the MSB swing high backward to find the last bearish candle
+      const scanStart = Math.min(lastSH.index, m15Candles.length - 1);
+      const scanEnd = Math.max(prevSL.index, 0); // Back to the prior swing low
+      for (let i = scanStart; i >= scanEnd; i--) {
+        const c = m15Candles[i];
+        if (c.open > c.close) { // Bearish candle = bullish OB
+          obHigh = c.high;
+          obLow = c.low;
+          obIndex = i;
+          obFound = true;
+          break;
+        }
+      }
+    } else {
+      // Scan from the MSB swing low backward to find the last bullish candle
+      const scanStart = Math.min(lastSL.index, m15Candles.length - 1);
+      const scanEnd = Math.max(prevSH.index, 0); // Back to the prior swing high
+      for (let i = scanStart; i >= scanEnd; i--) {
+        const c = m15Candles[i];
+        if (c.close > c.open) { // Bullish candle = bearish OB
+          obHigh = c.high;
+          obLow = c.low;
+          obIndex = i;
+          obFound = true;
+          break;
+        }
       }
     }
 
-    // 2. Detect BOS events on M15
-    const allM15Swings = [...swingHighs, ...swingLows].sort((a, b) => a.index - b.index);
-    const bosEvents = this.m15BosService.detectBOS(m15Candles, allM15Swings);
-
-    // 3. Find most recent BOS in the bias direction
-    const biasAlignedBOS = bosEvents
-      .filter(b => b.direction === bias.direction)
-      .sort((a, b) => b.index - a.index)[0];
-
-    if (!biasAlignedBOS) {
-      reasons.push(`No M15 BOS in ${bias.direction} direction (total BOS: ${bosEvents.length})`);
-      if (ictLog) logger.info(`[ICT] No M15 ${bias.direction} BOS — ${bosEvents.length} total BOS events`);
+    if (!obFound) {
+      reasons.push(`No Order Block found before MSB`);
       return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
-    if (ictLog) {
-      logger.info(`[ICT] M15 ${bias.direction} BOS at idx ${biasAlignedBOS.index}, broke ${biasAlignedBOS.brokenSwingType} @ ${biasAlignedBOS.level.toFixed(2)}`);
-    }
-
-    // 4. Build structural range from ALL detected swings (not just last 5)
-    // Use the highest high and lowest low across all swings for a meaningful range
-    const allSwingHighPrices = swingHighs.map(s => s.price);
-    const allSwingLowPrices = swingLows.map(s => s.price);
-    const rangeHigh = Math.max(...allSwingHighPrices);
-    const rangeLow = Math.min(...allSwingLowPrices);
-    const range = rangeHigh - rangeLow;
-
-    if (range <= 0) {
-      reasons.push('Invalid structural range (high <= low)');
-      return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
-    }
-
-    // 5. Calculate OTE zone (60-78% fib retracement)
-    let oteLow: number;
-    let oteHigh: number;
-
-    if (bias.direction === 'bullish') {
-      // Bullish: price retracing into discount zone (below 50% = discount)
-      // Wider zone: 50-85% retracement to catch more valid setups
-      oteLow = rangeLow + range * 0.15;   // 85% retracement (deeper)
-      oteHigh = rangeLow + range * 0.50;  // 50% retracement (midpoint)
-    } else {
-      // Bearish: price retracing into premium zone (above 50% = premium)
-      oteLow = rangeLow + range * 0.50;   // 50% retracement (midpoint)
-      oteHigh = rangeLow + range * 0.85;  // 85% retracement (deeper)
-    }
-
-    // 6. Check if current price is in OTE zone
+    // 4. Check if price is at or near the Order Block zone
     const currentPrice = m15Candles[m15Candles.length - 1].close;
-    const fibPosition = (currentPrice - rangeLow) / range;
+    const obRange = obHigh - obLow;
+    const obBuffer = obRange * 0.5; // 50% buffer around OB
 
-    // Allow a generous buffer around OTE zone (10% of range on each side)
-    const oteBuffer = range * 0.10;
-    const inOTE = currentPrice >= (oteLow - oteBuffer) && currentPrice <= (oteHigh + oteBuffer);
+    // For bullish: price should be near or below the OB (retracing down to it)
+    // For bearish: price should be near or above the OB (retracing up to it)
+    let inOB = false;
+    if (bias.direction === 'bullish') {
+      // Price is in or below the OB zone (discount)
+      inOB = currentPrice <= (obHigh + obBuffer) && currentPrice >= (obLow - obBuffer);
+    } else {
+      // Price is in or above the OB zone (premium)
+      inOB = currentPrice >= (obLow - obBuffer) && currentPrice <= (obHigh + obBuffer);
+    }
 
     if (ictLog) {
       logger.info(
-        `[ICT] M15 range: ${rangeLow.toFixed(5)}-${rangeHigh.toFixed(5)} (${range.toFixed(5)}), ` +
-        `OTE: ${oteLow.toFixed(5)}-${oteHigh.toFixed(5)}, ` +
-        `price: ${currentPrice.toFixed(5)} (fib ${(fibPosition * 100).toFixed(1)}%), inOTE: ${inOTE}, swingHighs: ${swingHighs.length}, swingLows: ${swingLows.length}`
+        `[ICT] M15 OB: ${obLow.toFixed(5)}-${obHigh.toFixed(5)} (idx=${obIndex}), ` +
+        `price: ${currentPrice.toFixed(5)}, inOB: ${inOB}, ` +
+        `swingHighs: ${swingHighs.length}, swingLows: ${swingLows.length}`
       );
     }
 
-    if (!inOTE) {
-      reasons.push(
-        `Price ${currentPrice.toFixed(2)} not in OTE zone [${oteLow.toFixed(2)}, ${oteHigh.toFixed(2)}] ` +
-        `(fib ${(fibPosition * 100).toFixed(1)}%, range: ${rangeLow.toFixed(2)}-${rangeHigh.toFixed(2)})`
-      );
-      return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: oteLow, zoneHigh: oteHigh, reasons };
+    if (!inOB) {
+      // Even if not in OB, check if price is in the discount/premium half of the recent range
+      // This is the "equilibrium" approach — above/below 50% of the impulse leg
+      const impulseHigh = bias.direction === 'bullish' ? lastSH.price : prevSH.price;
+      const impulseLow = bias.direction === 'bullish' ? prevSL.price : lastSL.price;
+      const equilibrium = (impulseHigh + impulseLow) / 2;
+
+      const inDiscount = bias.direction === 'bullish' && currentPrice <= equilibrium;
+      const inPremium = bias.direction === 'bearish' && currentPrice >= equilibrium;
+
+      if (inDiscount || inPremium) {
+        if (ictLog) logger.info(`[ICT] M15 price not in OB but in ${inDiscount ? 'discount' : 'premium'} zone (eq=${equilibrium.toFixed(5)})`);
+        // Accept — price is at least in the right zone
+      } else {
+        reasons.push(
+          `Price ${currentPrice.toFixed(5)} not in OB [${obLow.toFixed(5)}, ${obHigh.toFixed(5)}] ` +
+          `or ${bias.direction === 'bullish' ? 'discount' : 'premium'} zone (eq=${equilibrium.toFixed(5)})`
+        );
+        return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, reasons };
+      }
     }
 
-    reasons.push(`M15 BOS ${bias.direction} confirmed, price in OTE zone (fib ${(fibPosition * 100).toFixed(1)}%)`);
+    reasons.push(`M15 MSB confirmed + price in ${inOB ? 'Order Block' : 'equilibrium'} zone`);
 
     return {
       isValid: true,
       direction: bias.direction,
-      hasDisplacement: true,  // BOS = displacement
-      displacementCandleIndex: biasAlignedBOS.index,
-      zoneLow: oteLow,
-      zoneHigh: oteHigh,
+      hasDisplacement: true,
+      displacementCandleIndex: obIndex,
+      zoneLow: obLow,
+      zoneHigh: obHigh,
       reasons,
     };
   }
