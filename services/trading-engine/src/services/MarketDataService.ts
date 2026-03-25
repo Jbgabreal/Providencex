@@ -49,14 +49,29 @@ export class MarketDataService {
         const h4 = this.derivProvider.getH4Candles(symbol, limit);
         if (h4.length > 0) {
           logger.info(`[MarketDataService] ${symbol}: Using ${h4.length} real H4 candles from Deriv (requested ${limit})`);
-          return h4 as any; // Candle type compatible
+          // Convert MarketDataCandle → strategy Candle (needs timestamp string)
+          return h4.map(c => ({
+            timestamp: c.startTime.toISOString(),
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+          })) as any;
         }
       }
       if (timeframe === 'M15') {
         const m15 = this.derivProvider.getM15Candles(symbol, limit);
         if (m15.length > 0) {
           logger.info(`[MarketDataService] ${symbol}: Using ${m15.length} real M15 candles from Deriv (requested ${limit})`);
-          return m15 as any;
+          return m15.map(c => ({
+            timestamp: c.startTime.toISOString(),
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+          })) as any;
         }
       }
     }
