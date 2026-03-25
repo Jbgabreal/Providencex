@@ -1736,9 +1736,31 @@ export class SMCStrategyV2 {
 
     try {
       // Get multi-timeframe candles: H4 (bias), M15 (setup), M1 (entry)
-      const h4Candles = await this.getCandles(symbol, 'H4', 50);
-      const m15Candles = await this.getCandles(symbol, 'M15', 100);
-      const m1Candles = await this.getCandles(symbol, 'M1', 100); // 100 candles for better M1 structure detection
+      // Try real Deriv H4/M15 candles first (bypass MarketDataService aggregation)
+      let h4Candles: MarketDataCandle[];
+      let m15Candles: MarketDataCandle[];
+
+      const derivProvider = (this.marketDataService as any).derivProvider;
+      if (derivProvider) {
+        const realH4 = derivProvider.getH4Candles(symbol, 50);
+        const realM15 = derivProvider.getM15Candles(symbol, 100);
+        if (realH4.length > 0) {
+          h4Candles = realH4;
+          logger.info(`[ICT] ${symbol}: Using ${realH4.length} REAL H4 candles from Deriv (high range: ${Math.min(...realH4.map((c:any)=>c.high)).toFixed(0)}-${Math.max(...realH4.map((c:any)=>c.high)).toFixed(0)})`);
+        } else {
+          h4Candles = await this.getCandles(symbol, 'H4', 50);
+        }
+        if (realM15.length > 0) {
+          m15Candles = realM15;
+        } else {
+          m15Candles = await this.getCandles(symbol, 'M15', 100);
+        }
+      } else {
+        h4Candles = await this.getCandles(symbol, 'H4', 50);
+        m15Candles = await this.getCandles(symbol, 'M15', 100);
+      }
+
+      const m1Candles = await this.getCandles(symbol, 'M1', 100);
 
       if (h4Candles.length < 5 || m15Candles.length < 20 || m1Candles.length < 50) {
         return createRejection(
