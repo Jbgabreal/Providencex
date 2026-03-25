@@ -1772,11 +1772,9 @@ export class SMCStrategyV2 {
       const ictResult = this.ictEntryService.analyzeICTEntry(h4Candles, m15Candles, m1Candles);
 
       // Check H4 bias
+      logger.info(`[ICT] ${symbol}: H4 bias result: direction=${ictResult.bias.direction}, swingHigh=${ictResult.bias.swingHigh}, swingLow=${ictResult.bias.swingLow}`);
       if (ictResult.bias.direction === 'sideways') {
-        if (ictLog) {
-          logger.info(`[ICT] ${symbol}: No H4 bias - skipping entry`);
-        }
-        return createRejection('H4 bias is sideways');
+        return createRejection(`H4 bias is sideways (h4=${h4Candles.length} candles, src=${realH4.length > 0 ? 'deriv' : 'agg'})`);
       }
 
       // Check M15 setup zone
