@@ -632,21 +632,28 @@ export class ICTEntryService {
         : `prevLow=${prevSL.price.toFixed(5)} → newLow=${lastSL.price.toFixed(5)} (LL)`}`);
     }
 
-    // 3. Find Order Block: last opposing candle before the MSB impulse
-    // Bullish OB: scan backward from the swing high to find the last BEARISH candle (open > close)
-    // Bearish OB: scan backward from the swing low to find the last BULLISH candle (open < close)
+    // 3. Find Order Block — matching PineScript MSB-OB exactly
+    //
+    // PineScript logic (EmreKb):
+    //   Bullish OB: for i=h1i to l0i → scan from PREVIOUS high to CURRENT low (the pullback)
+    //   Bearish OB: for i=l1i to h0i → scan from PREVIOUS low to CURRENT high (the pullback)
+    //
+    // The OB is the last opposing candle in the RETRACEMENT leg (NOT the impulse).
+    // This is where smart money left orders — the "origin" of the reversal.
     let obHigh = 0;
     let obLow = 0;
     let obFound = false;
     let obIndex = -1;
 
     if (bias.direction === 'bullish') {
-      // Scan from the MSB swing high backward to find the last bearish candle
-      const scanStart = Math.min(lastSH.index, m15Candles.length - 1);
-      const scanEnd = Math.max(prevSL.index, 0); // Back to the prior swing low
+      // Bullish OB: scan the PULLBACK area (from prevSH → lastSL)
+      // This is where price pulled back before making the HH
+      // Looking for the last BEARISH candle (open > close) = the OB
+      const scanStart = Math.min(prevSH.index, m15Candles.length - 1);
+      const scanEnd = Math.max(lastSL.index, 0);
       for (let i = scanStart; i >= scanEnd; i--) {
         const c = m15Candles[i];
-        if (c.open > c.close) { // Bearish candle = bullish OB
+        if (c.open > c.close) { // Bearish candle in pullback = bullish OB
           obHigh = c.high;
           obLow = c.low;
           obIndex = i;
@@ -655,12 +662,14 @@ export class ICTEntryService {
         }
       }
     } else {
-      // Scan from the MSB swing low backward to find the last bullish candle
-      const scanStart = Math.min(lastSL.index, m15Candles.length - 1);
-      const scanEnd = Math.max(prevSH.index, 0); // Back to the prior swing high
+      // Bearish OB: scan the PULLBACK area (from prevSL → lastSH)
+      // This is where price rallied before making the LL
+      // Looking for the last BULLISH candle (close > open) = the OB
+      const scanStart = Math.min(prevSL.index, m15Candles.length - 1);
+      const scanEnd = Math.max(lastSH.index, 0);
       for (let i = scanStart; i >= scanEnd; i--) {
         const c = m15Candles[i];
-        if (c.close > c.open) { // Bullish candle = bearish OB
+        if (c.close > c.open) { // Bullish candle in pullback = bearish OB
           obHigh = c.high;
           obLow = c.low;
           obIndex = i;
