@@ -16,6 +16,7 @@ import { SwingService } from './smc-core/SwingService';
 import { BosService } from './smc-core/BosService';
 import { StructuralSwingService } from './smc-core/StructuralSwingService';
 import { OrderBlockV2 } from './types';
+import { updatePOI, removePOI, PointOfInterest } from './POIStore';
 
 const logger = new Logger('ICTEntryService');
 

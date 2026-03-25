@@ -26,12 +26,33 @@ interface Decision {
   kill_switch_active?: boolean;
 }
 
+interface POI {
+  symbol: string;
+  direction: 'buy' | 'sell';
+  type: string;
+  h4Bias: string;
+  msbType: string;
+  obHigh: number;
+  obLow: number;
+  entryPrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  riskRewardRatio: number;
+  currentPrice: number;
+  distanceToEntry: number;
+  distancePct: string;
+  equilibrium: number;
+  updatedAt: string;
+  status: 'watching' | 'approaching' | 'in_zone' | 'invalidated';
+}
+
 interface EngineStatus {
   success: boolean;
   engine: { feedRunning: boolean; symbolCount: number; uptime: number };
   feedStatus: FeedStatus[];
   decisionCounts: { total: number; trades: number; skips: number; last1h: number };
   recentDecisions: Decision[];
+  pointsOfInterest?: POI[];
 }
 
 function formatAge(ms: number | null): string {
@@ -104,6 +125,59 @@ export default function EnginePage() {
           </p>
         </div>
       </div>
+
+      {/* Points of Interest */}
+      {data.pointsOfInterest && data.pointsOfInterest.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-lg font-medium text-gray-900 mb-3">Points of Interest (Pending Setups)</h2>
+          <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Order</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">OB Zone</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Entry</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SL</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">TP</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">R:R</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Price</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Distance</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {data.pointsOfInterest.map((poi) => (
+                  <tr key={poi.symbol} className={poi.status === 'in_zone' ? 'bg-green-50' : poi.status === 'approaching' ? 'bg-yellow-50' : ''}>
+                    <td className="px-4 py-3 text-sm font-medium text-gray-900">{poi.symbol}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 text-xs rounded-full font-medium ${poi.direction === 'buy' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                        {poi.direction.toUpperCase()} LIMIT
+                      </span>
+                      <span className="ml-1 text-xs text-gray-400">{poi.h4Bias}</span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-500">{poi.obLow.toFixed(5)} - {poi.obHigh.toFixed(5)}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-blue-600">{poi.entryPrice.toFixed(5)}</td>
+                    <td className="px-4 py-3 text-sm text-red-500">{poi.stopLoss.toFixed(5)}</td>
+                    <td className="px-4 py-3 text-sm text-green-600">{poi.takeProfit.toFixed(5)}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500">1:{poi.riskRewardRatio}</td>
+                    <td className="px-4 py-3 text-sm text-gray-900">{poi.currentPrice.toFixed(5)}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500">{poi.distancePct}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 text-xs rounded-full ${
+                        poi.status === 'in_zone' ? 'bg-green-100 text-green-800' :
+                        poi.status === 'approaching' ? 'bg-yellow-100 text-yellow-800' :
+                        poi.status === 'invalidated' ? 'bg-red-100 text-red-800' :
+                        'bg-blue-100 text-blue-800'
+                      }`}>{poi.status}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Price Feed Status */}
       <div className="mt-8">

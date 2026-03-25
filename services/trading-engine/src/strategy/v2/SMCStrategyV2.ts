@@ -19,6 +19,7 @@ import { Logger } from '@providencex/shared-utils';
 import { MarketDataService } from '../../services/MarketDataService';
 import { Candle as MarketDataCandle } from '../../marketData/types';
 import { getDerivCandleProvider } from '../../marketData/DerivCandleProvider';
+import { updatePOI, removePOI, PointOfInterest } from './POIStore';
 import { EnhancedRawSignalV2 } from '@providencex/shared-types';
 import { MarketStructureHTF } from './MarketStructureHTF';
 import { MarketStructureITF } from './MarketStructureITF';
@@ -1781,8 +1782,51 @@ export class SMCStrategyV2 {
         return createRejection(`Outside kill zone — H4 bias: ${ictResult.bias.direction} (no entry outside London/NY KZ)`);
       }
 
-      // Check M15 setup zone
+      // Check M15 setup zone — and track POI even if not valid yet
       if (!ictResult.setupZone || !ictResult.setupZone.isValid) {
+        // Even though setup isn't valid, if we have an OB zone, track it as a POI
+        if (ictResult.setupZone && ictResult.setupZone.zoneLow > 0 && ictResult.setupZone.zoneHigh > 0) {
+          const currentPrice = m1Candles[m1Candles.length - 1]?.close || 0;
+          const obMid = (ictResult.setupZone.zoneLow + ictResult.setupZone.zoneHigh) / 2;
+          const isBuy = ictResult.bias.direction === 'bullish';
+          const sl = isBuy ? ictResult.setupZone.zoneLow : ictResult.setupZone.zoneHigh;
+          const slDist = Math.abs(obMid - sl);
+          const tp = isBuy ? obMid + slDist * 3 : obMid - slDist * 3;
+          const distToEntry = Math.abs(currentPrice - obMid);
+          const distPct = currentPrice !== 0 ? ((distToEntry / currentPrice) * 100).toFixed(3) : '0';
+
+          let status: PointOfInterest['status'] = 'watching';
+          if (currentPrice >= ictResult.setupZone.zoneLow && currentPrice <= ictResult.setupZone.zoneHigh) {
+            status = 'in_zone';
+          } else if (distToEntry / currentPrice < 0.002) {
+            status = 'approaching';
+          }
+
+          updatePOI(symbol, {
+            symbol,
+            direction: isBuy ? 'buy' : 'sell',
+            type: 'limit',
+            h4Bias: ictResult.bias.direction as 'bullish' | 'bearish',
+            msbType: ictResult.setupZone.hasDisplacement ? 'STRONG' : 'SIMPLE',
+            obHigh: ictResult.setupZone.zoneHigh,
+            obLow: ictResult.setupZone.zoneLow,
+            entryPrice: obMid,
+            impulseHigh: ictResult.bias.swingHigh || ictResult.setupZone.zoneHigh,
+            impulseLow: ictResult.bias.swingLow || ictResult.setupZone.zoneLow,
+            equilibrium: ((ictResult.bias.swingHigh || 0) + (ictResult.bias.swingLow || 0)) / 2,
+            stopLoss: sl,
+            takeProfit: tp,
+            riskRewardRatio: 3,
+            currentPrice,
+            distanceToEntry: distToEntry,
+            distancePct: distPct + '%',
+            updatedAt: new Date().toISOString(),
+            status,
+          });
+        } else {
+          removePOI(symbol);
+        }
+
         const subReason = ictResult.setupZone?.reasons?.[0] || 'unknown';
         return createRejection(
           `No valid M15 setup zone [${subReason}]`,

@@ -8,6 +8,7 @@ import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
 import { Logger } from '@providencex/shared-utils';
 import { getConfig } from '../config';
+import { getAllPOIs } from '../strategy/v2/POIStore';
 import { OpenTradesService } from '../services/OpenTradesService';
 import { executionFilterConfig } from '../config/executionFilterConfig';
 import {
@@ -1238,6 +1239,7 @@ router.get('/engine-status', async (req: Request, res: Response) => {
       feedStatus,
       decisionCounts,
       recentDecisions,
+      pointsOfInterest: getAllPOIs(),
     });
   } catch (error) {
     logger.error('[AdminRoutes] engine-status failed', error);
