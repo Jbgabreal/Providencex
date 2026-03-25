@@ -734,23 +734,16 @@ export class ICTEntryService {
     }
 
     // 3b. Detect FVG near the OB — the most valid OBs leave FVGs behind
-    // FVG = 3-candle pattern where candle1.high < candle3.low (bullish) or candle1.low > candle3.high (bearish)
-    // When the impulse from the OB creates an FVG, it confirms smart money displacement
-    const fvgService = new FairValueGapService(0, 30); // minGap=0 to catch all, lookback=30
+    // Uses joshyattridge/LuxAlgo FVG detection with auto-threshold filtering
+    const fvgService = new FairValueGapService(50, true);
     const fvgs = fvgService.detectFVGs(m15Candles, 'ITF', bias.direction === 'bullish' ? 'discount' : 'premium');
+    const unfilledFVGs = fvgs.filter(f => !f.filled);
 
-    // Find FVG near the OB (within 5 candles of the OB index)
-    let nearbyFVG: { low: number; high: number } | null = null;
-    for (const fvg of fvgs) {
-      if (fvg.candleIndices) {
-        const fvgIdx = fvg.candleIndices[1]; // middle candle of FVG
-        if (Math.abs(fvgIdx - obIndex) <= 10) {
-          // FVG is near the OB — this is a high-probability zone
-          nearbyFVG = { low: fvg.low, high: fvg.high };
-          break;
-        }
-      }
-    }
+    // Find UNFILLED FVG near the OB (within 10 candles)
+    const nearbyFVGObj = fvgService.findFVGNearIndex(fvgs, obIndex, 10);
+    let nearbyFVG: { low: number; high: number } | null = nearbyFVGObj
+      ? { low: nearbyFVGObj.low, high: nearbyFVGObj.high }
+      : null;
 
     // If FVG found near OB, expand the zone to cover both OB and FVG
     if (nearbyFVG) {
