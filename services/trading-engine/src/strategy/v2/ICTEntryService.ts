@@ -17,6 +17,7 @@ import { BosService } from './smc-core/BosService';
 import { StructuralSwingService } from './smc-core/StructuralSwingService';
 import { OrderBlockV2 } from './types';
 import { updatePOI, removePOI, PointOfInterest } from './POIStore';
+import { FairValueGapService } from './FairValueGapService';
 
 const logger = new Logger('ICTEntryService');
 
@@ -730,6 +731,38 @@ export class ICTEntryService {
     if (!obFound) {
       reasons.push(`No Order Block found before MSB`);
       return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
+    }
+
+    // 3b. Detect FVG near the OB — the most valid OBs leave FVGs behind
+    // FVG = 3-candle pattern where candle1.high < candle3.low (bullish) or candle1.low > candle3.high (bearish)
+    // When the impulse from the OB creates an FVG, it confirms smart money displacement
+    const fvgService = new FairValueGapService(0, 30); // minGap=0 to catch all, lookback=30
+    const fvgs = fvgService.detectFVGs(m15Candles, 'ITF', bias.direction === 'bullish' ? 'discount' : 'premium');
+
+    // Find FVG near the OB (within 5 candles of the OB index)
+    let nearbyFVG: { low: number; high: number } | null = null;
+    for (const fvg of fvgs) {
+      if (fvg.candleIndices) {
+        const fvgIdx = fvg.candleIndices[1]; // middle candle of FVG
+        if (Math.abs(fvgIdx - obIndex) <= 10) {
+          // FVG is near the OB — this is a high-probability zone
+          nearbyFVG = { low: fvg.low, high: fvg.high };
+          break;
+        }
+      }
+    }
+
+    // If FVG found near OB, expand the zone to cover both OB and FVG
+    if (nearbyFVG) {
+      const combinedLow = Math.min(obLow, nearbyFVG.low);
+      const combinedHigh = Math.max(obHigh, nearbyFVG.high);
+      if (ictLog) {
+        logger.info(`[ICT] FVG found near OB! FVG=${nearbyFVG.low.toFixed(5)}-${nearbyFVG.high.toFixed(5)}, OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)} → Combined=${combinedLow.toFixed(5)}-${combinedHigh.toFixed(5)}`);
+      }
+      obLow = combinedLow;
+      obHigh = combinedHigh;
+    } else if (ictLog) {
+      logger.info(`[ICT] No FVG near OB (${fvgs.length} total FVGs detected)`);
     }
 
     // 4. Check OB invalidation (PineScript: close < bottom invalidates bullish OB)
