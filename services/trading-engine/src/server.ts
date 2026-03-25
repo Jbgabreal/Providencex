@@ -258,7 +258,7 @@ const historicalBackfillService = new HistoricalBackfillService({
 
 // Services (v2 - updated to use real market data)
 // Pass candleStore to MarketDataService so it uses real candles instead of mocks
-const marketDataService = new MarketDataService(candleStore);
+const marketDataService = new MarketDataService(candleStore, derivCandleProvider);
 const strategyService = new StrategyService(marketDataService);
 const guardrailService = new GuardrailService();
 const riskService = new RiskService();

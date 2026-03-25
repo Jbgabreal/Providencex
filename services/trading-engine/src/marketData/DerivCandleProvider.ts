@@ -63,6 +63,10 @@ export class DerivCandleProvider extends EventEmitter {
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private backfillComplete = new Set<string>();
 
+  // Direct H4 and M15 candle caches (real Deriv data, not expanded/re-aggregated)
+  private h4Candles: Map<string, Candle[]> = new Map();
+  private m15Candles: Map<string, Candle[]> = new Map();
+
   constructor(config: DerivCandleProviderConfig) {
     super();
     this.config = config;
@@ -122,6 +126,22 @@ export class DerivCandleProvider extends EventEmitter {
    */
   getLatestTick(symbol: string): Tick | undefined {
     return this.latestTicks.get(symbol.toUpperCase());
+  }
+
+  /**
+   * Get real H4 candles directly from Deriv (not re-aggregated from M1).
+   */
+  getH4Candles(symbol: string, limit: number = 50): Candle[] {
+    const candles = this.h4Candles.get(symbol.toUpperCase()) || [];
+    return candles.slice(-limit);
+  }
+
+  /**
+   * Get real M15 candles directly from Deriv (not re-aggregated from M1).
+   */
+  getM15Candles(symbol: string, limit: number = 200): Candle[] {
+    const candles = this.m15Candles.get(symbol.toUpperCase()) || [];
+    return candles.slice(-limit);
   }
 
   /**
@@ -316,7 +336,7 @@ export class DerivCandleProvider extends EventEmitter {
     let inserted = 0;
 
     if (granularity === 60) {
-      // M1 candles — insert directly
+      // M1 candles — insert directly into CandleStore
       for (const c of candles) {
         const startTime = new Date(c.epoch * 1000);
         const endTime = new Date(startTime.getTime() + 60000);
@@ -328,48 +348,24 @@ export class DerivCandleProvider extends EventEmitter {
         inserted++;
       }
     } else {
-      // H4 or M15 candles — expand each into M1-spaced candles
-      // Each higher-TF candle becomes multiple M1 candles spread across its duration
-      // so MarketDataService can re-aggregate them correctly
-      const minutesPerCandle = granularity / 60; // H4=240, M15=15
+      // H4 or M15 candles — store directly in dedicated caches (no M1 expansion)
+      const cache = granularity === 14400 ? this.h4Candles : this.m15Candles;
+      const existing = cache.get(stdSymbol) || [];
 
       for (const c of candles) {
-        const candleStartEpoch = c.epoch * 1000;
-        const open = Number(c.open);
-        const high = Number(c.high);
-        const low = Number(c.low);
-        const close = Number(c.close);
-
-        // Create M1 candles that reconstruct the OHLC pattern:
-        // First minute: open price, Last minute: close price, Middle: interpolated
-        for (let m = 0; m < minutesPerCandle; m++) {
-          const minuteStart = new Date(candleStartEpoch + m * 60000);
-          const minuteEnd = new Date(minuteStart.getTime() + 60000);
-
-          // Spread OHLC across the period: first=open, middle=high/low, last=close
-          let price: number;
-          if (m === 0) {
-            price = open;
-          } else if (m === Math.floor(minutesPerCandle / 3)) {
-            price = high;
-          } else if (m === Math.floor(2 * minutesPerCandle / 3)) {
-            price = low;
-          } else if (m === minutesPerCandle - 1) {
-            price = close;
-          } else {
-            // Linear interpolation from open to close
-            const t = m / (minutesPerCandle - 1);
-            price = open + (close - open) * t;
-          }
-
-          this.config.candleStore.addCandle({
-            symbol: stdSymbol, timeframe: 'M1',
-            open: price, high: Math.max(price, price), low: Math.min(price, price), close: price,
-            volume: 1, startTime: minuteStart, endTime: minuteEnd,
-          });
-          inserted++;
-        }
+        const startTime = new Date(c.epoch * 1000);
+        const endTime = new Date(startTime.getTime() + granularity * 1000);
+        existing.push({
+          symbol: stdSymbol, timeframe: 'M1', // type field is 'M1' for interface compat
+          open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close),
+          volume: Number(c.volume || 1), startTime, endTime,
+        });
+        inserted++;
       }
+
+      // Sort by time and deduplicate
+      existing.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+      cache.set(stdSymbol, existing);
     }
 
     this.backfillComplete.add(stdSymbol);

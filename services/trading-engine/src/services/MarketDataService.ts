@@ -2,24 +2,36 @@ import { Logger } from '@providencex/shared-utils';
 import { Candle, Timeframe } from '../types';
 import { CandleStore } from '../marketData/CandleStore';
 import { Candle as MarketDataCandle } from '../marketData/types';
+import { DerivCandleProvider } from '../marketData/DerivCandleProvider';
 import { aggregateM1Candles } from './CandleAggregator';
 
 const logger = new Logger('MarketDataService');
 
 /**
  * MarketDataService - Provides OHLC candle data with multi-timeframe aggregation
- * Aggregates M1 candles from CandleStore into M5, M15, H1, H4 timeframes
+ * Uses real H4/M15 candles from Deriv when available, falls back to M1 aggregation.
  */
 export class MarketDataService {
-  private candleStore?: CandleStore; // CandleStore containing M1 candles
+  private candleStore?: CandleStore;
+  private derivProvider?: DerivCandleProvider;
 
-  constructor(candleStore?: CandleStore) {
+  constructor(candleStore?: CandleStore, derivProvider?: DerivCandleProvider) {
     this.candleStore = candleStore;
+    this.derivProvider = derivProvider;
     if (candleStore) {
       logger.info('MarketDataService initialized with CandleStore - using real M1 candles');
-    } else {
-      logger.warn('MarketDataService initialized without CandleStore - candle data unavailable');
     }
+    if (derivProvider) {
+      logger.info('MarketDataService initialized with DerivCandleProvider - using real H4/M15 candles');
+    }
+    if (!candleStore && !derivProvider) {
+      logger.warn('MarketDataService initialized without data sources - candle data unavailable');
+    }
+  }
+
+  /** Set DerivCandleProvider after construction (for late binding). */
+  setDerivProvider(provider: DerivCandleProvider): void {
+    this.derivProvider = provider;
   }
 
   /**
@@ -31,17 +43,33 @@ export class MarketDataService {
     timeframe: Timeframe,
     limit: number = 100
   ): Promise<Candle[]> {
+    // Use real H4/M15 candles from Deriv when available (not re-aggregated from M1)
+    if (this.derivProvider) {
+      if (timeframe === 'H4') {
+        const h4 = this.derivProvider.getH4Candles(symbol, limit);
+        if (h4.length > 0) {
+          logger.info(`[MarketDataService] ${symbol}: Using ${h4.length} real H4 candles from Deriv (requested ${limit})`);
+          return h4 as any; // Candle type compatible
+        }
+      }
+      if (timeframe === 'M15') {
+        const m15 = this.derivProvider.getM15Candles(symbol, limit);
+        if (m15.length > 0) {
+          logger.info(`[MarketDataService] ${symbol}: Using ${m15.length} real M15 candles from Deriv (requested ${limit})`);
+          return m15 as any;
+        }
+      }
+    }
+
     if (!this.candleStore) {
       logger.warn(`[MarketDataService] CandleStore not available - returning empty array for ${symbol} ${timeframe}`);
       return [];
     }
 
-    // Get M1 candles from CandleStore
-    // Calculate how many M1 candles we need based on target timeframe
-    // v15d: For H4, always fetch enough M1 candles to produce at least 50 H4 candles (for swing detection)
+    // Fallback: Aggregate M1 candles from CandleStore
     let candlesPerBucket: number;
     let maxM1CandlesNeeded: number;
-    
+
     if (timeframe === 'H4') {
       // For H4, ensure we have enough for swing detection (50 H4 candles = 12,000 M1 candles)
       // 1 H4 = 240 M1 candles, so 50 H4 = 12,000 M1 candles
