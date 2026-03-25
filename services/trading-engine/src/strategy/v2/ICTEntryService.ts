@@ -193,54 +193,42 @@ export class ICTEntryService {
    *   Stage 4: Classify HH/HL/LH/LL → bullish/bearish/neutral
    */
   private determineH4Bias(h4Candles: Candle[]): ICTBias {
-    const ictLog = true; // Always log for debugging
+    const ictLog = true;
 
-    // Log candle data verification
-    logger.info(`[H4-BIAS] Entry: ${h4Candles.length} candles, first.high=${h4Candles[0]?.high}, first.startTime=${h4Candles[0]?.startTime}, type=${typeof h4Candles[0]?.high}`);
+    logger.info(`[H4-BIAS] Entry: ${h4Candles.length} candles, first.high=${h4Candles[0]?.high}, first.startTime=${h4Candles[0]?.startTime}`);
 
     if (h4Candles.length < 5) {
       logger.info(`[H4-BIAS] Insufficient candles: ${h4Candles.length} (need ≥5)`);
       return { direction: 'sideways' };
     }
 
-    // ── Stage 1: Raw pivot detection ──
-    const rawPivots = this.detectRawPivots(h4Candles, 2);
+    // ── Stage 1: LuxAlgo swing detection (same algorithm as M15) ──
+    // Use len=5 for H4 (since we typically have 30-50 candles)
+    const h4SwingService = new SwingService({ method: 'luxalgo', pivotLeft: 5 });
+    const swings = h4SwingService.detectSwings(h4Candles);
+
+    const highs = swings.filter(s => s.type === 'high');
+    const lows = swings.filter(s => s.type === 'low');
+
     if (ictLog) {
-      logger.info(`[H4-BIAS] Stage 1 — Raw pivots: ${rawPivots.length} (from ${h4Candles.length} candles)`);
-      for (const p of rawPivots) {
-        logger.info(`  [RAW] idx=${p.index} ${p.type} ${p.price.toFixed(2)}`);
+      logger.info(`[H4-BIAS] LuxAlgo swings: ${swings.length} total (${highs.length} highs, ${lows.length} lows)`);
+      for (const s of swings) {
+        logger.info(`  [SWING] idx=${s.index} ${s.type} ${s.price.toFixed(2)}`);
       }
     }
 
-    // ── Stage 2: Compress same-side pivots ──
-    const compressed = this.compressSameSidePivots(rawPivots);
+    // ── Stage 2: Classify structure (HH/HL/LH/LL) ──
+    const result = this.classifyExternalStructure(swings, ictLog);
     if (ictLog) {
-      logger.info(`[H4-BIAS] Stage 2 — Compressed: ${compressed.length} (was ${rawPivots.length})`);
-      for (const p of compressed) {
-        logger.info(`  [COMPRESSED] idx=${p.index} ${p.type} ${p.price.toFixed(2)}`);
-      }
+      logger.info(`[H4-BIAS] Structure bias: ${result.direction}`);
     }
 
-    // ── Stage 3: Skip ATR filter for now — use all compressed pivots ──
-    // (ATR filter was removing valid swings; will revisit after bias is working)
-    const meaningful = compressed;
-    if (ictLog) {
-      logger.info(`[H4-BIAS] Stage 3 — SKIPPED ATR filter, using all ${meaningful.length} compressed swings`);
-    }
-
-    // ── Stage 4: Classify external structure ──
-    const result = this.classifyExternalStructure(meaningful, ictLog);
-    if (ictLog) {
-      logger.info(`[H4-BIAS] Stage 4 — Swing-structure bias: ${result.direction}`);
-    }
-
-    // ── Stage 5: Displacement fallback if still sideways ──
-    // Use simple close-vs-open analysis across last N candles
+    // ── Stage 3: Displacement fallback if still sideways ──
     if (result.direction === 'sideways') {
       const fallback = this.displacementFallback(h4Candles, ictLog);
       if (fallback.direction !== 'sideways') {
         if (ictLog) {
-          logger.info(`[H4-BIAS] Stage 5 — Displacement fallback: ${fallback.direction}`);
+          logger.info(`[H4-BIAS] Displacement fallback: ${fallback.direction}`);
         }
         return fallback;
       }
