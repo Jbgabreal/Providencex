@@ -74,16 +74,11 @@ export interface ICTEntryResult {
 }
 
 export class ICTEntryService {
-  private h4StructuralService: StructuralSwingService;
-  private m15SwingService: SwingService;
-  private m15BosService: BosService;
-  private m1SwingService: SwingService;
+  private h4StructuralService: StructuralSwingService; // 3-impulse rule for H4 external structure
+  private m15SwingService: SwingService;   // BOS-confirmed swings for M15 structural range
+  private m15BosService: BosService;       // BOS detection on M15
+  private m1SwingService: SwingService;    // Fractal swings for M1 liquidity sweep detection
   private riskRewardRatio: number;
-
-  // Track broken OBs per symbol — once price closes beyond an OB, it's invalidated forever
-  // Key = "symbol:obLow:obHigh", cleared when new MSB forms (new structure)
-  private brokenOBs: Map<string, Set<string>> = new Map();
-  private lastMSBKey: Map<string, string> = new Map(); // Track when MSB changes
 
   constructor() {
     // H4: Structural swings using 3-consecutive-candle impulse rule for external structure
@@ -115,36 +110,13 @@ export class ICTEntryService {
     this.riskRewardRatio = parseFloat(process.env.SMC_RISK_REWARD || '3');
   }
 
-  /** Mark an OB as broken for a symbol — will not be re-entered */
-  private markOBBroken(symbol: string, obLow: number, obHigh: number): void {
-    const key = `${obLow.toFixed(2)}:${obHigh.toFixed(2)}`;
-    if (!this.brokenOBs.has(symbol)) this.brokenOBs.set(symbol, new Set());
-    this.brokenOBs.get(symbol)!.add(key);
-  }
-
-  /** Check if an OB has been broken before */
-  private isOBBroken(symbol: string, obLow: number, obHigh: number): boolean {
-    const key = `${obLow.toFixed(2)}:${obHigh.toFixed(2)}`;
-    return this.brokenOBs.get(symbol)?.has(key) ?? false;
-  }
-
-  /** Clear broken OBs when new MSB forms (new structure = fresh OBs) */
-  private checkMSBChange(symbol: string, msbKey: string): void {
-    const prevKey = this.lastMSBKey.get(symbol);
-    if (prevKey !== msbKey) {
-      this.brokenOBs.delete(symbol);
-      this.lastMSBKey.set(symbol, msbKey);
-    }
-  }
-
   /**
    * Main ICT entry pipeline
    */
   analyzeICTEntry(
     h4Candles: Candle[],
     m15Candles: Candle[],
-    m1Candles: Candle[],
-    symbol: string = 'UNKNOWN'
+    m1Candles: Candle[]
   ): ICTEntryResult {
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
@@ -180,7 +152,7 @@ export class ICTEntryService {
     // ═══════════════════════════════════════════════════════
     // STEP 2: M15 Setup — BOS in bias direction + OTE retracement
     // ═══════════════════════════════════════════════════════
-    const setupZone = this.detectM15Setup(m15Candles, bias, symbol);
+    const setupZone = this.detectM15Setup(m15Candles, bias);
     if (ictLog && setupZone.isValid) {
       logger.info(`[ICT] M15 OTE zone: ${setupZone.zoneLow.toFixed(2)}-${setupZone.zoneHigh.toFixed(2)}`);
     }
@@ -602,7 +574,7 @@ export class ICTEntryService {
    *   - OTE zone = swingLow + range * 0.60 to swingLow + range * 0.78
    *     (which is 60% to 78% retracement from the low)
    */
-  private detectM15Setup(m15Candles: Candle[], bias: ICTBias, symbol: string = 'UNKNOWN'): ICTSetupZone {
+  private detectM15Setup(m15Candles: Candle[], bias: ICTBias): ICTSetupZone {
     const reasons: string[] = [];
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
@@ -633,95 +605,93 @@ export class ICTEntryService {
       return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
-    // 2. Detect BOS/CHoCH/MSB using CANDLE BODY CLOSE confirmation
-    //
-    // Research-based rules (pinescriptmarket.com, dailypriceaction.com, opofinance.com):
-    //
-    // BOS (trend continuation): candle BODY CLOSES beyond the swing in trend direction
-    //   - Bullish BOS: candle close > previous swing high (HH confirmed)
-    //   - Bearish BOS: candle close < previous swing low (LL confirmed)
-    //   - Wicks DON'T count — must be a body close
-    //
-    // CHoCH (trend reversal): candle BODY CLOSES beyond the swing AGAINST trend
-    //   - Bullish CHoCH: close > previous lower high (LH broken)
-    //   - Bearish CHoCH: close < previous higher low (HL broken)
-    //
-    // MSB = CHoCH + displacement (strong impulse candle with large body)
-    //
+    // 2. Detect Market Structure Break (MSB) with fib_factor confirmation
+    // Matches PineScript: h0 > h1 + abs(h1 - l0) * fib_factor
+    // The break must extend beyond the prior swing by a fib factor (33%) to confirm
+    const FIB_FACTOR = 0.33;
     const lastSH = swingHighs[swingHighs.length - 1];
     const prevSH = swingHighs[swingHighs.length - 2];
     const lastSL = swingLows[swingLows.length - 1];
     const prevSL = swingLows[swingLows.length - 2];
 
-    // Scan candles AFTER the swing to find one that BODY CLOSES beyond the level
-    // This is the "break" candle — the one that confirms the structure break
-    let bosBreakIndex = -1;
-    let bosBreakCandle: Candle | null = null;
-    let bosType: 'BOS' | 'CHoCH' | 'MSB' = 'BOS';
+    // Bullish MSB: new high > prev high + fib_factor * abs(prev_high - current_low)
+    const bullishRange = Math.abs(prevSH.price - lastSL.price);
+    const bullishMSB = lastSH.price > prevSH.price + bullishRange * FIB_FACTOR;
 
-    if (bias.direction === 'bullish') {
-      // Look for candle that CLOSES above the previous swing high (prevSH)
-      const searchFrom = Math.max(prevSH.index + 1, 0);
-      for (let i = searchFrom; i < m15Candles.length; i++) {
-        const c = m15Candles[i];
-        if (c.close > prevSH.price) {
-          bosBreakIndex = i;
-          bosBreakCandle = c;
-          break;
+    // Bearish MSB: new low < prev low - fib_factor * abs(current_high - prev_low)
+    const bearishRange = Math.abs(lastSH.price - prevSL.price);
+    const bearishMSB = lastSL.price < prevSL.price - bearishRange * FIB_FACTOR;
+
+    // Also accept simple HH/HL or LH/LL without fib confirmation as a weaker signal
+    const simpleBullishMSB = lastSH.price > prevSH.price;
+    const simpleBearishMSB = lastSL.price < prevSL.price;
+
+    const hasMSB = (bias.direction === 'bullish' && (bullishMSB || simpleBullishMSB)) ||
+                   (bias.direction === 'bearish' && (bearishMSB || simpleBearishMSB));
+
+    if (!hasMSB) {
+      // No MSB matching H4 bias — but still look for OB at the recent swing extreme
+      // If H4=bullish and M15 made LL, the LL area could be the reversal OB (smart money accumulation)
+      // If H4=bearish and M15 made HH, the HH area could be the reversal OB (smart money distribution)
+      if (ictLog) logger.info(`[ICT] No M15 ${bias.direction} MSB — HH=${simpleBullishMSB}, LL=${simpleBearishMSB}. Trying reversal OB...`);
+
+      // Look for OB at the most recent swing that opposes the H4 bias (potential reversal zone)
+      let revObHigh = 0, revObLow = 0, revObIndex = -1, revObFound = false;
+      if (bias.direction === 'bullish' && swingLows.length > 0) {
+        // Bullish H4 + M15 pullback: OB near the latest swing low
+        const sl = swingLows[swingLows.length - 1];
+        const scanStart = Math.min(sl.index + 5, m15Candles.length - 1);
+        const scanEnd = Math.max(sl.index - 5, 0);
+        for (let i = scanStart; i >= scanEnd; i--) {
+          const c = m15Candles[i];
+          if (c.open > c.close) { revObHigh = c.high; revObLow = c.low; revObIndex = i; revObFound = true; break; }
+        }
+      } else if (bias.direction === 'bearish' && swingHighs.length > 0) {
+        const sh = swingHighs[swingHighs.length - 1];
+        const scanStart = Math.min(sh.index + 5, m15Candles.length - 1);
+        const scanEnd = Math.max(sh.index - 5, 0);
+        for (let i = scanStart; i >= scanEnd; i--) {
+          const c = m15Candles[i];
+          if (c.close > c.open) { revObHigh = c.high; revObLow = c.low; revObIndex = i; revObFound = true; break; }
         }
       }
-    } else {
-      // Look for candle that CLOSES below the previous swing low (prevSL)
-      const searchFrom = Math.max(prevSL.index + 1, 0);
-      for (let i = searchFrom; i < m15Candles.length; i++) {
-        const c = m15Candles[i];
-        if (c.close < prevSL.price) {
-          bosBreakIndex = i;
-          bosBreakCandle = c;
-          break;
-        }
-      }
-    }
 
-    if (!bosBreakCandle || bosBreakIndex === -1) {
-      if (ictLog) logger.info(`[ICT] No candle BODY CLOSE beyond swing level — no BOS/MSB`);
-      reasons.push(`No candle body close beyond M15 swing (need close ${bias.direction === 'bullish' ? '>' : '<'} ${bias.direction === 'bullish' ? prevSH.price.toFixed(5) : prevSL.price.toFixed(5)})`);
+      if (revObFound) {
+        const currentPrice = m15Candles[m15Candles.length - 1].close;
+        const tpTarget = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
+        const revObRange = revObHigh - revObLow;
+        const revObBuffer = revObRange * 0.5;
+
+        // Check if price is at or near the reversal OB — if so, it's a valid setup
+        const priceNearRevOB = bias.direction === 'bullish'
+          ? (currentPrice <= revObHigh + revObBuffer && currentPrice >= revObLow - revObBuffer)
+          : (currentPrice >= revObLow - revObBuffer && currentPrice <= revObHigh + revObBuffer);
+
+        if (ictLog) logger.info(`[ICT] Reversal OB: ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)} (idx=${revObIndex}), price=${currentPrice.toFixed(5)}, near=${priceNearRevOB}`);
+
+        if (priceNearRevOB) {
+          // Price IS at the reversal OB — treat as valid setup (M15 retracement = buy/sell zone)
+          reasons.push(`M15 retracement OB (${bias.direction === 'bullish' ? 'BUY' : 'SELL'} zone) at ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)}`);
+          return { isValid: true, direction: bias.direction, hasDisplacement: true, hasFVG: false, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
+        }
+
+        // Price not at OB yet — show as POI (watching)
+        reasons.push(`Reversal OB at ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)} — waiting for price`);
+        return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: false, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
+      }
+
+      reasons.push(`No M15 MSB in ${bias.direction} direction (HH=${simpleBullishMSB}, LL=${simpleBearishMSB})`);
       return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
-    // Classify the break: is it displacement (MSB) or just a close (BOS)?
-    // Displacement = break candle body is larger than average body (strong impulse)
-    let avgBody = 0;
-    const bodyLookback = Math.min(20, m15Candles.length);
-    for (let i = m15Candles.length - bodyLookback; i < m15Candles.length; i++) {
-      avgBody += Math.abs(m15Candles[i].close - m15Candles[i].open);
-    }
-    avgBody /= bodyLookback;
-
-    const breakBody = Math.abs(bosBreakCandle.close - bosBreakCandle.open);
-    const isDisplacement = breakBody > avgBody * 1.5; // 1.5x average = displacement
-
-    // MSB requires displacement — otherwise it's just a BOS
-    if (isDisplacement) {
-      bosType = 'MSB';
-    }
-
-    if (!isDisplacement) {
-      if (ictLog) logger.info(`[ICT] BOS confirmed but no displacement (body=${breakBody.toFixed(5)} vs avg=${avgBody.toFixed(5)}) — need MSB`);
-      reasons.push(`BOS without displacement (body=${breakBody.toFixed(2)}, need >${(avgBody*1.5).toFixed(2)})`);
-      return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
-    }
-
-    // Track MSB changes — new MSB means new structure, clear broken OBs
-    const msbKey = `${bias.direction}:${prevSH.price.toFixed(2)}:${prevSL.price.toFixed(2)}:${bosBreakIndex}`;
-    this.checkMSBChange(symbol, msbKey);
-
-    // Log the confirmed MSB
+    // Log the full swing structure for visibility
     if (ictLog) {
+      const msbType = (bias.direction === 'bullish' && bullishMSB) || (bias.direction === 'bearish' && bearishMSB) ? 'STRONG' : 'SIMPLE';
       logger.info(`[ICT] ═══ M15 SETUP ANALYSIS ═══`);
       logger.info(`[ICT] Swings: ${swingHighs.length}H ${swingLows.length}L — ${allSwings.map(s => `${s.type === 'high' ? 'H' : 'L'}(${s.price.toFixed(5)}@${s.index})`).join(' → ')}`);
-      logger.info(`[ICT] ${bosType}: ${bias.direction} — candle at idx ${bosBreakIndex} CLOSED ${bias.direction === 'bullish' ? 'above' : 'below'} ${bias.direction === 'bullish' ? prevSH.price.toFixed(5) : prevSL.price.toFixed(5)}`);
-      logger.info(`[ICT] Displacement: body=${breakBody.toFixed(5)} vs avg=${avgBody.toFixed(5)} (${(breakBody/avgBody).toFixed(1)}x) ✅`);
+      logger.info(`[ICT] MSB: ${bias.direction} ${msbType} — ${bias.direction === 'bullish'
+        ? `prevHigh=${prevSH.price.toFixed(5)} → newHigh=${lastSH.price.toFixed(5)} (HH)`
+        : `prevLow=${prevSL.price.toFixed(5)} → newLow=${lastSL.price.toFixed(5)} (LL)`}`);
     }
 
     // 3. Find Order Block — matching PineScript MSB-OB exactly
@@ -773,13 +743,6 @@ export class ICTEntryService {
       return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
-    // Check if this OB was previously broken — don't re-enter a failed zone
-    if (this.isOBBroken(symbol, obLow, obHigh)) {
-      if (ictLog) logger.info(`[ICT] OB ${obLow.toFixed(5)}-${obHigh.toFixed(5)} already broken — skipping (wait for new MSB)`);
-      reasons.push(`OB ${obLow.toFixed(2)}-${obHigh.toFixed(2)} already broken — need new MSB`);
-      return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: false, zoneLow: obLow, zoneHigh: obHigh, reasons };
-    }
-
     // 3b. Detect FVG created by the impulse FROM the OB
     // The valid FVG is in the candles AFTER the OB — the displacement that followed
     // Check by PRICE LEVEL proximity (not just candle index)
@@ -828,17 +791,14 @@ export class ICTEntryService {
     }
 
     // 4. Check OB invalidation (PineScript: close < bottom invalidates bullish OB)
-    // Once broken, mark it so we NEVER re-enter this OB
     const currentPrice = m15Candles[m15Candles.length - 1].close;
     if (bias.direction === 'bullish' && currentPrice < obLow) {
-      this.markOBBroken(symbol, obLow, obHigh); // Mark as broken forever
-      if (ictLog) logger.info(`[ICT] Bu-OB INVALIDATED + MARKED — price ${currentPrice.toFixed(5)} closed below OB ${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
+      if (ictLog) logger.info(`[ICT] Bu-OB INVALIDATED — price ${currentPrice.toFixed(5)} closed below OB low ${obLow.toFixed(5)}`);
       reasons.push(`Bu-OB broken: price=${currentPrice.toFixed(5)} < OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
       return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: !!nearbyFVG, zoneLow: obLow, zoneHigh: obHigh, reasons };
     }
     if (bias.direction === 'bearish' && currentPrice > obHigh) {
-      this.markOBBroken(symbol, obLow, obHigh); // Mark as broken forever
-      if (ictLog) logger.info(`[ICT] Be-OB INVALIDATED + MARKED — price ${currentPrice.toFixed(5)} closed above OB ${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
+      if (ictLog) logger.info(`[ICT] Be-OB INVALIDATED — price ${currentPrice.toFixed(5)} closed above OB high ${obHigh.toFixed(5)}`);
       reasons.push(`Be-OB broken: price=${currentPrice.toFixed(5)} > OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
       return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: !!nearbyFVG, zoneLow: obLow, zoneHigh: obHigh, reasons };
     }
@@ -906,23 +866,13 @@ export class ICTEntryService {
     const tpTarget = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
 
     const hasFVGConfluence = !!nearbyFVG;
-
-    // FVG is preferred but not strictly required
-    // MSB (with candle close + displacement) already confirms smart money
-    // FVG adds extra confluence — log it for quality tracking
-    if (hasFVGConfluence) {
-      if (ictLog) logger.info(`[ICT] ✅ MSB + OB + FVG — highest probability setup`);
-    } else {
-      if (ictLog) logger.info(`[ICT] ⚠️ MSB + OB (no FVG) — valid but lower probability`);
-    }
-
-    reasons.push(`M15 ${bosType} + OB${hasFVGConfluence ? ' + FVG ✅' : ''} — price in ${inOB ? 'Order Block' : 'equilibrium'} zone, TP=${tpTarget.toFixed(5)}`);
+    reasons.push(`M15 MSB confirmed + price in ${inOB ? 'Order Block' : 'equilibrium'} zone${hasFVGConfluence ? ' +FVG' : ''}, TP=${tpTarget.toFixed(5)}`);
 
     return {
       isValid: true,
       direction: bias.direction,
       hasDisplacement: true,
-      hasFVG: true,
+      hasFVG: hasFVGConfluence,
       displacementCandleIndex: obIndex,
       zoneLow: obLow,
       zoneHigh: obHigh,
