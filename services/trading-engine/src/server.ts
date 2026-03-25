@@ -12,6 +12,7 @@ import {
   CandleBuilder,
   CandleStore,
 } from './marketData';
+import { DerivCandleProvider } from './marketData/DerivCandleProvider';
 import {
   Strategy,
   RiskContext,
@@ -189,22 +190,27 @@ const marketDataConfig = getMarketDataConfig();
 const candleStore = new CandleStore(marketDataConfig.maxCandlesPerSymbol);
 const candleBuilder = new CandleBuilder(candleStore);
 
-const priceFeed = new PriceFeedClient({
-  mt5ConnectorUrl: adminMt5Url, // Use admin MT5 URL for price feeds (analysis)
-  pollIntervalSeconds: marketDataConfig.feedIntervalSec,
+// Use Deriv WebSocket for market data (free, no rate limits, no ngrok dependency)
+const derivCandleProvider = new DerivCandleProvider({
   symbols: marketDataConfig.symbols,
+  candleStore,
 });
 
-// Wire tick stream to candle builder
-priceFeed.on('tick', (tick) => {
+// Alias for compatibility — rest of codebase references 'priceFeed'
+const priceFeed = derivCandleProvider as any;
+
+// Wire live tick stream to candle builder
+derivCandleProvider.on('tick', (tick) => {
   candleBuilder.processTick(tick);
 });
 
-// Start price feed
-priceFeed.start();
+// Start Deriv candle provider (connects, backfills history, subscribes to live)
+derivCandleProvider.start().catch((err) => {
+  logger.error('[DerivCandleProvider] Failed to start', err);
+});
 logger.info(
-  `Market data layer started. Tracking symbols: ${marketDataConfig.symbols.join(', ')} ` +
-  `(poll interval: ${marketDataConfig.feedIntervalSec}s, max candles: ${marketDataConfig.maxCandlesPerSymbol} per symbol)`
+  `Market data layer started (Deriv WebSocket). Tracking symbols: ${marketDataConfig.symbols.join(', ')} ` +
+  `(max candles: ${marketDataConfig.maxCandlesPerSymbol} per symbol)`
 );
 
 // v14 Order Flow Service (lazy init to avoid circular dependency in production builds)
@@ -1172,19 +1178,10 @@ async function start(): Promise<void> {
       logger.info(`Tick interval: ${config.tickIntervalSeconds} seconds`);
       logger.info(`SMC timeframes: HTF=${config.smcTimeframes.htf}, LTF=${config.smcTimeframes.ltf}`);
 
-      // Run historical backfill (non-blocking, but wait for it before starting tick loop)
-      logger.info('[HistoricalBackfill] Starting historical backfill...');
-      historicalBackfillService
-        .backfillAll()
-        .then(() => {
-          logger.info('[HistoricalBackfill] Historical backfill completed');
-        })
-        .catch((error) => {
-          logger.error('[HistoricalBackfill] Backfill failed', { error });
-          // Continue anyway - engine can run with partial history
-        })
-        .finally(() => {
-          // Start tick loop after backfill completes (or fails)
+      // Historical backfill now handled by DerivCandleProvider on WebSocket connect.
+      // Start tick loop after a short delay to allow Deriv backfill to complete.
+      logger.info('[DerivCandleProvider] Waiting 10s for Deriv historical backfill before starting tick loop...');
+      setTimeout(() => {
           logger.info('Starting tick loop...');
           setInterval(() => {
             tickLoop().catch((error) => {
@@ -1198,7 +1195,7 @@ async function start(): Promise<void> {
               logger.error('Error in initial tick', error);
             });
           }, 5000); // Wait 5 seconds for services to be ready
-        });
+      }, 10000); // 10s delay for Deriv backfill
 
       // Start v4 Open Trades Service
       openTradesService.start();
@@ -1226,7 +1223,7 @@ async function start(): Promise<void> {
         // Graceful shutdown handlers
         const shutdown = async (signal: string) => {
           logger.info(`${signal} received, shutting down gracefully...`);
-          priceFeed.stop();
+          derivCandleProvider.stop();
           if (orderFlowService?.isServiceRunning()) {
             orderFlowService.stop();
           }
