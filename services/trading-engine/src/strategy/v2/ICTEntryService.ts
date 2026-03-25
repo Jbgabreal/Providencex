@@ -648,8 +648,24 @@ export class ICTEntryService {
       if (revObFound) {
         const currentPrice = m15Candles[m15Candles.length - 1].close;
         const tpTarget = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
-        if (ictLog) logger.info(`[ICT] Reversal OB found: ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)} (idx=${revObIndex})`);
-        reasons.push(`No MSB but reversal OB at ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)}`);
+        const revObRange = revObHigh - revObLow;
+        const revObBuffer = revObRange * 0.5;
+
+        // Check if price is at or near the reversal OB — if so, it's a valid setup
+        const priceNearRevOB = bias.direction === 'bullish'
+          ? (currentPrice <= revObHigh + revObBuffer && currentPrice >= revObLow - revObBuffer)
+          : (currentPrice >= revObLow - revObBuffer && currentPrice <= revObHigh + revObBuffer);
+
+        if (ictLog) logger.info(`[ICT] Reversal OB: ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)} (idx=${revObIndex}), price=${currentPrice.toFixed(5)}, near=${priceNearRevOB}`);
+
+        if (priceNearRevOB) {
+          // Price IS at the reversal OB — treat as valid setup (M15 retracement = buy/sell zone)
+          reasons.push(`M15 retracement OB (${bias.direction === 'bullish' ? 'BUY' : 'SELL'} zone) at ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)}`);
+          return { isValid: true, direction: bias.direction, hasDisplacement: true, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
+        }
+
+        // Price not at OB yet — show as POI (watching)
+        reasons.push(`Reversal OB at ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)} — waiting for price`);
         return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
       }
 
