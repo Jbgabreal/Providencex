@@ -1783,22 +1783,18 @@ export class SMCStrategyV2 {
 
       // Check M15 setup zone
       if (!ictResult.setupZone || !ictResult.setupZone.isValid) {
-        if (ictLog) {
-          logger.info(`[ICT] ${symbol}: No valid M15 setup zone - reasons: ${ictResult.setupZone?.reasons.join(', ') || 'none'}`);
-        }
+        const subReason = ictResult.setupZone?.reasons?.[0] || 'unknown';
         return createRejection(
-          'No valid M15 setup zone',
+          `No valid M15 setup zone [${subReason}]`,
           ictResult.setupZone?.reasons
         );
       }
 
       // Check M1 entry
       if (!ictResult.entry || !ictResult.entry.isValid) {
-        if (ictLog) {
-          logger.info(`[ICT] ${symbol}: No valid M1 entry - reasons: ${ictResult.entry?.reasons.join(', ') || 'none'}`);
-        }
+        const subReason = ictResult.entry?.reasons?.[0] || 'unknown';
         return createRejection(
-          'No valid M1 entry',
+          `No valid M1 entry [${subReason}]`,
           ictResult.entry?.reasons
         );
       }
