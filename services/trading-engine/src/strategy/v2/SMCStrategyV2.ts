@@ -1408,29 +1408,28 @@ export class SMCStrategyV2 {
       }
       
       // Convert from types/index.ts Candle (has timestamp) to marketData/types.ts Candle (has startTime/endTime)
-      return candlesFromService.map((c, index) => {
+      // Handle both formats: strategy Candle (has .timestamp string) and MarketDataCandle (has .startTime Date)
+      return candlesFromService.map((c: any) => {
+        // If candle already has startTime (from Deriv cache), use it directly
+        if (c.startTime instanceof Date && !isNaN(c.startTime.getTime())) {
+          return {
+            symbol, timeframe: 'M1' as const,
+            open: c.open, high: c.high, low: c.low, close: c.close,
+            volume: c.volume || 1, startTime: c.startTime, endTime: c.endTime || c.startTime,
+          };
+        }
+
+        // Otherwise convert from strategy Candle format (has .timestamp string)
         const timestamp = new Date(c.timestamp);
-        // Estimate endTime based on timeframe duration
-        const timeframeMinutes: Record<string, number> = {
-          'M1': 1,
-          'M5': 5,
-          'M15': 15,
-          'H1': 60,
-          'H4': 240,
-        };
+        const timeframeMinutes: Record<string, number> = { 'M1': 1, 'M5': 5, 'M15': 15, 'H1': 60, 'H4': 240 };
         const durationMs = (timeframeMinutes[timeframe] || 5) * 60 * 1000;
-        const endTime = new Date(timestamp.getTime() + durationMs);
-        
+
         return {
-          symbol: symbol,
-          timeframe: 'M1' as const, // MarketDataCandle requires M1, but we use the actual timeframe in logic
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.volume,
+          symbol, timeframe: 'M1' as const,
+          open: c.open, high: c.high, low: c.low, close: c.close,
+          volume: c.volume || 1,
           startTime: timestamp,
-          endTime: endTime,
+          endTime: new Date(timestamp.getTime() + durationMs),
         };
       });
     } catch (error) {
