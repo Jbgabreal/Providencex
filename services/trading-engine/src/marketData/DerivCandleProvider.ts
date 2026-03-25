@@ -19,6 +19,7 @@ const logger = new Logger('DerivCandleProvider');
 
 // Map standard symbols to Deriv symbols
 const SYMBOL_MAP: Record<string, string> = {
+  // Forex
   XAUUSD: 'frxXAUUSD',
   EURUSD: 'frxEURUSD',
   GBPUSD: 'frxGBPUSD',
@@ -29,6 +30,12 @@ const SYMBOL_MAP: Record<string, string> = {
   NZDUSD: 'frxNZDUSD',
   EURJPY: 'frxEURJPY',
   GBPJPY: 'frxGBPJPY',
+  // Metals
+  XAGUSD: 'frxXAGUSD',
+  // Indices
+  US30: 'OTC_DJI',
+  US100: 'OTC_NDX',
+  US500: 'OTC_SPC',
 };
 
 // Reverse map: frxXAUUSD → XAUUSD
