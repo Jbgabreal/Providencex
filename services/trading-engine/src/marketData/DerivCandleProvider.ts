@@ -197,26 +197,32 @@ export class DerivCandleProvider extends EventEmitter {
 
   /**
    * Subscribe to historical + live candles for all supported symbols.
+   * Staggers requests with a 2s delay between each to avoid Deriv dropping responses.
    */
   private subscribeAll(): void {
-    for (const symbol of this.supportedSymbols) {
+    this.supportedSymbols.forEach((symbol, index) => {
       const derivSymbol = SYMBOL_MAP[symbol];
-      if (!derivSymbol) continue;
+      if (!derivSymbol) return;
 
-      const reqId = this.reqIdCounter++;
-      const request = {
-        ticks_history: derivSymbol,
-        style: 'candles',
-        granularity: 60, // M1
-        count: 5000,
-        end: 'latest',
-        subscribe: 1,
-        req_id: reqId,
-      };
+      // Stagger requests: 0s, 2s, 4s, 6s...
+      setTimeout(() => {
+        if (!this.ws || this.ws.readyState !== 1) return; // WebSocket.OPEN = 1
 
-      logger.info(`[DerivCandleProvider] Requesting history + subscription for ${symbol} (${derivSymbol})`);
-      this.ws?.send(JSON.stringify(request));
-    }
+        const reqId = this.reqIdCounter++;
+        const request = {
+          ticks_history: derivSymbol,
+          style: 'candles',
+          granularity: 60, // M1
+          count: 5000,
+          end: 'latest',
+          subscribe: 1,
+          req_id: reqId,
+        };
+
+        logger.info(`[DerivCandleProvider] Requesting history + subscription for ${symbol} (${derivSymbol}) [${index + 1}/${this.supportedSymbols.length}]`);
+        this.ws!.send(JSON.stringify(request));
+      }, index * 2000);
+    });
   }
 
   /**
@@ -228,7 +234,8 @@ export class DerivCandleProvider extends EventEmitter {
 
     // Error handling
     if (msg.error) {
-      logger.error(`[DerivCandleProvider] API error: ${msg.error.message} (code: ${msg.error.code})`);
+      const symbol = msg.echo_req?.ticks_history || 'unknown';
+      logger.error(`[DerivCandleProvider] API error for ${symbol}: ${msg.error.message} (code: ${msg.error.code})`);
       return;
     }
 
@@ -240,6 +247,11 @@ export class DerivCandleProvider extends EventEmitter {
     // Live OHLC update (streaming subscription)
     if (msg.msg_type === 'ohlc' && msg.ohlc) {
       this.handleLiveOhlc(msg.ohlc);
+    }
+
+    // Tick history response (may come as 'history' msg_type for non-candle styles)
+    if (msg.msg_type === 'history') {
+      logger.warn(`[DerivCandleProvider] Got 'history' instead of 'candles' — check request style param`);
     }
   }
 
