@@ -146,10 +146,7 @@ export class ICTEntryService {
       return { bias, setupZone: null, entry: null, setupsDetected: 0, entriesTaken: 0 };
     }
 
-    // Block entries outside kill zones (but bias was still computed above)
-    if (outsideKillZone) {
-      return { bias, setupZone: null, entry: null, setupsDetected: 0, entriesTaken: 0 };
-    }
+    // Outside kill zone: still compute M15 setup (for POI tracking) but block M1 entry
 
     // ═══════════════════════════════════════════════════════
     // STEP 2: M15 Setup — BOS in bias direction + OTE retracement
@@ -161,6 +158,11 @@ export class ICTEntryService {
 
     if (!setupZone.isValid) {
       return { bias, setupZone, entry: null, setupsDetected: 0, entriesTaken: 0 };
+    }
+
+    // Block M1 entry outside kill zones (M15 setup was still computed for POI tracking)
+    if (outsideKillZone) {
+      return { bias, setupZone, entry: null, setupsDetected: 1, entriesTaken: 0 };
     }
 
     // ═══════════════════════════════════════════════════════

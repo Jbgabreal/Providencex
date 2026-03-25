@@ -1777,10 +1777,12 @@ export class SMCStrategyV2 {
         return createRejection(`H4 bias is sideways`);
       }
 
-      // Outside kill zone — show bias but no entry
-      if (!ictResult.setupZone && !ictResult.entry) {
-        return createRejection(`Outside kill zone — H4 bias: ${ictResult.bias.direction} (no entry outside London/NY KZ)`);
-      }
+      // Outside kill zone — still track POIs but show reason
+      const lastM1 = m1Candles[m1Candles.length - 1];
+      const hourUTC = lastM1?.startTime?.getUTCHours() ?? 0;
+      const isLondonKZ = hourUTC >= 7 && hourUTC <= 11;
+      const isNYKZ = hourUTC >= 12 && hourUTC <= 16;
+      const outsideKZ = !isLondonKZ && !isNYKZ;
 
       // Check M15 setup zone — and track POI even if not valid yet
       if (!ictResult.setupZone || !ictResult.setupZone.isValid) {
@@ -1828,10 +1830,18 @@ export class SMCStrategyV2 {
         }
 
         const subReason = ictResult.setupZone?.reasons?.[0] || 'unknown';
+        if (outsideKZ) {
+          return createRejection(`Outside KZ (${hourUTC}h UTC) — H4: ${ictResult.bias.direction} [${subReason}]`);
+        }
         return createRejection(
           `No valid M15 setup zone [${subReason}]`,
           ictResult.setupZone?.reasons
         );
+      }
+
+      // Outside kill zone with valid setup — show POI but block entry
+      if (outsideKZ) {
+        return createRejection(`Outside KZ (${hourUTC}h UTC) — H4: ${ictResult.bias.direction}, M15 setup valid, waiting for London/NY session`);
       }
 
       // Check M1 entry
