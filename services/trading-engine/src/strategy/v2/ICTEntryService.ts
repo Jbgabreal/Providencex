@@ -597,75 +597,53 @@ export class ICTEntryService {
    * Bullish run → swing HIGH at the max high of the run
    * Bearish run → swing LOW at the min low of the run
    */
+  /**
+   * Detect external swing highs and lows using pivot-point method.
+   * A swing high: candle high is higher than the N candles before and after it.
+   * A swing low: candle low is lower than the N candles before and after it.
+   * This works regardless of candle color (bullish/bearish).
+   */
   private detectExternalSwings(candles: Candle[]): SwingPoint[] {
     const swings: SwingPoint[] = [];
-    const minConsecutive = 3;
+    const lookback = 2; // Check 2 candles on each side
 
-    let runDirection: 'bullish' | 'bearish' | null = null;
-    let runCount = 0;
-    let runStartIdx = 0;
-    let runMaxHigh = -Infinity;
-    let runMaxHighIdx = 0;
-    let runMinLow = Infinity;
-    let runMinLowIdx = 0;
-
-    const closeRun = () => {
-      if (runDirection && runCount >= minConsecutive) {
-        if (runDirection === 'bullish') {
-          swings.push({
-            index: runMaxHighIdx,
-            type: 'high',
-            price: runMaxHigh,
-            timestamp: candles[runMaxHighIdx].startTime.getTime(),
-          });
-        } else {
-          swings.push({
-            index: runMinLowIdx,
-            type: 'low',
-            price: runMinLow,
-            timestamp: candles[runMinLowIdx].startTime.getTime(),
-          });
-        }
-      }
-    };
-
-    for (let i = 0; i < candles.length; i++) {
+    for (let i = lookback; i < candles.length - lookback; i++) {
       const c = candles[i];
-      let dir: 'bullish' | 'bearish' | 'neutral';
-      if (c.close > c.open) dir = 'bullish';
-      else if (c.close < c.open) dir = 'bearish';
-      else dir = 'neutral';
 
-      // Neutral candles don't break the run
-      if (dir === 'neutral') {
-        if (runDirection) {
-          // Track extremes even on neutral
-          if (c.high > runMaxHigh) { runMaxHigh = c.high; runMaxHighIdx = i; }
-          if (c.low < runMinLow) { runMinLow = c.low; runMinLowIdx = i; }
+      // Check swing high: high is greater than surrounding candles
+      let isSwingHigh = true;
+      for (let j = 1; j <= lookback; j++) {
+        if (candles[i - j].high >= c.high || candles[i + j].high >= c.high) {
+          isSwingHigh = false;
+          break;
         }
-        continue;
+      }
+      if (isSwingHigh) {
+        swings.push({
+          index: i,
+          type: 'high',
+          price: c.high,
+          timestamp: c.startTime.getTime(),
+        });
       }
 
-      if (dir === runDirection) {
-        // Continuation of current run
-        runCount++;
-        if (c.high > runMaxHigh) { runMaxHigh = c.high; runMaxHighIdx = i; }
-        if (c.low < runMinLow) { runMinLow = c.low; runMinLowIdx = i; }
-      } else {
-        // Direction changed — close previous run and start new one
-        closeRun();
-        runDirection = dir;
-        runCount = 1;
-        runStartIdx = i;
-        runMaxHigh = c.high;
-        runMaxHighIdx = i;
-        runMinLow = c.low;
-        runMinLowIdx = i;
+      // Check swing low: low is less than surrounding candles
+      let isSwingLow = true;
+      for (let j = 1; j <= lookback; j++) {
+        if (candles[i - j].low <= c.low || candles[i + j].low <= c.low) {
+          isSwingLow = false;
+          break;
+        }
+      }
+      if (isSwingLow) {
+        swings.push({
+          index: i,
+          type: 'low',
+          price: c.low,
+          timestamp: c.startTime.getTime(),
+        });
       }
     }
-
-    // Close final run
-    closeRun();
 
     return swings.sort((a, b) => a.index - b.index);
   }
