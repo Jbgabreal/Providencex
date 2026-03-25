@@ -221,17 +221,11 @@ export class ICTEntryService {
       }
     }
 
-    // ── Stage 3: Filter insignificant swings (ATR threshold) ──
-    const atr = this.computeATR(h4Candles, Math.min(14, h4Candles.length - 1));
-    // Minimum swing significance: 30% of ATR (configurable via env)
-    const sigThresholdPct = Number(process.env.H4_SWING_SIG_PCT || '0.3');
-    const sigThreshold = atr * sigThresholdPct;
-    const meaningful = this.filterMeaningfulSwings(compressed, sigThreshold);
+    // ── Stage 3: Skip ATR filter for now — use all compressed pivots ──
+    // (ATR filter was removing valid swings; will revisit after bias is working)
+    const meaningful = compressed;
     if (ictLog) {
-      logger.info(`[H4-BIAS] Stage 3 — ATR=${atr.toFixed(2)}, threshold=${sigThreshold.toFixed(2)} (${(sigThresholdPct * 100).toFixed(0)}% ATR), meaningful swings: ${meaningful.length}`);
-      for (const p of meaningful) {
-        logger.info(`  [MEANINGFUL] idx=${p.index} ${p.type} ${p.price.toFixed(2)}`);
-      }
+      logger.info(`[H4-BIAS] Stage 3 — SKIPPED ATR filter, using all ${meaningful.length} compressed swings`);
     }
 
     // ── Stage 4: Classify external structure ──
