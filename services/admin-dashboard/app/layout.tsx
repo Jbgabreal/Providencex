@@ -26,35 +26,26 @@ export default function RootLayout({
                   <div className="flex-shrink-0 flex items-center">
                     <h1 className="text-xl font-bold text-gray-900">ProvidenceX Admin</h1>
                   </div>
-                  <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-                    <Link
-                      href="/"
-                      className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-                    >
+                  <div className="hidden sm:ml-6 sm:flex sm:space-x-4">
+                    <Link href="/" className="text-gray-500 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300 text-sm font-medium">
                       Overview
                     </Link>
-                    <Link
-                      href="/decisions"
-                      className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-                    >
+                    <Link href="/engine" className="text-gray-500 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300 text-sm font-medium">
+                      Engine
+                    </Link>
+                    <Link href="/decisions" className="text-gray-500 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300 text-sm font-medium">
                       Decisions
                     </Link>
-                    <Link
-                      href="/exposure"
-                      className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-                    >
+                    <Link href="/exposure" className="text-gray-500 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300 text-sm font-medium">
                       Exposure
                     </Link>
-                    <Link
-                      href="/backtests"
-                      className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-                    >
+                    <Link href="/backtests" className="text-gray-500 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300 text-sm font-medium">
                       Backtests
                     </Link>
-                    <Link
-                      href="/settings"
-                      className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-                    >
+                    <Link href="/ops" className="text-gray-500 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300 text-sm font-medium">
+                      Operations
+                    </Link>
+                    <Link href="/settings" className="text-gray-500 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300 text-sm font-medium">
                       Settings
                     </Link>
                   </div>
@@ -70,5 +61,3 @@ export default function RootLayout({
     </html>
   );
 }
-
-
