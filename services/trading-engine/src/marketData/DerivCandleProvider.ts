@@ -357,13 +357,19 @@ export class DerivCandleProvider extends EventEmitter {
       }
     } else {
       // H4 or M15 candles — store directly in dedicated caches (no M1 expansion)
+      // On reconnect, replace entirely to avoid duplicates that break pivot detection
       const cache = granularity === 14400 ? this.h4Candles : this.m15Candles;
-      const existing = cache.get(stdSymbol) || [];
+      const freshCandles: Candle[] = [];
+      const seenEpochs = new Set<number>();
 
       for (const c of candles) {
-        const startTime = new Date(c.epoch * 1000);
-        const endTime = new Date(startTime.getTime() + granularity * 1000);
-        existing.push({
+        const epoch = c.epoch * 1000;
+        if (seenEpochs.has(epoch)) continue; // skip duplicate epochs within same batch
+        seenEpochs.add(epoch);
+
+        const startTime = new Date(epoch);
+        const endTime = new Date(epoch + granularity * 1000);
+        freshCandles.push({
           symbol: stdSymbol, timeframe: 'M1', // type field is 'M1' for interface compat
           open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close),
           volume: Number(c.volume || 1), startTime, endTime,
@@ -371,9 +377,10 @@ export class DerivCandleProvider extends EventEmitter {
         inserted++;
       }
 
-      // Sort by time and deduplicate
-      existing.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
-      cache.set(stdSymbol, existing);
+      // Sort by time and REPLACE the cache (not append) to prevent reconnect duplicates
+      freshCandles.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+      cache.set(stdSymbol, freshCandles);
+      logger.info(`[DerivCandleProvider] ${tfLabel} cache for ${stdSymbol}: ${freshCandles.length} unique candles (replaced, not appended)`);
     }
 
     this.backfillComplete.add(stdSymbol);

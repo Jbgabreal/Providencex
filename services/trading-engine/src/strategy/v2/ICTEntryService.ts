@@ -231,10 +231,72 @@ export class ICTEntryService {
     // ── Stage 4: Classify external structure ──
     const result = this.classifyExternalStructure(meaningful, ictLog);
     if (ictLog) {
-      logger.info(`[H4-BIAS] Stage 4 — Final bias: ${result.direction} (method: swing-structure)`);
+      logger.info(`[H4-BIAS] Stage 4 — Swing-structure bias: ${result.direction}`);
     }
 
+    // ── Stage 5: Displacement fallback if still sideways ──
+    // Use simple close-vs-open analysis across last N candles
+    if (result.direction === 'sideways') {
+      const fallback = this.displacementFallback(h4Candles, ictLog);
+      if (fallback.direction !== 'sideways') {
+        if (ictLog) {
+          logger.info(`[H4-BIAS] Stage 5 — Displacement fallback: ${fallback.direction}`);
+        }
+        return fallback;
+      }
+    }
+
+    if (ictLog) {
+      logger.info(`[H4-BIAS] Final bias: ${result.direction}`);
+    }
     return result;
+  }
+
+  /**
+   * Displacement fallback: when swing structure can't determine direction,
+   * use the overall price movement of the last N H4 candles.
+   * Compares the midpoint of the range to the last close.
+   */
+  private displacementFallback(candles: Candle[], log: boolean): ICTBias {
+    const lookback = Math.min(candles.length, 20);
+    const recent = candles.slice(-lookback);
+
+    let highest = -Infinity, lowest = Infinity;
+    for (const c of recent) {
+      if (c.high > highest) highest = c.high;
+      if (c.low < lowest) lowest = c.low;
+    }
+
+    const range = highest - lowest;
+    if (range === 0) return { direction: 'sideways' };
+
+    const mid = (highest + lowest) / 2;
+    const lastClose = recent[recent.length - 1].close;
+    const firstOpen = recent[0].open;
+
+    // Price is in upper 40% of range AND trending up → bullish
+    // Price is in lower 40% of range AND trending down → bearish
+    const positionInRange = (lastClose - lowest) / range;
+    const trendUp = lastClose > firstOpen;
+
+    if (log) {
+      logger.info(`[H4-BIAS] Displacement: pos=${(positionInRange * 100).toFixed(1)}%, close=${lastClose.toFixed(2)}, mid=${mid.toFixed(2)}, range=${range.toFixed(2)}, trendUp=${trendUp}`);
+    }
+
+    if (positionInRange > 0.6 && trendUp) {
+      return { direction: 'bullish', swingHigh: highest, swingLow: lowest };
+    } else if (positionInRange < 0.4 && !trendUp) {
+      return { direction: 'bearish', swingHigh: highest, swingLow: lowest };
+    }
+
+    // Even more lenient: just use which side of midpoint we're on
+    if (lastClose > mid) {
+      return { direction: 'bullish', swingHigh: highest, swingLow: lowest };
+    } else if (lastClose < mid) {
+      return { direction: 'bearish', swingHigh: highest, swingLow: lowest };
+    }
+
+    return { direction: 'sideways' };
   }
 
   // ═══════════════════════════════════════════════════
@@ -257,8 +319,10 @@ export class ICTEntryService {
       let isLow = true;
 
       for (let j = 1; j <= lookback; j++) {
-        if (candles[i - j].high >= c.high || candles[i + j].high >= c.high) isHigh = false;
-        if (candles[i - j].low <= c.low || candles[i + j].low <= c.low) isLow = false;
+        // Use strict > / < (not >= / <=) so equal highs/lows don't kill pivots
+        // Deriv H4 candles can have equal values at boundaries
+        if (candles[i - j].high > c.high || candles[i + j].high > c.high) isHigh = false;
+        if (candles[i - j].low < c.low || candles[i + j].low < c.low) isLow = false;
         if (!isHigh && !isLow) break;
       }
 
@@ -446,10 +510,15 @@ export class ICTEntryService {
     const range = Math.abs(highs[highs.length - 1].price - lows[lows.length - 1].price);
 
     let direction: 'bullish' | 'bearish' | 'sideways' = 'sideways';
-    if (last.price > first.price && (last.price - first.price) > range * 0.3) {
+    // Use 10% threshold (was 30% — too strict, caused constant sideways)
+    if (last.price > first.price && (last.price - first.price) > range * 0.1) {
       direction = 'bullish';
-    } else if (last.price < first.price && (first.price - last.price) > range * 0.3) {
+    } else if (last.price < first.price && (first.price - last.price) > range * 0.1) {
       direction = 'bearish';
+    } else if (last.price > first.price) {
+      direction = 'bullish'; // Any upward movement counts
+    } else if (last.price < first.price) {
+      direction = 'bearish'; // Any downward movement counts
     }
 
     if (log) logger.info(`[H4-BIAS] Fallback: first=${first.price.toFixed(2)} → last=${last.price.toFixed(2)}, direction=${direction}`);
