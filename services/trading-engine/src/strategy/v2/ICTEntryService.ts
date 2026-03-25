@@ -617,13 +617,12 @@ export class ICTEntryService {
       logger.info(`[ICT] M15 ${bias.direction} BOS at idx ${biasAlignedBOS.index}, broke ${biasAlignedBOS.brokenSwingType} @ ${biasAlignedBOS.level.toFixed(2)}`);
     }
 
-    // 4. Build structural range from the swing high and low that form the BOS leg
-    // Find the swing pair that brackets the BOS event (not just the latest swings)
-    // Use the highest high and lowest low from recent swings to form a valid range
-    const recentSwingHighPrices = swingHighs.slice(-5).map(s => s.price);
-    const recentSwingLowPrices = swingLows.slice(-5).map(s => s.price);
-    const rangeHigh = Math.max(...recentSwingHighPrices);
-    const rangeLow = Math.min(...recentSwingLowPrices);
+    // 4. Build structural range from ALL detected swings (not just last 5)
+    // Use the highest high and lowest low across all swings for a meaningful range
+    const allSwingHighPrices = swingHighs.map(s => s.price);
+    const allSwingLowPrices = swingLows.map(s => s.price);
+    const rangeHigh = Math.max(...allSwingHighPrices);
+    const rangeLow = Math.min(...allSwingLowPrices);
     const range = rangeHigh - rangeLow;
 
     if (range <= 0) {
@@ -656,9 +655,9 @@ export class ICTEntryService {
 
     if (ictLog) {
       logger.info(
-        `[ICT] M15 range: ${rangeLow.toFixed(2)}-${rangeHigh.toFixed(2)} ($${range.toFixed(2)}), ` +
-        `OTE: ${oteLow.toFixed(2)}-${oteHigh.toFixed(2)}, ` +
-        `price: ${currentPrice.toFixed(2)} (fib ${(fibPosition * 100).toFixed(1)}%), inOTE: ${inOTE}`
+        `[ICT] M15 range: ${rangeLow.toFixed(5)}-${rangeHigh.toFixed(5)} (${range.toFixed(5)}), ` +
+        `OTE: ${oteLow.toFixed(5)}-${oteHigh.toFixed(5)}, ` +
+        `price: ${currentPrice.toFixed(5)} (fib ${(fibPosition * 100).toFixed(1)}%), inOTE: ${inOTE}, swingHighs: ${swingHighs.length}, swingLows: ${swingLows.length}`
       );
     }
 
