@@ -119,13 +119,17 @@ export class ICTEntryService {
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
     // Session filter: London KZ (07:00-11:00 UTC) and NY KZ (12:00-16:00 UTC)
+    // Still compute H4 bias even outside sessions (for Engine Monitor visibility)
+    // but block actual entries outside kill zones
+    let outsideKillZone = false;
     if (m1Candles.length > 0) {
       const lastCandle = m1Candles[m1Candles.length - 1];
       const hour = lastCandle.startTime.getUTCHours();
       const isLondonKZ = hour >= 7 && hour <= 11;
       const isNYKZ = hour >= 12 && hour <= 16;
-      if (!isLondonKZ && !isNYKZ) {
-        return { bias: { direction: 'sideways' }, setupZone: null, entry: null, setupsDetected: 0, entriesTaken: 0 };
+      outsideKillZone = !isLondonKZ && !isNYKZ;
+      if (outsideKillZone && ictLog) {
+        logger.info(`[ICT] Outside kill zone (hour=${hour} UTC) — will compute bias but block entries`);
       }
     }
 
@@ -138,6 +142,11 @@ export class ICTEntryService {
     }
 
     if (bias.direction === 'sideways') {
+      return { bias, setupZone: null, entry: null, setupsDetected: 0, entriesTaken: 0 };
+    }
+
+    // Block entries outside kill zones (but bias was still computed above)
+    if (outsideKillZone) {
       return { bias, setupZone: null, entry: null, setupsDetected: 0, entriesTaken: 0 };
     }
 

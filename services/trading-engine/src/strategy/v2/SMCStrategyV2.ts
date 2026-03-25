@@ -1773,10 +1773,12 @@ export class SMCStrategyV2 {
 
       // Check H4 bias
       if (ictResult.bias.direction === 'sideways') {
-        // Include full debug in reason so it's visible in Engine Monitor
-        const firstC = h4Candles[0];
-        const dbg = `h4=${h4Candles.length},src=${realH4.length > 0 ? 'deriv' : 'agg'},first.high=${firstC?.high},first.startTime=${firstC?.startTime},bias=${JSON.stringify(ictResult.bias)}`;
-        return createRejection(`H4 sideways [${dbg}]`);
+        return createRejection(`H4 bias is sideways`);
+      }
+
+      // Outside kill zone — show bias but no entry
+      if (!ictResult.setupZone && !ictResult.entry && ictResult.bias.direction !== 'sideways') {
+        return createRejection(`Outside kill zone — H4 bias: ${ictResult.bias.direction} (no entry outside London/NY KZ)`);
       }
 
       // Check M15 setup zone
