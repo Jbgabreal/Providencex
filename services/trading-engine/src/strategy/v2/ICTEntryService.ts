@@ -44,8 +44,9 @@ export interface ICTSetupZone {
   displacementCandleIndex?: number;
   fvg?: { low: number; high: number; index: number };
   orderBlock?: OrderBlockV2;
-  zoneLow: number;  // OTE zone low (60% fib)
-  zoneHigh: number; // OTE zone high (78% fib)
+  zoneLow: number;  // OB zone low
+  zoneHigh: number; // OB zone high
+  tpTarget?: number; // M15 swing target (the HH for bullish, LL for bearish)
   reasons: string[];
 }
 
@@ -743,11 +744,17 @@ export class ICTEntryService {
           `MSB=${bias.direction} OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)} ` +
           `eq=${equilibrium.toFixed(5)} price=${currentPrice.toFixed(5)} in ${side} — waiting for ${bias.direction === 'bullish' ? 'discount pullback' : 'premium pullback'}`
         );
-        return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, reasons };
+        const tpReject = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
+        return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, tpTarget: tpReject, reasons };
       }
     }
 
-    reasons.push(`M15 MSB confirmed + price in ${inOB ? 'Order Block' : 'equilibrium'} zone`);
+    // TP target = the M15 swing point that made the MSB
+    // Bullish: TP at the swing high (the HH that confirmed the MSB)
+    // Bearish: TP at the swing low (the LL that confirmed the MSB)
+    const tpTarget = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
+
+    reasons.push(`M15 MSB confirmed + price in ${inOB ? 'Order Block' : 'equilibrium'} zone, TP=${tpTarget.toFixed(5)}`);
 
     return {
       isValid: true,
@@ -756,23 +763,22 @@ export class ICTEntryService {
       displacementCandleIndex: obIndex,
       zoneLow: obLow,
       zoneHigh: obHigh,
+      tpTarget,
       reasons,
     };
   }
 
   /**
-   * Step 3: M1 Entry — Sweep + Market Structure Shift + Entry at last opposing candle
+   * Step 3: M1 Entry — Price at M15 OB zone + LTF confirmation
    *
    * ICT model:
-   * 1. Detect M1 liquidity sweep (wick beyond swing, no close)
-   * 2. AFTER the sweep, wait for M1 market structure shift (price shifts back in bias direction)
-   *    - Bearish: sweep takes M1 high → price shifts bearish (candle closes below prior M1 swing low)
-   *    - Bullish: sweep takes M1 low → price shifts bullish (candle closes above prior M1 swing high)
-   * 3. Entry = OPEN of the last opposing candle before the shift
-   *    - Bearish: open of the last bullish candle before the bearish shift
-   *    - Bullish: open of the last bearish candle before the bullish shift
-   * 4. SL = high of the swept swing (for SELL) or low of the swept swing (for BUY)
-   * 5. TP at R:R ratio
+   * 1. M15 OB zone is the POI (point of interest)
+   * 2. When price retraces to the OB zone, look for M1 confirmation:
+   *    - Bullish: engulfing/CHoCH candle in the OB zone (close > open, or close > prior swing high)
+   *    - Bearish: engulfing/CHoCH candle in the OB zone (close < open, or close < prior swing low)
+   * 3. Entry at the M1 confirmation candle close
+   * 4. SL = below/above the M15 OB zone
+   * 5. TP = the M15 swing point that made the MSB (the HH for bullish, LL for bearish)
    */
   private detectM1Entry(
     m1Candles: Candle[],
@@ -782,186 +788,136 @@ export class ICTEntryService {
   ): ICTEntry {
     const reasons: string[] = [];
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
+    const dir = bias.direction as 'bullish' | 'bearish';
 
     if (m1Candles.length < 10) {
-      return this.invalidEntry(bias.direction as 'bullish' | 'bearish', ['Insufficient M1 candles']);
+      return this.invalidEntry(dir, ['Insufficient M1 candles']);
     }
 
-    // 1. Detect M1 fractal swings
-    const m1Swings = this.m1SwingService.detectSwings(m1Candles);
+    const obLow = setupZone.zoneLow;
+    const obHigh = setupZone.zoneHigh;
+    const obBuffer = (obHigh - obLow) * 0.3; // 30% buffer around OB
 
-    if (m1Swings.length < 2) {
-      return this.invalidEntry(bias.direction as 'bullish' | 'bearish', ['Not enough M1 swings for sweep detection']);
-    }
+    // 1. Check if price has reached the M15 OB zone on recent M1 candles
+    // Look at last 30 M1 candles for price touching the OB
+    const lookback = Math.min(30, m1Candles.length);
+    let touchIndex = -1;
 
-    // 2. Detect liquidity sweeps on M1
-    const sweeps = this.m1SwingService.detectLiquiditySweeps(m1Candles, m1Swings);
-
-    // Filter sweeps that align with bias
-    const alignedSweeps = sweeps.filter(s => {
-      if (bias.direction === 'bearish') return s.sweptSwing.type === 'high';
-      if (bias.direction === 'bullish') return s.sweptSwing.type === 'low';
-      return false;
-    });
-
-    // Look for recent sweep (within last 20 M1 candles — need room for shift to form after sweep)
-    const recentSweep = alignedSweeps
-      .filter(s => s.index >= m1Candles.length - 20)
-      .sort((a, b) => b.index - a.index)[0];
-
-    if (!recentSweep) {
-      if (alignedSweeps.length > 0) {
-        reasons.push(`M1 sweep at idx ${alignedSweeps[alignedSweeps.length - 1].index} not recent enough`);
-      } else {
-        reasons.push(`No M1 liquidity sweep of ${bias.direction === 'bearish' ? 'high' : 'low'} (${sweeps.length} total sweeps)`);
-      }
-      return this.invalidEntry(bias.direction as 'bullish' | 'bearish', reasons);
-    }
-
-    if (ictLog) {
-      logger.info(
-        `[ICT] M1 sweep: ${recentSweep.sweptSwing.type} @ ${recentSweep.sweptSwing.price.toFixed(2)} ` +
-        `swept by wick ${recentSweep.sweepPrice.toFixed(2)} at idx ${recentSweep.index}`
-      );
-    }
-
-    // 3. After sweep, look for market structure shift (MSS)
-    //    The M1 was trending AGAINST the bias (bullish M1 during bearish H4 bias).
-    //    After the sweep, we need M1 to SHIFT back in the bias direction:
-    //    - Bearish bias: candle CLOSES below a recent M1 swing LOW = bearish shift
-    //    - Bullish bias: candle CLOSES above a recent M1 swing HIGH = bullish shift
-    //
-    //    Use ALL swings up to the current candle (not just before sweep),
-    //    since new swings form during the retracement.
-    let shiftIndex: number | undefined;
-
-    for (let i = recentSweep.index + 1; i < m1Candles.length; i++) {
-      const candle = m1Candles[i];
-      // Get swings that formed before this candle (including during/after sweep)
-      const availableSwings = m1Swings.filter(s => s.index < i);
-
-      if (bias.direction === 'bearish') {
-        // Need candle to close BELOW a recent M1 swing low = bearish shift
-        const nearestLow = availableSwings
-          .filter(s => s.type === 'low')
-          .sort((a, b) => b.index - a.index)[0];
-
-        if (nearestLow && candle.close < nearestLow.price) {
-          shiftIndex = i;
-          reasons.push(`M1 bearish shift at idx ${i}: close ${candle.close.toFixed(2)} < swing low ${nearestLow.price.toFixed(2)}`);
-          break;
-        }
-      } else {
-        // Need candle to close ABOVE a recent M1 swing high = bullish shift
-        const nearestHigh = availableSwings
-          .filter(s => s.type === 'high')
-          .sort((a, b) => b.index - a.index)[0];
-
-        if (nearestHigh && candle.close > nearestHigh.price) {
-          shiftIndex = i;
-          reasons.push(`M1 bullish shift at idx ${i}: close ${candle.close.toFixed(2)} > swing high ${nearestHigh.price.toFixed(2)}`);
-          break;
-        }
-      }
-    }
-
-    if (shiftIndex === undefined) {
-      reasons.push('No M1 market structure shift after sweep');
-      if (ictLog) logger.info(`[ICT] M1: Sweep found but no structure shift after it`);
-      return this.invalidEntry(bias.direction as 'bullish' | 'bearish', reasons);
-    }
-
-    // 4. Entry = OPEN of the last opposing candle before the shift
-    //    Bearish: find the last BULLISH candle before shiftIndex
-    //    Bullish: find the last BEARISH candle before shiftIndex
-    let entryCandle: Candle | null = null;
-    let entryCandleIdx: number | undefined;
-
-    for (let i = shiftIndex - 1; i > recentSweep.index; i--) {
+    for (let i = m1Candles.length - lookback; i < m1Candles.length; i++) {
       const c = m1Candles[i];
-      if (bias.direction === 'bearish' && c.close > c.open) {
-        // Last bullish candle before bearish shift
-        entryCandle = c;
-        entryCandleIdx = i;
-        break;
-      }
-      if (bias.direction === 'bullish' && c.close < c.open) {
-        // Last bearish candle before bullish shift
-        entryCandle = c;
-        entryCandleIdx = i;
-        break;
+      if (dir === 'bullish') {
+        // Price dipped into or below OB zone (retracing down to buy zone)
+        if (c.low <= obHigh + obBuffer) {
+          touchIndex = i;
+          break;
+        }
+      } else {
+        // Price rallied into or above OB zone (retracing up to sell zone)
+        if (c.high >= obLow - obBuffer) {
+          touchIndex = i;
+          break;
+        }
       }
     }
 
-    if (!entryCandle || entryCandleIdx === undefined) {
-      reasons.push('No opposing candle found before M1 shift for entry');
-      return this.invalidEntry(bias.direction as 'bullish' | 'bearish', reasons);
+    if (touchIndex === -1) {
+      reasons.push(`Price hasn't reached M15 OB zone [${obLow.toFixed(5)}-${obHigh.toFixed(5)}] on M1`);
+      return this.invalidEntry(dir, reasons);
     }
 
-    // Entry at the OPEN of the last opposing candle
-    const entryPrice = entryCandle.open;
+    if (ictLog) {
+      logger.info(`[ICT] M1: Price touched M15 OB zone at M1 idx ${touchIndex}`);
+    }
 
-    // 5. SL = the high of the swept swing (SELL) or low of the swept swing (BUY)
-    //    This is the actual swing extreme, not the wick of the sweep candle
-    let stopLoss: number;
+    // 2. After price touches OB, look for M1 confirmation candle
+    // Bullish: a bullish engulfing or CHoCH (candle closes above its open with body > prior candle)
+    // Bearish: a bearish engulfing or CHoCH
+    let confirmIndex = -1;
+    let confirmCandle: Candle | null = null;
 
-    if (bias.direction === 'bearish') {
-      // SELL: SL at the HIGH of the swept M1 swing
-      stopLoss = recentSweep.sweptSwing.price;
+    for (let i = touchIndex; i < m1Candles.length; i++) {
+      const c = m1Candles[i];
+      const prev = i > 0 ? m1Candles[i - 1] : null;
+
+      if (dir === 'bullish') {
+        // Bullish confirmation: bullish candle (close > open) with decent body
+        const isBullish = c.close > c.open;
+        const bodySize = Math.abs(c.close - c.open);
+        const prevBody = prev ? Math.abs(prev.close - prev.open) : 0;
+        const isEngulfing = prev && isBullish && bodySize > prevBody && c.close > (prev?.high || 0);
+        const isStrongBullish = isBullish && bodySize > (c.high - c.low) * 0.5; // Body > 50% of range
+
+        if (isEngulfing || isStrongBullish) {
+          confirmIndex = i;
+          confirmCandle = c;
+          reasons.push(`M1 bullish confirmation at idx ${i}: ${isEngulfing ? 'engulfing' : 'strong bullish'} close=${c.close.toFixed(5)}`);
+          break;
+        }
+      } else {
+        // Bearish confirmation: bearish candle (close < open) with decent body
+        const isBearish = c.close < c.open;
+        const bodySize = Math.abs(c.close - c.open);
+        const prevBody = prev ? Math.abs(prev.close - prev.open) : 0;
+        const isEngulfing = prev && isBearish && bodySize > prevBody && c.close < (prev?.low || Infinity);
+        const isStrongBearish = isBearish && bodySize > (c.high - c.low) * 0.5;
+
+        if (isEngulfing || isStrongBearish) {
+          confirmIndex = i;
+          confirmCandle = c;
+          reasons.push(`M1 bearish confirmation at idx ${i}: ${isEngulfing ? 'engulfing' : 'strong bearish'} close=${c.close.toFixed(5)}`);
+          break;
+        }
+      }
+    }
+
+    if (!confirmCandle || confirmIndex === -1) {
+      reasons.push('No M1 confirmation candle (engulfing/CHoCH) at OB zone');
+      return this.invalidEntry(dir, reasons);
+    }
+
+    // 3. Entry at the confirmation candle close
+    const entryPrice = confirmCandle.close;
+
+    // 4. SL = below/above the M15 OB zone (with small buffer)
+    const slBuffer = (obHigh - obLow) * 0.2;
+    let stopLoss = dir === 'bullish' ? obLow - slBuffer : obHigh + slBuffer;
+
+    // 5. TP = M15 swing point (the HH for bullish, LL for bearish)
+    let takeProfit: number;
+    if (setupZone.tpTarget && setupZone.tpTarget > 0) {
+      takeProfit = setupZone.tpTarget;
     } else {
-      // BUY: SL at the LOW of the swept M1 swing
-      stopLoss = recentSweep.sweptSwing.price;
+      // Fallback: use R:R ratio
+      const risk = Math.abs(entryPrice - stopLoss);
+      takeProfit = dir === 'bullish' ? entryPrice + risk * this.riskRewardRatio : entryPrice - risk * this.riskRewardRatio;
     }
 
-    // Validate SL direction
-    const slValid = stopLoss > 0 &&
-      ((bias.direction === 'bullish' && stopLoss < entryPrice) ||
-       (bias.direction === 'bearish' && stopLoss > entryPrice));
-
-    if (!slValid) {
-      reasons.push(`Invalid SL: ${stopLoss.toFixed(2)} (entry: ${entryPrice.toFixed(2)}, dir: ${bias.direction})`);
-      return this.invalidEntry(bias.direction as 'bullish' | 'bearish', reasons);
-    }
-
-    // Enforce minimum SL distance for gold
-    const symbolType = m1Candles[0]?.symbol || 'XAUUSD';
-    const minSlDistance = (symbolType === 'XAUUSD' || symbolType === 'GOLD') ? 3.0 : 0.0003;
-    const slDist = Math.abs(entryPrice - stopLoss);
-    if (slDist < minSlDistance) {
-      stopLoss = bias.direction === 'bullish'
-        ? entryPrice - minSlDistance
-        : entryPrice + minSlDistance;
-    }
-
-    // 6. TP at R:R ratio
-    const risk = Math.abs(entryPrice - stopLoss);
-    const reward = risk * this.riskRewardRatio;
-    const takeProfit = bias.direction === 'bullish'
-      ? entryPrice + reward
-      : entryPrice - reward;
+    // Validate entry/SL/TP
+    const slRisk = Math.abs(entryPrice - stopLoss);
+    const rr = takeProfit !== 0 && slRisk !== 0 ? Math.abs(takeProfit - entryPrice) / slRisk : this.riskRewardRatio;
 
     if (ictLog) {
       logger.info(
-        `[ICT] ✅ ENTRY: ${bias.direction.toUpperCase()} @ ${entryPrice.toFixed(2)} ` +
-        `(open of last ${bias.direction === 'bearish' ? 'bullish' : 'bearish'} candle at idx ${entryCandleIdx}), ` +
-        `SL: ${stopLoss.toFixed(2)} (swept swing), TP: ${takeProfit.toFixed(2)}, R:R 1:${this.riskRewardRatio}`
+        `[ICT] ✅ ENTRY: ${dir.toUpperCase()} @ ${entryPrice.toFixed(5)} ` +
+        `(M1 confirmation at idx ${confirmIndex}), ` +
+        `SL: ${stopLoss.toFixed(5)} (below OB), TP: ${takeProfit.toFixed(5)} (M15 swing), R:R 1:${rr.toFixed(1)}`
       );
     }
 
     reasons.push(
-      `Sweep → shift → entry at open of opposing candle idx ${entryCandleIdx}, ` +
-      `SL at swept swing ${recentSweep.sweptSwing.price.toFixed(2)}`
+      `OB touch → M1 confirmation → entry @ ${entryPrice.toFixed(5)}, ` +
+      `SL=${stopLoss.toFixed(5)}, TP=${takeProfit.toFixed(5)} (M15 swing target)`
     );
 
     return {
       isValid: true,
-      direction: bias.direction as 'bullish' | 'bearish',
+      direction: dir,
       entryPrice,
       entryType: 'market',
       stopLoss,
       takeProfit,
-      riskRewardRatio: this.riskRewardRatio,
-      m1ChoChIndex: shiftIndex,
+      riskRewardRatio: rr,
+      m1ChoChIndex: confirmIndex,
       reasons,
     };
   }

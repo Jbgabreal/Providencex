@@ -1796,9 +1796,10 @@ export class SMCStrategyV2 {
           const currentPrice = m1Candles[m1Candles.length - 1]?.close || 0;
           const obMid = (ictResult.setupZone.zoneLow + ictResult.setupZone.zoneHigh) / 2;
           const isBuy = ictResult.bias.direction === 'bullish';
-          const sl = isBuy ? ictResult.setupZone.zoneLow : ictResult.setupZone.zoneHigh;
-          const slDist = Math.abs(obMid - sl);
-          const tp = isBuy ? obMid + slDist * 3 : obMid - slDist * 3;
+          const slBuffer = (ictResult.setupZone.zoneHigh - ictResult.setupZone.zoneLow) * 0.2;
+          const sl = isBuy ? ictResult.setupZone.zoneLow - slBuffer : ictResult.setupZone.zoneHigh + slBuffer;
+          // TP = M15 swing target (the HH/LL), fallback to R:R
+          const tp = ictResult.setupZone.tpTarget || (isBuy ? obMid + Math.abs(obMid - sl) * 3 : obMid - Math.abs(obMid - sl) * 3);
           const distToEntry = Math.abs(currentPrice - obMid);
           const distPct = currentPrice !== 0 ? ((distToEntry / currentPrice) * 100).toFixed(3) : '0';
 
