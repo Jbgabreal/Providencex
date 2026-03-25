@@ -1400,9 +1400,11 @@ export class SMCStrategyV2 {
       const tf = tfMap[timeframe] || 'M5';
       const candlesFromService = await this.marketDataService.getRecentCandles(symbol, tf, limit);
       
-      // Debug: Log candle count for first symbol to verify aggregation
-      if (symbol === 'XAUUSD' && candlesFromService.length > 0) {
-        logger.debug(`[SMCStrategyV2] Received ${candlesFromService.length} ${tf} candles for ${symbol} (first timestamp: ${candlesFromService[0].timestamp})`);
+      // Debug: Log candle data to verify Deriv H4 candles are being used
+      if (candlesFromService.length > 0 && (tf === 'H4' || tf === 'M15')) {
+        const first = candlesFromService[0];
+        const last = candlesFromService[candlesFromService.length - 1];
+        logger.info(`[SMCStrategyV2] ${symbol} ${tf}: ${candlesFromService.length} candles, first.timestamp=${first.timestamp}, first.high=${first.high}, last.close=${last.close}`);
       }
       
       // Convert from types/index.ts Candle (has timestamp) to marketData/types.ts Candle (has startTime/endTime)
