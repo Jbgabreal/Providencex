@@ -260,10 +260,15 @@ export class DerivCandleProvider extends EventEmitter {
    */
   private handleHistoricalCandles(msg: any): void {
     const candles = msg.candles;
-    if (!candles || !Array.isArray(candles) || candles.length === 0) return;
-
-    // Determine the standard symbol from the first candle or the subscription echo
     const derivSymbol = msg.echo_req?.ticks_history;
+
+    logger.info(`[DerivCandleProvider] Received candles response: symbol=${derivSymbol}, count=${candles?.length || 0}`);
+
+    if (!candles || !Array.isArray(candles) || candles.length === 0) {
+      logger.warn(`[DerivCandleProvider] Empty candles for ${derivSymbol}`);
+      return;
+    }
+
     const stdSymbol = derivSymbol ? REVERSE_SYMBOL_MAP[derivSymbol] : null;
 
     if (!stdSymbol) {
