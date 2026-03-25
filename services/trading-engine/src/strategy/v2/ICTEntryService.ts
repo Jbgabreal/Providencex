@@ -621,8 +621,14 @@ export class ICTEntryService {
       return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
+    // Log the full swing structure for visibility
     if (ictLog) {
-      logger.info(`[ICT] M15 ${bias.direction} MSB confirmed — ${bias.direction === 'bullish' ? `HH: ${prevSH.price.toFixed(5)} → ${lastSH.price.toFixed(5)}` : `LL: ${prevSL.price.toFixed(5)} → ${lastSL.price.toFixed(5)}`}`);
+      const msbType = (bias.direction === 'bullish' && bullishMSB) || (bias.direction === 'bearish' && bearishMSB) ? 'STRONG' : 'SIMPLE';
+      logger.info(`[ICT] ═══ M15 SETUP ANALYSIS ═══`);
+      logger.info(`[ICT] Swings: ${swingHighs.length}H ${swingLows.length}L — ${allSwings.map(s => `${s.type === 'high' ? 'H' : 'L'}(${s.price.toFixed(5)}@${s.index})`).join(' → ')}`);
+      logger.info(`[ICT] MSB: ${bias.direction} ${msbType} — ${bias.direction === 'bullish'
+        ? `prevHigh=${prevSH.price.toFixed(5)} → newHigh=${lastSH.price.toFixed(5)} (HH)`
+        : `prevLow=${prevSL.price.toFixed(5)} → newLow=${lastSL.price.toFixed(5)} (LL)`}`);
     }
 
     // 3. Find Order Block: last opposing candle before the MSB impulse
@@ -671,13 +677,13 @@ export class ICTEntryService {
     // 4. Check OB invalidation (PineScript: close < bottom invalidates bullish OB)
     const currentPrice = m15Candles[m15Candles.length - 1].close;
     if (bias.direction === 'bullish' && currentPrice < obLow) {
-      // Bullish OB broken — price closed below it
-      reasons.push(`Bullish OB invalidated: price ${currentPrice.toFixed(5)} < OB low ${obLow.toFixed(5)}`);
+      if (ictLog) logger.info(`[ICT] Bu-OB INVALIDATED — price ${currentPrice.toFixed(5)} closed below OB low ${obLow.toFixed(5)}`);
+      reasons.push(`Bu-OB broken: price=${currentPrice.toFixed(5)} < OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
       return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, reasons };
     }
     if (bias.direction === 'bearish' && currentPrice > obHigh) {
-      // Bearish OB broken — price closed above it
-      reasons.push(`Bearish OB invalidated: price ${currentPrice.toFixed(5)} > OB high ${obHigh.toFixed(5)}`);
+      if (ictLog) logger.info(`[ICT] Be-OB INVALIDATED — price ${currentPrice.toFixed(5)} closed above OB high ${obHigh.toFixed(5)}`);
+      reasons.push(`Be-OB broken: price=${currentPrice.toFixed(5)} > OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
       return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, reasons };
     }
 
@@ -694,12 +700,18 @@ export class ICTEntryService {
       inOB = currentPrice >= (obLow - obBuffer) && currentPrice <= (obHigh + obBuffer);
     }
 
+    // Log full POI (Point of Interest) details
+    const impulseHigh2 = bias.direction === 'bullish' ? lastSH.price : prevSH.price;
+    const impulseLow2 = bias.direction === 'bullish' ? prevSL.price : lastSL.price;
+    const eq2 = (impulseHigh2 + impulseLow2) / 2;
+    const distToOB = bias.direction === 'bullish'
+      ? ((currentPrice - obHigh) / obRange * 100)
+      : ((obLow - currentPrice) / obRange * 100);
+
     if (ictLog) {
-      logger.info(
-        `[ICT] M15 OB: ${obLow.toFixed(5)}-${obHigh.toFixed(5)} (idx=${obIndex}), ` +
-        `price: ${currentPrice.toFixed(5)}, inOB: ${inOB}, ` +
-        `swingHighs: ${swingHighs.length}, swingLows: ${swingLows.length}`
-      );
+      logger.info(`[ICT] OB: ${bias.direction === 'bullish' ? 'Bu-OB' : 'Be-OB'} at ${obLow.toFixed(5)}-${obHigh.toFixed(5)} (candle idx=${obIndex}, time=${m15Candles[obIndex]?.startTime})`);
+      logger.info(`[ICT] Impulse leg: ${impulseLow2.toFixed(5)}-${impulseHigh2.toFixed(5)}, Equilibrium=${eq2.toFixed(5)}`);
+      logger.info(`[ICT] Price: ${currentPrice.toFixed(5)}, inOB=${inOB}, dist=${distToOB.toFixed(1)}% of OB range, ${currentPrice > eq2 ? 'PREMIUM' : 'DISCOUNT'} zone`);
     }
 
     if (!inOB) {
@@ -716,9 +728,10 @@ export class ICTEntryService {
         if (ictLog) logger.info(`[ICT] M15 price not in OB but in ${inDiscount ? 'discount' : 'premium'} zone (eq=${equilibrium.toFixed(5)})`);
         // Accept — price is at least in the right zone
       } else {
+        const side = currentPrice > equilibrium ? 'PREMIUM' : 'DISCOUNT';
         reasons.push(
-          `Price ${currentPrice.toFixed(5)} not in OB [${obLow.toFixed(5)}, ${obHigh.toFixed(5)}] ` +
-          `or ${bias.direction === 'bullish' ? 'discount' : 'premium'} zone (eq=${equilibrium.toFixed(5)})`
+          `MSB=${bias.direction} OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)} ` +
+          `eq=${equilibrium.toFixed(5)} price=${currentPrice.toFixed(5)} in ${side} — waiting for ${bias.direction === 'bullish' ? 'discount pullback' : 'premium pullback'}`
         );
         return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, reasons };
       }
