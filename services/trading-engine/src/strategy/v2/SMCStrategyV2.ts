@@ -1772,9 +1772,11 @@ export class SMCStrategyV2 {
       const ictResult = this.ictEntryService.analyzeICTEntry(h4Candles, m15Candles, m1Candles);
 
       // Check H4 bias
-      logger.info(`[ICT] ${symbol}: H4 bias result: direction=${ictResult.bias.direction}, swingHigh=${ictResult.bias.swingHigh}, swingLow=${ictResult.bias.swingLow}`);
       if (ictResult.bias.direction === 'sideways') {
-        return createRejection(`H4 bias is sideways (h4=${h4Candles.length} candles, src=${realH4.length > 0 ? 'deriv' : 'agg'})`);
+        // Include full debug in reason so it's visible in Engine Monitor
+        const firstC = h4Candles[0];
+        const dbg = `h4=${h4Candles.length},src=${realH4.length > 0 ? 'deriv' : 'agg'},first.high=${firstC?.high},first.startTime=${firstC?.startTime},bias=${JSON.stringify(ictResult.bias)}`;
+        return createRejection(`H4 sideways [${dbg}]`);
       }
 
       // Check M15 setup zone
