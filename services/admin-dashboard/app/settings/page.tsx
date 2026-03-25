@@ -30,7 +30,9 @@ export default function SettingsPage() {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(`${TRADING_ENGINE_BASE_URL}/api/v1/admin/settings`);
+      const res = await fetch(`${TRADING_ENGINE_BASE_URL}/api/v1/admin/settings`, {
+        headers: { 'x-user-role': 'admin', 'x-user-id': 'admin-dashboard' },
+      });
       if (!res.ok) {
         throw new Error(`Failed to load settings: ${res.statusText}`);
       }
@@ -75,6 +77,8 @@ export default function SettingsPage() {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
+          'x-user-role': 'admin',
+          'x-user-id': 'admin-dashboard',
         },
         body: JSON.stringify({
           value,
