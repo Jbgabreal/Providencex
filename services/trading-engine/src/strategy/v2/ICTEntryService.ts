@@ -794,12 +794,34 @@ export class ICTEntryService {
       return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: !!nearbyFVG, zoneLow: obLow, zoneHigh: obHigh, reasons };
     }
 
-    // 5. Check if price is at or near the Order Block zone
-    const obRange = obHigh - obLow;
-    const obBuffer = obRange * 0.5; // 50% buffer around OB
+    // 5. Check Premium/Discount zone + Fibonacci OTE
+    // ICT rule: BUY only in discount (below 50%), SELL only in premium (above 50%)
+    // OTE (Optimal Trade Entry) = 62-79% retracement of the impulse leg
+    const impulseHigh = bias.direction === 'bullish' ? lastSH.price : prevSH.price;
+    const impulseLow = bias.direction === 'bullish' ? prevSL.price : lastSL.price;
+    const impulseRange = impulseHigh - impulseLow;
+    const equilibrium = (impulseHigh + impulseLow) / 2;
 
-    // For bullish: price should be in or near the OB (retracing down to it)
-    // For bearish: price should be in or near the OB (retracing up to it)
+    // Fibonacci levels from the impulse leg
+    const fib50 = impulseLow + impulseRange * 0.50;  // Equilibrium
+    const fib62 = impulseLow + impulseRange * 0.382; // 62% retracement (bullish discount)
+    const fib79 = impulseLow + impulseRange * 0.21;  // 79% retracement (deep discount)
+    const fib62_premium = impulseLow + impulseRange * 0.618; // 62% from bottom (bearish premium)
+    const fib79_premium = impulseLow + impulseRange * 0.79;  // 79% from bottom (deep premium)
+
+    // OB position in fib terms
+    const obMidFib = impulseRange > 0 ? (((obHigh + obLow) / 2) - impulseLow) / impulseRange : 0.5;
+    const priceFib = impulseRange > 0 ? (currentPrice - impulseLow) / impulseRange : 0.5;
+
+    // Check if price is in the correct zone
+    const inDiscount = currentPrice <= fib50;
+    const inPremium = currentPrice >= fib50;
+    const inOTE_buy = currentPrice <= fib62 && currentPrice >= fib79;  // 62-79% retracement for buy
+    const inOTE_sell = currentPrice >= fib62_premium && currentPrice <= fib79_premium; // for sell
+
+    // Check if price is at or near the OB
+    const obRange = obHigh - obLow;
+    const obBuffer = obRange * 0.5;
     let inOB = false;
     if (bias.direction === 'bullish') {
       inOB = currentPrice <= (obHigh + obBuffer) && currentPrice >= (obLow - obBuffer);
@@ -807,42 +829,26 @@ export class ICTEntryService {
       inOB = currentPrice >= (obLow - obBuffer) && currentPrice <= (obHigh + obBuffer);
     }
 
-    // Log full POI (Point of Interest) details
-    const impulseHigh2 = bias.direction === 'bullish' ? lastSH.price : prevSH.price;
-    const impulseLow2 = bias.direction === 'bullish' ? prevSL.price : lastSL.price;
-    const eq2 = (impulseHigh2 + impulseLow2) / 2;
-    const distToOB = bias.direction === 'bullish'
-      ? ((currentPrice - obHigh) / obRange * 100)
-      : ((obLow - currentPrice) / obRange * 100);
-
     if (ictLog) {
-      logger.info(`[ICT] OB: ${bias.direction === 'bullish' ? 'Bu-OB' : 'Be-OB'} at ${obLow.toFixed(5)}-${obHigh.toFixed(5)} (candle idx=${obIndex}, time=${m15Candles[obIndex]?.startTime})`);
-      logger.info(`[ICT] Impulse leg: ${impulseLow2.toFixed(5)}-${impulseHigh2.toFixed(5)}, Equilibrium=${eq2.toFixed(5)}`);
-      logger.info(`[ICT] Price: ${currentPrice.toFixed(5)}, inOB=${inOB}, dist=${distToOB.toFixed(1)}% of OB range, ${currentPrice > eq2 ? 'PREMIUM' : 'DISCOUNT'} zone`);
+      logger.info(`[ICT] ═══ ZONE ANALYSIS ═══`);
+      logger.info(`[ICT] Impulse: ${impulseLow.toFixed(5)}-${impulseHigh.toFixed(5)} (range=${impulseRange.toFixed(5)})`);
+      logger.info(`[ICT] Fib levels: 79%=${fib79.toFixed(5)}, 62%=${fib62.toFixed(5)}, 50%=${fib50.toFixed(5)}, 38%=${fib62_premium.toFixed(5)}, 21%=${fib79_premium.toFixed(5)}`);
+      logger.info(`[ICT] OB: ${obLow.toFixed(5)}-${obHigh.toFixed(5)} (fib pos=${(obMidFib*100).toFixed(1)}%)`);
+      logger.info(`[ICT] Price: ${currentPrice.toFixed(5)} (fib=${(priceFib*100).toFixed(1)}%), ${inDiscount ? 'DISCOUNT' : 'PREMIUM'}, inOB=${inOB}, inOTE=${bias.direction === 'bullish' ? inOTE_buy : inOTE_sell}`);
     }
 
-    if (!inOB) {
-      // Even if not in OB, check if price is in the discount/premium half of the recent range
-      // This is the "equilibrium" approach — above/below 50% of the impulse leg
-      const impulseHigh = bias.direction === 'bullish' ? lastSH.price : prevSH.price;
-      const impulseLow = bias.direction === 'bullish' ? prevSL.price : lastSL.price;
-      const equilibrium = (impulseHigh + impulseLow) / 2;
+    // Validate: price must be in the correct zone for the bias direction
+    const correctZone = (bias.direction === 'bullish' && inDiscount) ||
+                        (bias.direction === 'bearish' && inPremium);
 
-      const inDiscount = bias.direction === 'bullish' && currentPrice <= equilibrium;
-      const inPremium = bias.direction === 'bearish' && currentPrice >= equilibrium;
-
-      if (inDiscount || inPremium) {
-        if (ictLog) logger.info(`[ICT] M15 price not in OB but in ${inDiscount ? 'discount' : 'premium'} zone (eq=${equilibrium.toFixed(5)})`);
-        // Accept — price is at least in the right zone
-      } else {
-        const side = currentPrice > equilibrium ? 'PREMIUM' : 'DISCOUNT';
-        reasons.push(
-          `MSB=${bias.direction} OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)} ` +
-          `eq=${equilibrium.toFixed(5)} price=${currentPrice.toFixed(5)} in ${side} — waiting for ${bias.direction === 'bullish' ? 'discount pullback' : 'premium pullback'}`
-        );
-        const tpReject = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
-        return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: !!nearbyFVG, zoneLow: obLow, zoneHigh: obHigh, tpTarget: tpReject, reasons };
-      }
+    if (!correctZone && !inOB) {
+      const zone = currentPrice > fib50 ? 'PREMIUM' : 'DISCOUNT';
+      const tpReject = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
+      reasons.push(
+        `Price in ${zone} (fib=${(priceFib*100).toFixed(1)}%) — ${bias.direction === 'bullish' ? 'need DISCOUNT (<50%)' : 'need PREMIUM (>50%)'} | ` +
+        `OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)} eq=${fib50.toFixed(5)}`
+      );
+      return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: !!nearbyFVG, zoneLow: obLow, zoneHigh: obHigh, tpTarget: tpReject, reasons };
     }
 
     // TP target = the M15 swing point that made the MSB
