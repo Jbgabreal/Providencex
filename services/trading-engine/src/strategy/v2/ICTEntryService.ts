@@ -88,7 +88,7 @@ export class ICTEntryService {
     // M15: LuxAlgo swings for structural range + fib calculation
     this.m15SwingService = new SwingService({
       method: 'luxalgo',
-      pivotLeft: 10,
+      pivotLeft: 5,
     });
 
     // M15: BOS detection (strict close = ICT style)
@@ -583,7 +583,8 @@ export class ICTEntryService {
     // 1. Detect swings using fractal method
     // Use LuxAlgo swing detection — proven algorithm from the #1 TradingView SMC indicator
     // pivotLeft controls the lookback length (equivalent to PineScript's zigzag_len)
-    const fallbackService = new SwingService({ method: 'luxalgo', pivotLeft: 10 });
+    // Use len=5 for M15 (len=10 was too slow, missing recent structure)
+    const fallbackService = new SwingService({ method: 'luxalgo', pivotLeft: 5 });
     const allSwings = fallbackService.detectSwings(m15Candles);
     const swingHighs = allSwings.filter(s => s.type === 'high').sort((a, b) => a.index - b.index);
     const swingLows = allSwings.filter(s => s.type === 'low').sort((a, b) => a.index - b.index);
@@ -618,8 +619,41 @@ export class ICTEntryService {
                    (bias.direction === 'bearish' && (bearishMSB || simpleBearishMSB));
 
     if (!hasMSB) {
-      reasons.push(`No M15 MSB in ${bias.direction} direction (bullishHH=${bullishMSB}, bearishLL=${bearishMSB})`);
-      if (ictLog) logger.info(`[ICT] No M15 ${bias.direction} MSB — HH=${bullishMSB}, LL=${bearishMSB}`);
+      // No MSB matching H4 bias — but still look for OB at the recent swing extreme
+      // If H4=bullish and M15 made LL, the LL area could be the reversal OB (smart money accumulation)
+      // If H4=bearish and M15 made HH, the HH area could be the reversal OB (smart money distribution)
+      if (ictLog) logger.info(`[ICT] No M15 ${bias.direction} MSB — HH=${simpleBullishMSB}, LL=${simpleBearishMSB}. Trying reversal OB...`);
+
+      // Look for OB at the most recent swing that opposes the H4 bias (potential reversal zone)
+      let revObHigh = 0, revObLow = 0, revObIndex = -1, revObFound = false;
+      if (bias.direction === 'bullish' && swingLows.length > 0) {
+        // Bullish H4 + M15 pullback: OB near the latest swing low
+        const sl = swingLows[swingLows.length - 1];
+        const scanStart = Math.min(sl.index + 5, m15Candles.length - 1);
+        const scanEnd = Math.max(sl.index - 5, 0);
+        for (let i = scanStart; i >= scanEnd; i--) {
+          const c = m15Candles[i];
+          if (c.open > c.close) { revObHigh = c.high; revObLow = c.low; revObIndex = i; revObFound = true; break; }
+        }
+      } else if (bias.direction === 'bearish' && swingHighs.length > 0) {
+        const sh = swingHighs[swingHighs.length - 1];
+        const scanStart = Math.min(sh.index + 5, m15Candles.length - 1);
+        const scanEnd = Math.max(sh.index - 5, 0);
+        for (let i = scanStart; i >= scanEnd; i--) {
+          const c = m15Candles[i];
+          if (c.close > c.open) { revObHigh = c.high; revObLow = c.low; revObIndex = i; revObFound = true; break; }
+        }
+      }
+
+      if (revObFound) {
+        const currentPrice = m15Candles[m15Candles.length - 1].close;
+        const tpTarget = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
+        if (ictLog) logger.info(`[ICT] Reversal OB found: ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)} (idx=${revObIndex})`);
+        reasons.push(`No MSB but reversal OB at ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)}`);
+        return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
+      }
+
+      reasons.push(`No M15 MSB in ${bias.direction} direction (HH=${simpleBullishMSB}, LL=${simpleBearishMSB})`);
       return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
@@ -648,13 +682,12 @@ export class ICTEntryService {
 
     if (bias.direction === 'bullish') {
       // Bullish OB: scan the PULLBACK area (from prevSH → lastSL)
-      // This is where price pulled back before making the HH
-      // Looking for the last BEARISH candle (open > close) = the OB
+      // Extended scan: also look 10 candles before prevSH (PineScript uses zigzag_len extension)
       const scanStart = Math.min(prevSH.index, m15Candles.length - 1);
-      const scanEnd = Math.max(lastSL.index, 0);
+      const scanEnd = Math.max(lastSL.index - 10, 0); // Extended range
       for (let i = scanStart; i >= scanEnd; i--) {
         const c = m15Candles[i];
-        if (c.open > c.close) { // Bearish candle in pullback = bullish OB
+        if (c.open > c.close) { // Bearish candle = bullish OB
           obHigh = c.high;
           obLow = c.low;
           obIndex = i;
@@ -664,13 +697,11 @@ export class ICTEntryService {
       }
     } else {
       // Bearish OB: scan the PULLBACK area (from prevSL → lastSH)
-      // This is where price rallied before making the LL
-      // Looking for the last BULLISH candle (close > open) = the OB
       const scanStart = Math.min(prevSL.index, m15Candles.length - 1);
-      const scanEnd = Math.max(lastSH.index, 0);
+      const scanEnd = Math.max(lastSH.index - 10, 0); // Extended range
       for (let i = scanStart; i >= scanEnd; i--) {
         const c = m15Candles[i];
-        if (c.close > c.open) { // Bullish candle in pullback = bearish OB
+        if (c.close > c.open) { // Bullish candle = bearish OB
           obHigh = c.high;
           obLow = c.low;
           obIndex = i;
