@@ -379,15 +379,41 @@ export class ICTEntryService {
       direction = 'bullish';
     } else if (isLH && isLL) {
       direction = 'bearish';
-    } else if (isHH && isLL) {
-      // Expansion — use most recent swing direction as tie-breaker
-      const lastSwing = swings[swings.length - 1];
-      direction = lastSwing.type === 'high' ? 'bullish' : 'bearish';
-      if (log) logger.info(`[H4-BIAS] Expansion pattern (HH+LL) — tie-break by last swing: ${direction}`);
-    } else if (isLH && isHL) {
-      // Compression/consolidation — truly sideways
-      direction = 'sideways';
-      if (log) logger.info(`[H4-BIAS] Compression pattern (LH+HL) — sideways`);
+    } else {
+      // Mixed pattern (LH+HL compression or HH+LL expansion)
+      // Count the broader trend across ALL available swing pairs
+      let hhCount = 0, lhCount = 0, hlCount = 0, llCount = 0;
+      for (let i = 1; i < highs.length; i++) {
+        if (highs[i].price > highs[i - 1].price) hhCount++;
+        else lhCount++;
+      }
+      for (let i = 1; i < lows.length; i++) {
+        if (lows[i].price > lows[i - 1].price) hlCount++;
+        else llCount++;
+      }
+
+      if (log) {
+        logger.info(`[H4-BIAS] Mixed pattern — broader count: HH=${hhCount} LH=${lhCount} HL=${hlCount} LL=${llCount}`);
+      }
+
+      // Determine bias from the dominant trend across all swing pairs
+      const bullishScore = hhCount + hlCount;
+      const bearishScore = lhCount + llCount;
+
+      if (bearishScore > bullishScore) {
+        direction = 'bearish';
+        if (log) logger.info(`[H4-BIAS] Broader trend bearish (bearish=${bearishScore} vs bullish=${bullishScore})`);
+      } else if (bullishScore > bearishScore) {
+        direction = 'bullish';
+        if (log) logger.info(`[H4-BIAS] Broader trend bullish (bullish=${bullishScore} vs bearish=${bearishScore})`);
+      } else {
+        // Truly mixed — use overall price direction
+        const firstSwing = swings[0];
+        const lastSwing = swings[swings.length - 1];
+        if (lastSwing.price < firstSwing.price) direction = 'bearish';
+        else if (lastSwing.price > firstSwing.price) direction = 'bullish';
+        if (log) logger.info(`[H4-BIAS] Tied scores — using price direction: ${firstSwing.price.toFixed(2)} → ${lastSwing.price.toFixed(2)} = ${direction}`);
+      }
     }
 
     if (log) {
