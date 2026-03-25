@@ -10,8 +10,13 @@ type Tab = 'overview' | 'mentors' | 'billing' | 'referrals' | 'reviews' | 'suppo
 async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(`${OPS_URL}${path}`, {
     cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'x-user-role': 'admin',
+      'x-user-id': 'admin-dashboard',
+      ...(options?.headers || {}),
+    },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
   return res.json();
