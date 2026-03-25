@@ -10,6 +10,23 @@ export const metadata: Metadata = {
   description: 'Admin monitoring dashboard for ProvidenceX Trading Engine',
 };
 
+function LogoutButton() {
+  return (
+    <form action="/api/auth" method="POST">
+      <button
+        type="button"
+        className="text-sm text-gray-500 hover:text-red-600"
+        onClick={async () => {
+          await fetch('/api/auth', { method: 'DELETE' });
+          window.location.href = '/login';
+        }}
+      >
+        Logout
+      </button>
+    </form>
+  );
+}
+
 export default function RootLayout({
   children,
 }: {
