@@ -15,6 +15,7 @@ async function apiFetch(path: string, options?: RequestInit) {
       'Content-Type': 'application/json',
       'x-user-role': 'admin',
       'x-user-id': 'admin-dashboard',
+      'x-user-email': 'admin@providencex.com',
       ...(options?.headers || {}),
     },
   });

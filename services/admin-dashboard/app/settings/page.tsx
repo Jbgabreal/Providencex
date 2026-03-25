@@ -31,7 +31,7 @@ export default function SettingsPage() {
       setLoading(true);
       setError(null);
       const res = await fetch(`${TRADING_ENGINE_BASE_URL}/api/v1/admin/settings`, {
-        headers: { 'x-user-role': 'admin', 'x-user-id': 'admin-dashboard' },
+        headers: { 'x-user-role': 'admin', 'x-user-id': 'admin-dashboard', 'x-user-email': 'admin@providencex.com' },
       });
       if (!res.ok) {
         throw new Error(`Failed to load settings: ${res.statusText}`);
@@ -79,6 +79,7 @@ export default function SettingsPage() {
           'Content-Type': 'application/json',
           'x-user-role': 'admin',
           'x-user-id': 'admin-dashboard',
+          'x-user-email': 'admin@providencex.com',
         },
         body: JSON.stringify({
           value,
