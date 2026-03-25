@@ -119,18 +119,18 @@ export class ICTEntryService {
   ): ICTEntryResult {
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
-    // Session filter: London KZ (07:00-11:00 UTC) and NY KZ (12:00-16:00 UTC)
-    // Still compute H4 bias even outside sessions (for Engine Monitor visibility)
-    // but block actual entries outside kill zones
+    // Session filter: Asian KZ (00:00-04:00 UTC), London KZ (07:00-11:00 UTC), NY KZ (12:00-16:00 UTC)
+    // M15 setup always computed (for POI tracking), only M1 entry blocked outside KZ
     let outsideKillZone = false;
     if (m1Candles.length > 0) {
       const lastCandle = m1Candles[m1Candles.length - 1];
       const hour = lastCandle.startTime.getUTCHours();
+      const isAsianKZ = hour >= 0 && hour <= 4;
       const isLondonKZ = hour >= 7 && hour <= 11;
       const isNYKZ = hour >= 12 && hour <= 16;
-      outsideKillZone = !isLondonKZ && !isNYKZ;
+      outsideKillZone = !isAsianKZ && !isLondonKZ && !isNYKZ;
       if (outsideKillZone && ictLog) {
-        logger.info(`[ICT] Outside kill zone (hour=${hour} UTC) — will compute bias but block entries`);
+        logger.info(`[ICT] Outside kill zone (hour=${hour} UTC) — will compute setup but block entries`);
       }
     }
 
