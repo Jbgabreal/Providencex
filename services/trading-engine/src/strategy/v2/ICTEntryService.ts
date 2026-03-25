@@ -997,21 +997,22 @@ export class ICTEntryService {
     const recentM1Lows = m1Swings.filter(s => s.type === 'low' && s.index <= confirmIndex).sort((a, b) => b.index - a.index);
 
     let stopLoss: number;
-    const slObBuffer = (obHigh - obLow) * 0.5; // Minimum buffer = half OB range
+    const slObBuffer = (obHigh - obLow) * 0.3; // Small buffer beyond OB edge
 
     if (dir === 'bullish') {
-      // BUY SL: below the OB low or the recent M1 swing low — whichever is lower
-      const m1SwingLow = recentM1Lows.length > 0 ? recentM1Lows[0].price : obLow;
-      stopLoss = Math.min(obLow, m1SwingLow) - slObBuffer;
+      // BUY SL: below the OB low (structural invalidation) with buffer
+      stopLoss = obLow - slObBuffer;
     } else {
-      // SELL SL: above the OB high or the recent M1 swing high — whichever is higher
-      const m1SwingHigh = recentM1Highs.length > 0 ? recentM1Highs[0].price : obHigh;
-      stopLoss = Math.max(obHigh, m1SwingHigh) + slObBuffer;
+      // SELL SL: above the OB high (structural invalidation) with buffer
+      stopLoss = obHigh + slObBuffer;
     }
 
     // 5. TP = M15 swing point (the HH for bullish, LL for bearish)
     let takeProfit: number;
     const risk = Math.abs(entryPrice - stopLoss);
+
+    // Minimum R:R filter — don't enter if risk/reward is too poor
+    const minRR = 1.5;
 
     if (setupZone.tpTarget && setupZone.tpTarget > 0) {
       takeProfit = setupZone.tpTarget;
@@ -1042,11 +1043,18 @@ export class ICTEntryService {
     const slRisk = Math.abs(entryPrice - stopLoss);
     const rr = takeProfit !== 0 && slRisk !== 0 ? Math.abs(takeProfit - entryPrice) / slRisk : this.riskRewardRatio;
 
+    // Reject if R:R is too poor — ICT says minimum 2:1 but we use 1.5:1
+    if (rr < minRR) {
+      if (ictLog) logger.info(`[ICT] ❌ R:R too low: ${rr.toFixed(2)} (need ≥${minRR}) — entry=${entryPrice.toFixed(5)}, SL=${stopLoss.toFixed(5)}, TP=${takeProfit.toFixed(5)}`);
+      reasons.push(`R:R ${rr.toFixed(2)} below minimum ${minRR}`);
+      return this.invalidEntry(dir, reasons);
+    }
+
     if (ictLog) {
       logger.info(
         `[ICT] ✅ ENTRY: ${dir.toUpperCase()} @ ${entryPrice.toFixed(5)} ` +
         `(M1 confirmation at idx ${confirmIndex}), ` +
-        `SL: ${stopLoss.toFixed(5)} (below OB), TP: ${takeProfit.toFixed(5)} (M15 swing), R:R 1:${rr.toFixed(1)}`
+        `SL: ${stopLoss.toFixed(5)} (OB edge), TP: ${takeProfit.toFixed(5)} (M15 swing), R:R 1:${rr.toFixed(1)}`
       );
     }
 

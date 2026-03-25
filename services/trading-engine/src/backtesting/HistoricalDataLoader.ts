@@ -527,18 +527,31 @@ export class HistoricalDataLoader {
     const allCandles: HistoricalCandle[] = [];
     let currentStart = startEpoch;
 
+    let prevStart = -1;
     while (currentStart < endEpoch) {
+      // Detect infinite loop — if start doesn't advance, break
+      if (currentStart === prevStart) {
+        logger.warn(`[DataLoader] Pagination stuck at ${new Date(currentStart * 1000).toISOString()}, stopping`);
+        break;
+      }
+      prevStart = currentStart;
+
       const candles = await this.fetchDerivBatch(derivSymbol, granularity, currentStart, endEpoch, appId, symbol);
       if (candles.length === 0) break;
 
       allCandles.push(...candles);
-      // Move start to after the last candle
       const lastEpoch = candles[candles.length - 1].timestamp / 1000;
-      currentStart = lastEpoch + granularity;
+      const newStart = lastEpoch + granularity;
 
-      logger.info(`[DataLoader] Fetched ${candles.length} candles (total: ${allCandles.length}), next start: ${new Date(currentStart * 1000).toISOString()}`);
+      // If we didn't advance, force skip ahead
+      if (newStart <= currentStart) {
+        currentStart = currentStart + granularity * 1000; // Skip 1000 candles worth
+        logger.warn(`[DataLoader] Deriv returned same epoch, skipping ahead`);
+      } else {
+        currentStart = newStart;
+      }
 
-      // Small delay to avoid rate limiting
+      logger.info(`[DataLoader] Fetched ${candles.length} candles (total: ${allCandles.length}), next: ${new Date(currentStart * 1000).toISOString()}`);
       await new Promise(r => setTimeout(r, 500));
     }
 
