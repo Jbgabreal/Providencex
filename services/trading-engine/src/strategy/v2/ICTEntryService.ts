@@ -250,8 +250,10 @@ export class ICTEntryService {
    * Compares the midpoint of the range to the last close.
    */
   private displacementFallback(candles: Candle[], log: boolean): ICTBias {
-    const lookback = Math.min(candles.length, 20);
+    // Use last 10 candles for range, and last 5 for short-term direction
+    const lookback = Math.min(candles.length, 10);
     const recent = candles.slice(-lookback);
+    const shortTerm = candles.slice(-Math.min(candles.length, 5));
 
     let highest = -Infinity, lowest = Infinity;
     for (const c of recent) {
@@ -264,24 +266,31 @@ export class ICTEntryService {
 
     const mid = (highest + lowest) / 2;
     const lastClose = recent[recent.length - 1].close;
-    const firstOpen = recent[0].open;
 
-    // Price is in upper 40% of range AND trending up → bullish
-    // Price is in lower 40% of range AND trending down → bearish
-    const positionInRange = (lastClose - lowest) / range;
-    const trendUp = lastClose > firstOpen;
+    // Short-term trend: are the last 5 candles going up or down?
+    const shortOpen = shortTerm[0].open;
+    const shortClose = shortTerm[shortTerm.length - 1].close;
+    const shortTrendUp = shortClose > shortOpen;
 
-    if (log) {
-      logger.info(`[H4-BIAS] Displacement: pos=${(positionInRange * 100).toFixed(1)}%, close=${lastClose.toFixed(2)}, mid=${mid.toFixed(2)}, range=${range.toFixed(2)}, trendUp=${trendUp}`);
+    // Count bullish vs bearish candles in short term
+    let bullCandles = 0, bearCandles = 0;
+    for (const c of shortTerm) {
+      if (c.close > c.open) bullCandles++;
+      else bearCandles++;
     }
 
-    if (positionInRange > 0.6 && trendUp) {
+    if (log) {
+      logger.info(`[H4-BIAS] Displacement: close=${lastClose.toFixed(2)}, mid=${mid.toFixed(2)}, shortTrend=${shortTrendUp ? 'UP' : 'DOWN'} (${bullCandles}bull/${bearCandles}bear), range=${range.toFixed(2)}`);
+    }
+
+    // Primary: use short-term candle direction (most recent momentum)
+    if (bullCandles > bearCandles) {
       return { direction: 'bullish', swingHigh: highest, swingLow: lowest };
-    } else if (positionInRange < 0.4 && !trendUp) {
+    } else if (bearCandles > bullCandles) {
       return { direction: 'bearish', swingHigh: highest, swingLow: lowest };
     }
 
-    // Even more lenient: just use which side of midpoint we're on
+    // Tiebreaker: use price position relative to midpoint
     if (lastClose > mid) {
       return { direction: 'bullish', swingHigh: highest, swingLow: lowest };
     } else if (lastClose < mid) {
