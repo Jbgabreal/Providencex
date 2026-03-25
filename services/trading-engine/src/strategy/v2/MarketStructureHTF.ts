@@ -42,9 +42,8 @@ export class MarketStructureHTF {
     // Initialize SMC core services with HTF-appropriate config
     // Use wider pivot window for H4 to detect more significant swings
     this.swingService = new SwingService({
-      method: 'hybrid',
-      pivotLeft: 2,
-      pivotRight: 2,
+      method: 'luxalgo',
+      pivotLeft: 5,
       lookbackHigh: 10,
       lookbackLow: 10,
     });

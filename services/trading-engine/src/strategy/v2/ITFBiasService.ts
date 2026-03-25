@@ -43,9 +43,8 @@ export class ITFBiasService {
     
     // Initialize SMC core services with ITF-appropriate config
     this.swingService = new SwingService({
-      method: 'hybrid',
-      pivotLeft: 3,
-      pivotRight: 3,
+      method: 'luxalgo',
+      pivotLeft: 7,
       lookbackHigh: 20,
       lookbackLow: 20,
     });

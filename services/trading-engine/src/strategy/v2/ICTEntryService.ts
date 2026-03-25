@@ -84,11 +84,10 @@ export class ICTEntryService {
     // LL = new swing low breaks previous external swing low
     this.h4StructuralService = new StructuralSwingService(3);
 
-    // M15: BOS-confirmed swings for structural range + fib calculation
+    // M15: LuxAlgo swings for structural range + fib calculation
     this.m15SwingService = new SwingService({
-      method: 'bos-confirmed',
-      pivotLeft: 3,
-      pivotRight: 3,
+      method: 'luxalgo',
+      pivotLeft: 10,
     });
 
     // M15: BOS detection (strict close = ICT style)
@@ -98,11 +97,10 @@ export class ICTEntryService {
       strictClose: true,
     });
 
-    // M1: Fractal swings for liquidity sweep detection (need fast detection, not BOS-confirmed)
+    // M1: LuxAlgo swings for liquidity sweep detection (shorter len for fast detection)
     this.m1SwingService = new SwingService({
-      method: 'fractal',
+      method: 'luxalgo',
       pivotLeft: 3,
-      pivotRight: 3,
     });
 
     // Risk-reward ratio (default 1:3)

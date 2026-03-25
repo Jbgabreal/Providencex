@@ -37,9 +37,8 @@ export class MarketStructureLTF {
     
     // Initialize SMC core services with LTF-appropriate config
     this.swingService = new SwingService({
-      method: 'hybrid',
-      pivotLeft: 2,
-      pivotRight: 2,
+      method: 'luxalgo',
+      pivotLeft: 3,
       lookbackHigh: 10,
       lookbackLow: 10,
     });
