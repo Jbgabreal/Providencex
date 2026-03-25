@@ -1739,7 +1739,7 @@ export class SMCStrategyV2 {
       const m15Candles = await this.getCandles(symbol, 'M15', 100);
       const m1Candles = await this.getCandles(symbol, 'M1', 100); // 100 candles for better M1 structure detection
 
-      if (h4Candles.length < 10 || m15Candles.length < 20 || m1Candles.length < 50) {
+      if (h4Candles.length < 5 || m15Candles.length < 20 || m1Candles.length < 50) {
         return createRejection(
           `Insufficient candles - H4=${h4Candles.length}, M15=${m15Candles.length}, M1=${m1Candles.length}`
         );
