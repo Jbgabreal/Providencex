@@ -601,19 +601,29 @@ export class ICTEntryService {
       return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
-    // 2. Detect Market Structure Break (MSB)
-    // Bullish MSB: latest swing high > previous swing high (HH)
-    // Bearish MSB: latest swing low < previous swing low (LL)
+    // 2. Detect Market Structure Break (MSB) with fib_factor confirmation
+    // Matches PineScript: h0 > h1 + abs(h1 - l0) * fib_factor
+    // The break must extend beyond the prior swing by a fib factor (33%) to confirm
+    const FIB_FACTOR = 0.33;
     const lastSH = swingHighs[swingHighs.length - 1];
     const prevSH = swingHighs[swingHighs.length - 2];
     const lastSL = swingLows[swingLows.length - 1];
     const prevSL = swingLows[swingLows.length - 2];
 
-    const bullishMSB = lastSH.price > prevSH.price; // Higher High
-    const bearishMSB = lastSL.price < prevSL.price;  // Lower Low
+    // Bullish MSB: new high > prev high + fib_factor * abs(prev_high - current_low)
+    const bullishRange = Math.abs(prevSH.price - lastSL.price);
+    const bullishMSB = lastSH.price > prevSH.price + bullishRange * FIB_FACTOR;
 
-    const hasMSB = (bias.direction === 'bullish' && bullishMSB) ||
-                   (bias.direction === 'bearish' && bearishMSB);
+    // Bearish MSB: new low < prev low - fib_factor * abs(current_high - prev_low)
+    const bearishRange = Math.abs(lastSH.price - prevSL.price);
+    const bearishMSB = lastSL.price < prevSL.price - bearishRange * FIB_FACTOR;
+
+    // Also accept simple HH/HL or LH/LL without fib confirmation as a weaker signal
+    const simpleBullishMSB = lastSH.price > prevSH.price;
+    const simpleBearishMSB = lastSL.price < prevSL.price;
+
+    const hasMSB = (bias.direction === 'bullish' && (bullishMSB || simpleBullishMSB)) ||
+                   (bias.direction === 'bearish' && (bearishMSB || simpleBearishMSB));
 
     if (!hasMSB) {
       reasons.push(`No M15 MSB in ${bias.direction} direction (bullishHH=${bullishMSB}, bearishLL=${bearishMSB})`);
@@ -668,19 +678,29 @@ export class ICTEntryService {
       return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
-    // 4. Check if price is at or near the Order Block zone
+    // 4. Check OB invalidation (PineScript: close < bottom invalidates bullish OB)
     const currentPrice = m15Candles[m15Candles.length - 1].close;
+    if (bias.direction === 'bullish' && currentPrice < obLow) {
+      // Bullish OB broken — price closed below it
+      reasons.push(`Bullish OB invalidated: price ${currentPrice.toFixed(5)} < OB low ${obLow.toFixed(5)}`);
+      return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, reasons };
+    }
+    if (bias.direction === 'bearish' && currentPrice > obHigh) {
+      // Bearish OB broken — price closed above it
+      reasons.push(`Bearish OB invalidated: price ${currentPrice.toFixed(5)} > OB high ${obHigh.toFixed(5)}`);
+      return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, reasons };
+    }
+
+    // 5. Check if price is at or near the Order Block zone
     const obRange = obHigh - obLow;
     const obBuffer = obRange * 0.5; // 50% buffer around OB
 
-    // For bullish: price should be near or below the OB (retracing down to it)
-    // For bearish: price should be near or above the OB (retracing up to it)
+    // For bullish: price should be in or near the OB (retracing down to it)
+    // For bearish: price should be in or near the OB (retracing up to it)
     let inOB = false;
     if (bias.direction === 'bullish') {
-      // Price is in or below the OB zone (discount)
       inOB = currentPrice <= (obHigh + obBuffer) && currentPrice >= (obLow - obBuffer);
     } else {
-      // Price is in or above the OB zone (premium)
       inOB = currentPrice >= (obLow - obBuffer) && currentPrice <= (obHigh + obBuffer);
     }
 
