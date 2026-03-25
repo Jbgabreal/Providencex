@@ -50,6 +50,13 @@ export interface DerivCandleProviderConfig {
   appId?: string;
 }
 
+// Global reference for direct access from strategy code
+let _globalInstance: DerivCandleProvider | null = null;
+
+export function getDerivCandleProvider(): DerivCandleProvider | null {
+  return _globalInstance;
+}
+
 export class DerivCandleProvider extends EventEmitter {
   private ws: WebSocket | null = null;
   private config: DerivCandleProviderConfig;
@@ -71,6 +78,7 @@ export class DerivCandleProvider extends EventEmitter {
     super();
     this.config = config;
     this.appId = config.appId || process.env.DERIV_APP_ID || '1089';
+    _globalInstance = this; // Set global singleton
 
     // Split symbols into supported (has Deriv mapping) and unsupported
     for (const symbol of config.symbols) {
