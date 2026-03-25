@@ -633,49 +633,95 @@ export class ICTEntryService {
       return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
-    // 2. Detect Market Structure Break (MSB) with fib_factor confirmation
-    // Matches PineScript: h0 > h1 + abs(h1 - l0) * fib_factor
-    // The break must extend beyond the prior swing by a fib factor (33%) to confirm
-    const FIB_FACTOR = 0.33;
+    // 2. Detect BOS/CHoCH/MSB using CANDLE BODY CLOSE confirmation
+    //
+    // Research-based rules (pinescriptmarket.com, dailypriceaction.com, opofinance.com):
+    //
+    // BOS (trend continuation): candle BODY CLOSES beyond the swing in trend direction
+    //   - Bullish BOS: candle close > previous swing high (HH confirmed)
+    //   - Bearish BOS: candle close < previous swing low (LL confirmed)
+    //   - Wicks DON'T count — must be a body close
+    //
+    // CHoCH (trend reversal): candle BODY CLOSES beyond the swing AGAINST trend
+    //   - Bullish CHoCH: close > previous lower high (LH broken)
+    //   - Bearish CHoCH: close < previous higher low (HL broken)
+    //
+    // MSB = CHoCH + displacement (strong impulse candle with large body)
+    //
     const lastSH = swingHighs[swingHighs.length - 1];
     const prevSH = swingHighs[swingHighs.length - 2];
     const lastSL = swingLows[swingLows.length - 1];
     const prevSL = swingLows[swingLows.length - 2];
 
-    // Bullish MSB: new high > prev high + fib_factor * abs(prev_high - current_low)
-    const bullishRange = Math.abs(prevSH.price - lastSL.price);
-    const bullishMSB = lastSH.price > prevSH.price + bullishRange * FIB_FACTOR;
+    // Scan candles AFTER the swing to find one that BODY CLOSES beyond the level
+    // This is the "break" candle — the one that confirms the structure break
+    let bosBreakIndex = -1;
+    let bosBreakCandle: Candle | null = null;
+    let bosType: 'BOS' | 'CHoCH' | 'MSB' = 'BOS';
 
-    // Bearish MSB: new low < prev low - fib_factor * abs(current_high - prev_low)
-    const bearishRange = Math.abs(lastSH.price - prevSL.price);
-    const bearishMSB = lastSL.price < prevSL.price - bearishRange * FIB_FACTOR;
+    if (bias.direction === 'bullish') {
+      // Look for candle that CLOSES above the previous swing high (prevSH)
+      const searchFrom = Math.max(prevSH.index + 1, 0);
+      for (let i = searchFrom; i < m15Candles.length; i++) {
+        const c = m15Candles[i];
+        if (c.close > prevSH.price) {
+          bosBreakIndex = i;
+          bosBreakCandle = c;
+          break;
+        }
+      }
+    } else {
+      // Look for candle that CLOSES below the previous swing low (prevSL)
+      const searchFrom = Math.max(prevSL.index + 1, 0);
+      for (let i = searchFrom; i < m15Candles.length; i++) {
+        const c = m15Candles[i];
+        if (c.close < prevSL.price) {
+          bosBreakIndex = i;
+          bosBreakCandle = c;
+          break;
+        }
+      }
+    }
 
-    // STRICT: Only accept confirmed MSB (with fib_factor displacement)
-    // Simple HH/LL is NOT enough — matches PineScript MSB-OB exactly
-    const hasMSB = (bias.direction === 'bullish' && bullishMSB) ||
-                   (bias.direction === 'bearish' && bearishMSB);
+    if (!bosBreakCandle || bosBreakIndex === -1) {
+      if (ictLog) logger.info(`[ICT] No candle BODY CLOSE beyond swing level — no BOS/MSB`);
+      reasons.push(`No candle body close beyond M15 swing (need close ${bias.direction === 'bullish' ? '>' : '<'} ${bias.direction === 'bullish' ? prevSH.price.toFixed(5) : prevSL.price.toFixed(5)})`);
+      return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
+    }
 
-    if (!hasMSB) {
-      // Log what we found but don't enter — no confirmed MSB = no valid setup
-      const simpleBullish = lastSH.price > prevSH.price;
-      const simpleBearish = lastSL.price < prevSL.price;
-      if (ictLog) logger.info(`[ICT] No CONFIRMED M15 MSB (need 33% fib displacement). Simple HH=${simpleBullish}, LL=${simpleBearish}`);
-      reasons.push(`No confirmed MSB (need ${(FIB_FACTOR*100).toFixed(0)}% displacement beyond prior swing)`);
+    // Classify the break: is it displacement (MSB) or just a close (BOS)?
+    // Displacement = break candle body is larger than average body (strong impulse)
+    let avgBody = 0;
+    const bodyLookback = Math.min(20, m15Candles.length);
+    for (let i = m15Candles.length - bodyLookback; i < m15Candles.length; i++) {
+      avgBody += Math.abs(m15Candles[i].close - m15Candles[i].open);
+    }
+    avgBody /= bodyLookback;
+
+    const breakBody = Math.abs(bosBreakCandle.close - bosBreakCandle.open);
+    const isDisplacement = breakBody > avgBody * 1.5; // 1.5x average = displacement
+
+    // MSB requires displacement — otherwise it's just a BOS
+    if (isDisplacement) {
+      bosType = 'MSB';
+    }
+
+    if (!isDisplacement) {
+      if (ictLog) logger.info(`[ICT] BOS confirmed but no displacement (body=${breakBody.toFixed(5)} vs avg=${avgBody.toFixed(5)}) — need MSB`);
+      reasons.push(`BOS without displacement (body=${breakBody.toFixed(2)}, need >${(avgBody*1.5).toFixed(2)})`);
       return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
     // Track MSB changes — new MSB means new structure, clear broken OBs
-    const msbKey = `${bias.direction}:${lastSH.price.toFixed(2)}:${lastSL.price.toFixed(2)}`;
+    const msbKey = `${bias.direction}:${prevSH.price.toFixed(2)}:${prevSL.price.toFixed(2)}:${bosBreakIndex}`;
     this.checkMSBChange(symbol, msbKey);
 
-    // Log the full swing structure for visibility
+    // Log the confirmed MSB
     if (ictLog) {
-      const msbType = (bias.direction === 'bullish' && bullishMSB) || (bias.direction === 'bearish' && bearishMSB) ? 'STRONG' : 'SIMPLE';
       logger.info(`[ICT] ═══ M15 SETUP ANALYSIS ═══`);
       logger.info(`[ICT] Swings: ${swingHighs.length}H ${swingLows.length}L — ${allSwings.map(s => `${s.type === 'high' ? 'H' : 'L'}(${s.price.toFixed(5)}@${s.index})`).join(' → ')}`);
-      logger.info(`[ICT] MSB: ${bias.direction} ${msbType} — ${bias.direction === 'bullish'
-        ? `prevHigh=${prevSH.price.toFixed(5)} → newHigh=${lastSH.price.toFixed(5)} (HH)`
-        : `prevLow=${prevSL.price.toFixed(5)} → newLow=${lastSL.price.toFixed(5)} (LL)`}`);
+      logger.info(`[ICT] ${bosType}: ${bias.direction} — candle at idx ${bosBreakIndex} CLOSED ${bias.direction === 'bullish' ? 'above' : 'below'} ${bias.direction === 'bullish' ? prevSH.price.toFixed(5) : prevSL.price.toFixed(5)}`);
+      logger.info(`[ICT] Displacement: body=${breakBody.toFixed(5)} vs avg=${avgBody.toFixed(5)} (${(breakBody/avgBody).toFixed(1)}x) ✅`);
     }
 
     // 3. Find Order Block — matching PineScript MSB-OB exactly
@@ -861,15 +907,16 @@ export class ICTEntryService {
 
     const hasFVGConfluence = !!nearbyFVG;
 
-    // STRICT: OB must have FVG to confirm smart money displacement
-    // Without FVG, the OB is weaker — show as POI but don't enter
-    if (!hasFVGConfluence) {
-      if (ictLog) logger.info(`[ICT] OB has no FVG — showing as POI only (need FVG for confirmed entry)`);
-      reasons.push(`MSB+OB confirmed but no FVG — need displacement imbalance. OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
-      return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: false, zoneLow: obLow, zoneHigh: obHigh, tpTarget, reasons };
+    // FVG is preferred but not strictly required
+    // MSB (with candle close + displacement) already confirms smart money
+    // FVG adds extra confluence — log it for quality tracking
+    if (hasFVGConfluence) {
+      if (ictLog) logger.info(`[ICT] ✅ MSB + OB + FVG — highest probability setup`);
+    } else {
+      if (ictLog) logger.info(`[ICT] ⚠️ MSB + OB (no FVG) — valid but lower probability`);
     }
 
-    reasons.push(`M15 MSB + OB + FVG confirmed ✅ price in ${inOB ? 'Order Block' : 'equilibrium'} zone, TP=${tpTarget.toFixed(5)}`);
+    reasons.push(`M15 ${bosType} + OB${hasFVGConfluence ? ' + FVG ✅' : ''} — price in ${inOB ? 'Order Block' : 'equilibrium'} zone, TP=${tpTarget.toFixed(5)}`);
 
     return {
       isValid: true,
