@@ -104,13 +104,14 @@ export class SwingService {
 
         const compareCandle = candles[j];
         
-        // Check swing high: current high must be strictly higher than all others
-        if (compareCandle.high >= currentCandle.high) {
+        // Check swing high: current high must be higher than all others
+        // Use > (not >=) so equal highs don't kill pivots (Deriv candle boundary values)
+        if (compareCandle.high > currentCandle.high) {
           isSwingHigh = false;
         }
-        
-        // Check swing low: current low must be strictly lower than all others
-        if (compareCandle.low <= currentCandle.low) {
+
+        // Check swing low: current low must be lower than all others
+        if (compareCandle.low < currentCandle.low) {
           isSwingLow = false;
         }
 
@@ -347,8 +348,8 @@ export class SwingService {
 
       for (let j = i - pivotLeft; j <= i + pivotRight; j++) {
         if (j === i) continue;
-        if (candles[j].high >= current.high) isHighCandidate = false;
-        if (candles[j].low <= current.low) isLowCandidate = false;
+        if (candles[j].high > current.high) isHighCandidate = false;
+        if (candles[j].low < current.low) isLowCandidate = false;
         if (!isHighCandidate && !isLowCandidate) break;
       }
 
