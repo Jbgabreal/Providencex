@@ -650,65 +650,17 @@ export class ICTEntryService {
     const bearishRange = Math.abs(lastSH.price - prevSL.price);
     const bearishMSB = lastSL.price < prevSL.price - bearishRange * FIB_FACTOR;
 
-    // Also accept simple HH/HL or LH/LL without fib confirmation as a weaker signal
-    const simpleBullishMSB = lastSH.price > prevSH.price;
-    const simpleBearishMSB = lastSL.price < prevSL.price;
-
-    const hasMSB = (bias.direction === 'bullish' && (bullishMSB || simpleBullishMSB)) ||
-                   (bias.direction === 'bearish' && (bearishMSB || simpleBearishMSB));
+    // STRICT: Only accept confirmed MSB (with fib_factor displacement)
+    // Simple HH/LL is NOT enough — matches PineScript MSB-OB exactly
+    const hasMSB = (bias.direction === 'bullish' && bullishMSB) ||
+                   (bias.direction === 'bearish' && bearishMSB);
 
     if (!hasMSB) {
-      // No MSB matching H4 bias — but still look for OB at the recent swing extreme
-      // If H4=bullish and M15 made LL, the LL area could be the reversal OB (smart money accumulation)
-      // If H4=bearish and M15 made HH, the HH area could be the reversal OB (smart money distribution)
-      if (ictLog) logger.info(`[ICT] No M15 ${bias.direction} MSB — HH=${simpleBullishMSB}, LL=${simpleBearishMSB}. Trying reversal OB...`);
-
-      // Look for OB at the most recent swing that opposes the H4 bias (potential reversal zone)
-      let revObHigh = 0, revObLow = 0, revObIndex = -1, revObFound = false;
-      if (bias.direction === 'bullish' && swingLows.length > 0) {
-        // Bullish H4 + M15 pullback: OB near the latest swing low
-        const sl = swingLows[swingLows.length - 1];
-        const scanStart = Math.min(sl.index + 5, m15Candles.length - 1);
-        const scanEnd = Math.max(sl.index - 5, 0);
-        for (let i = scanStart; i >= scanEnd; i--) {
-          const c = m15Candles[i];
-          if (c.open > c.close) { revObHigh = c.high; revObLow = c.low; revObIndex = i; revObFound = true; break; }
-        }
-      } else if (bias.direction === 'bearish' && swingHighs.length > 0) {
-        const sh = swingHighs[swingHighs.length - 1];
-        const scanStart = Math.min(sh.index + 5, m15Candles.length - 1);
-        const scanEnd = Math.max(sh.index - 5, 0);
-        for (let i = scanStart; i >= scanEnd; i--) {
-          const c = m15Candles[i];
-          if (c.close > c.open) { revObHigh = c.high; revObLow = c.low; revObIndex = i; revObFound = true; break; }
-        }
-      }
-
-      if (revObFound) {
-        const currentPrice = m15Candles[m15Candles.length - 1].close;
-        const tpTarget = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
-        const revObRange = revObHigh - revObLow;
-        const revObBuffer = revObRange * 0.5;
-
-        // Check if price is at or near the reversal OB — if so, it's a valid setup
-        const priceNearRevOB = bias.direction === 'bullish'
-          ? (currentPrice <= revObHigh + revObBuffer && currentPrice >= revObLow - revObBuffer)
-          : (currentPrice >= revObLow - revObBuffer && currentPrice <= revObHigh + revObBuffer);
-
-        if (ictLog) logger.info(`[ICT] Reversal OB: ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)} (idx=${revObIndex}), price=${currentPrice.toFixed(5)}, near=${priceNearRevOB}`);
-
-        if (priceNearRevOB) {
-          // Price IS at the reversal OB — treat as valid setup (M15 retracement = buy/sell zone)
-          reasons.push(`M15 retracement OB (${bias.direction === 'bullish' ? 'BUY' : 'SELL'} zone) at ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)}`);
-          return { isValid: true, direction: bias.direction, hasDisplacement: true, hasFVG: false, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
-        }
-
-        // Price not at OB yet — show as POI (watching)
-        reasons.push(`Reversal OB at ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)} — waiting for price`);
-        return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: false, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
-      }
-
-      reasons.push(`No M15 MSB in ${bias.direction} direction (HH=${simpleBullishMSB}, LL=${simpleBearishMSB})`);
+      // Log what we found but don't enter — no confirmed MSB = no valid setup
+      const simpleBullish = lastSH.price > prevSH.price;
+      const simpleBearish = lastSL.price < prevSL.price;
+      if (ictLog) logger.info(`[ICT] No CONFIRMED M15 MSB (need 33% fib displacement). Simple HH=${simpleBullish}, LL=${simpleBearish}`);
+      reasons.push(`No confirmed MSB (need ${(FIB_FACTOR*100).toFixed(0)}% displacement beyond prior swing)`);
       return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
@@ -908,13 +860,22 @@ export class ICTEntryService {
     const tpTarget = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
 
     const hasFVGConfluence = !!nearbyFVG;
-    reasons.push(`M15 MSB confirmed + price in ${inOB ? 'Order Block' : 'equilibrium'} zone${hasFVGConfluence ? ' +FVG' : ''}, TP=${tpTarget.toFixed(5)}`);
+
+    // STRICT: OB must have FVG to confirm smart money displacement
+    // Without FVG, the OB is weaker — show as POI but don't enter
+    if (!hasFVGConfluence) {
+      if (ictLog) logger.info(`[ICT] OB has no FVG — showing as POI only (need FVG for confirmed entry)`);
+      reasons.push(`MSB+OB confirmed but no FVG — need displacement imbalance. OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
+      return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: false, zoneLow: obLow, zoneHigh: obHigh, tpTarget, reasons };
+    }
+
+    reasons.push(`M15 MSB + OB + FVG confirmed ✅ price in ${inOB ? 'Order Block' : 'equilibrium'} zone, TP=${tpTarget.toFixed(5)}`);
 
     return {
       isValid: true,
       direction: bias.direction,
       hasDisplacement: true,
-      hasFVG: hasFVGConfluence,
+      hasFVG: true,
       displacementCandleIndex: obIndex,
       zoneLow: obLow,
       zoneHigh: obHigh,
