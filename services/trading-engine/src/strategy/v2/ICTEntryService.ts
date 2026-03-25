@@ -42,6 +42,7 @@ export interface ICTSetupZone {
   isValid: boolean;
   direction: 'bullish' | 'bearish' | 'sideways';
   hasDisplacement: boolean;
+  hasFVG: boolean; // Whether the OB has an FVG (higher probability)
   displacementCandleIndex?: number;
   fvg?: { low: number; high: number; index: number };
   orderBlock?: OrderBlockV2;
@@ -569,7 +570,7 @@ export class ICTEntryService {
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
     if (m15Candles.length < 20) {
-      return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons: ['Insufficient M15 candles'] };
+      return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons: ['Insufficient M15 candles'] };
     }
 
     // ═══════════════════════════════════════════════════════
@@ -592,7 +593,7 @@ export class ICTEntryService {
 
     if (swingHighs.length < 2 || swingLows.length < 2) {
       reasons.push(`Not enough M15 swings: ${swingHighs.length} highs, ${swingLows.length} lows`);
-      return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
+      return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
     // 2. Detect Market Structure Break (MSB) with fib_factor confirmation
@@ -662,16 +663,16 @@ export class ICTEntryService {
         if (priceNearRevOB) {
           // Price IS at the reversal OB — treat as valid setup (M15 retracement = buy/sell zone)
           reasons.push(`M15 retracement OB (${bias.direction === 'bullish' ? 'BUY' : 'SELL'} zone) at ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)}`);
-          return { isValid: true, direction: bias.direction, hasDisplacement: true, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
+          return { isValid: true, direction: bias.direction, hasDisplacement: true, hasFVG: false, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
         }
 
         // Price not at OB yet — show as POI (watching)
         reasons.push(`Reversal OB at ${revObLow.toFixed(5)}-${revObHigh.toFixed(5)} — waiting for price`);
-        return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
+        return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: false, zoneLow: revObLow, zoneHigh: revObHigh, tpTarget, reasons };
       }
 
       reasons.push(`No M15 MSB in ${bias.direction} direction (HH=${simpleBullishMSB}, LL=${simpleBearishMSB})`);
-      return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
+      return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
     // Log the full swing structure for visibility
@@ -730,32 +731,54 @@ export class ICTEntryService {
 
     if (!obFound) {
       reasons.push(`No Order Block found before MSB`);
-      return { isValid: false, direction: bias.direction, hasDisplacement: false, zoneLow: 0, zoneHigh: 0, reasons };
+      return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
-    // 3b. Detect FVG near the OB — the most valid OBs leave FVGs behind
-    // Uses joshyattridge/LuxAlgo FVG detection with auto-threshold filtering
+    // 3b. Detect FVG created by the impulse FROM the OB
+    // The valid FVG is in the candles AFTER the OB — the displacement that followed
+    // Check by PRICE LEVEL proximity (not just candle index)
     const fvgService = new FairValueGapService(50, true);
     const fvgs = fvgService.detectFVGs(m15Candles, 'ITF', bias.direction === 'bullish' ? 'discount' : 'premium');
-    const unfilledFVGs = fvgs.filter(f => !f.filled);
 
-    // Find UNFILLED FVG near the OB (within 10 candles)
-    const nearbyFVGObj = fvgService.findFVGNearIndex(fvgs, obIndex, 10);
-    let nearbyFVG: { low: number; high: number } | null = nearbyFVGObj
-      ? { low: nearbyFVGObj.low, high: nearbyFVGObj.high }
-      : null;
+    // Find FVG that:
+    // 1. Is AFTER the OB candle (created by the impulse from the OB)
+    // 2. Overlaps or is adjacent to the OB price zone
+    // 3. Is not yet filled/mitigated
+    let nearbyFVG: { low: number; high: number } | null = null;
+    const obMidPrice = (obHigh + obLow) / 2;
+    const obPriceRange = obHigh - obLow;
+    const maxPriceDist = Math.max(obPriceRange * 3, obMidPrice * 0.005); // 3x OB range or 0.5% of price
+
+    for (const fvg of fvgs) {
+      if (fvg.filled) continue;
+      if (!fvg.candleIndices) continue;
+
+      const fvgStartIdx = fvg.candleIndices[0];
+      // FVG must be AFTER or AT the OB (the impulse that came from the OB)
+      if (fvgStartIdx < obIndex - 2) continue;
+
+      // Check price proximity — FVG zone overlaps or is within maxPriceDist of OB zone
+      const fvgMid = (fvg.high + fvg.low) / 2;
+      const priceOverlap = fvg.low <= obHigh && fvg.high >= obLow; // Zones overlap
+      const priceClose = Math.abs(fvgMid - obMidPrice) <= maxPriceDist;
+
+      if (priceOverlap || priceClose) {
+        nearbyFVG = { low: fvg.low, high: fvg.high };
+        break;
+      }
+    }
 
     // If FVG found near OB, expand the zone to cover both OB and FVG
     if (nearbyFVG) {
       const combinedLow = Math.min(obLow, nearbyFVG.low);
       const combinedHigh = Math.max(obHigh, nearbyFVG.high);
       if (ictLog) {
-        logger.info(`[ICT] FVG found near OB! FVG=${nearbyFVG.low.toFixed(5)}-${nearbyFVG.high.toFixed(5)}, OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)} → Combined=${combinedLow.toFixed(5)}-${combinedHigh.toFixed(5)}`);
+        logger.info(`[ICT] ✅ FVG+OB confluence! FVG=${nearbyFVG.low.toFixed(5)}-${nearbyFVG.high.toFixed(5)}, OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)} → Combined=${combinedLow.toFixed(5)}-${combinedHigh.toFixed(5)}`);
       }
       obLow = combinedLow;
       obHigh = combinedHigh;
     } else if (ictLog) {
-      logger.info(`[ICT] No FVG near OB (${fvgs.length} total FVGs detected)`);
+      logger.info(`[ICT] No FVG near OB (${fvgs.length} FVGs, none overlap OB at ${obLow.toFixed(5)}-${obHigh.toFixed(5)})`);
     }
 
     // 4. Check OB invalidation (PineScript: close < bottom invalidates bullish OB)
@@ -763,12 +786,12 @@ export class ICTEntryService {
     if (bias.direction === 'bullish' && currentPrice < obLow) {
       if (ictLog) logger.info(`[ICT] Bu-OB INVALIDATED — price ${currentPrice.toFixed(5)} closed below OB low ${obLow.toFixed(5)}`);
       reasons.push(`Bu-OB broken: price=${currentPrice.toFixed(5)} < OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
-      return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, reasons };
+      return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: !!nearbyFVG, zoneLow: obLow, zoneHigh: obHigh, reasons };
     }
     if (bias.direction === 'bearish' && currentPrice > obHigh) {
       if (ictLog) logger.info(`[ICT] Be-OB INVALIDATED — price ${currentPrice.toFixed(5)} closed above OB high ${obHigh.toFixed(5)}`);
       reasons.push(`Be-OB broken: price=${currentPrice.toFixed(5)} > OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
-      return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, reasons };
+      return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: !!nearbyFVG, zoneLow: obLow, zoneHigh: obHigh, reasons };
     }
 
     // 5. Check if price is at or near the Order Block zone
@@ -818,7 +841,7 @@ export class ICTEntryService {
           `eq=${equilibrium.toFixed(5)} price=${currentPrice.toFixed(5)} in ${side} — waiting for ${bias.direction === 'bullish' ? 'discount pullback' : 'premium pullback'}`
         );
         const tpReject = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
-        return { isValid: false, direction: bias.direction, hasDisplacement: true, zoneLow: obLow, zoneHigh: obHigh, tpTarget: tpReject, reasons };
+        return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: !!nearbyFVG, zoneLow: obLow, zoneHigh: obHigh, tpTarget: tpReject, reasons };
       }
     }
 
@@ -827,12 +850,14 @@ export class ICTEntryService {
     // Bearish: TP at the swing low (the LL that confirmed the MSB)
     const tpTarget = bias.direction === 'bullish' ? lastSH.price : lastSL.price;
 
-    reasons.push(`M15 MSB confirmed + price in ${inOB ? 'Order Block' : 'equilibrium'} zone, TP=${tpTarget.toFixed(5)}`);
+    const hasFVGConfluence = !!nearbyFVG;
+    reasons.push(`M15 MSB confirmed + price in ${inOB ? 'Order Block' : 'equilibrium'} zone${hasFVGConfluence ? ' +FVG' : ''}, TP=${tpTarget.toFixed(5)}`);
 
     return {
       isValid: true,
       direction: bias.direction,
       hasDisplacement: true,
+      hasFVG: hasFVGConfluence,
       displacementCandleIndex: obIndex,
       zoneLow: obLow,
       zoneHigh: obHigh,
@@ -899,7 +924,13 @@ export class ICTEntryService {
     }
 
     if (ictLog) {
-      logger.info(`[ICT] M1: Price touched M15 OB zone at M1 idx ${touchIndex}`);
+      logger.info(`[ICT] M1: Price touched M15 OB zone at M1 idx ${touchIndex}, hasFVG=${setupZone.hasFVG}`);
+    }
+
+    // Prefer OB+FVG confluence — if no FVG, the OB is weaker and more likely to fail
+    // Still allow entry without FVG but log it as lower quality
+    if (!setupZone.hasFVG && ictLog) {
+      logger.info(`[ICT] M1: ⚠️ OB has no FVG — lower probability setup`);
     }
 
     // 2. After price touches OB, look for M1 confirmation candle
