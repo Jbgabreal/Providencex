@@ -617,11 +617,13 @@ export class ICTEntryService {
       logger.info(`[ICT] M15 ${bias.direction} BOS at idx ${biasAlignedBOS.index}, broke ${biasAlignedBOS.brokenSwingType} @ ${biasAlignedBOS.level.toFixed(2)}`);
     }
 
-    // 4. Build structural range from recent swing high and low
-    const lastSwingHigh = swingHighs[swingHighs.length - 1];
-    const lastSwingLow = swingLows[swingLows.length - 1];
-    const rangeHigh = lastSwingHigh.price;
-    const rangeLow = lastSwingLow.price;
+    // 4. Build structural range from the swing high and low that form the BOS leg
+    // Find the swing pair that brackets the BOS event (not just the latest swings)
+    // Use the highest high and lowest low from recent swings to form a valid range
+    const recentSwingHighPrices = swingHighs.slice(-5).map(s => s.price);
+    const recentSwingLowPrices = swingLows.slice(-5).map(s => s.price);
+    const rangeHigh = Math.max(...recentSwingHighPrices);
+    const rangeLow = Math.min(...recentSwingLowPrices);
     const range = rangeHigh - rangeLow;
 
     if (range <= 0) {
@@ -634,27 +636,22 @@ export class ICTEntryService {
     let oteHigh: number;
 
     if (bias.direction === 'bullish') {
-      // Bullish: price broke above swing high, now retracing DOWN
-      // 60% retracement from high = rangeLow + range * 0.40
-      // 78% retracement from high = rangeLow + range * 0.22
-      // OTE zone is between these two levels (price is LOW in the range = discount)
-      oteLow = rangeLow + range * 0.22;   // 78% retracement (deeper)
-      oteHigh = rangeLow + range * 0.40;  // 60% retracement (shallower)
+      // Bullish: price retracing into discount zone (below 50% = discount)
+      // Wider zone: 50-85% retracement to catch more valid setups
+      oteLow = rangeLow + range * 0.15;   // 85% retracement (deeper)
+      oteHigh = rangeLow + range * 0.50;  // 50% retracement (midpoint)
     } else {
-      // Bearish: price broke below swing low, now retracing UP
-      // 60% retracement from low = rangeLow + range * 0.60
-      // 78% retracement from low = rangeLow + range * 0.78
-      // OTE zone is between these two levels (price is HIGH in the range = premium)
-      oteLow = rangeLow + range * 0.60;   // 60% retracement (shallower)
-      oteHigh = rangeLow + range * 0.78;  // 78% retracement (deeper)
+      // Bearish: price retracing into premium zone (above 50% = premium)
+      oteLow = rangeLow + range * 0.50;   // 50% retracement (midpoint)
+      oteHigh = rangeLow + range * 0.85;  // 85% retracement (deeper)
     }
 
     // 6. Check if current price is in OTE zone
     const currentPrice = m15Candles[m15Candles.length - 1].close;
     const fibPosition = (currentPrice - rangeLow) / range;
 
-    // Allow a small buffer around OTE zone (5% of range on each side)
-    const oteBuffer = range * 0.05;
+    // Allow a generous buffer around OTE zone (10% of range on each side)
+    const oteBuffer = range * 0.10;
     const inOTE = currentPrice >= (oteLow - oteBuffer) && currentPrice <= (oteHigh + oteBuffer);
 
     if (ictLog) {
