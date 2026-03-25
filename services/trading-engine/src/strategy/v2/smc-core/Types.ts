@@ -131,7 +131,7 @@ export type StructuralSwing = {
  * Swing Detection Configuration
  */
 export type SwingConfig = {
-  method: 'fractal' | 'rolling' | 'hybrid' | 'bos-confirmed';
+  method: 'fractal' | 'rolling' | 'hybrid' | 'bos-confirmed' | 'luxalgo';
   pivotLeft?: number;          // for fractal method
   pivotRight?: number;          // for fractal method
   lookbackHigh?: number;        // for rolling method

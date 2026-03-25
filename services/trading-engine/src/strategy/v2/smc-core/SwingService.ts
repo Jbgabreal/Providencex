@@ -32,6 +32,8 @@ export class SwingService {
     const candleData = candlesToData(candles);
 
     switch (this.config.method) {
+      case 'luxalgo':
+        return this.detectLuxAlgoSwings(candleData);
       case 'fractal':
         return this.detectFractalSwings(candleData);
       case 'rolling':
@@ -76,11 +78,139 @@ export class SwingService {
   }
 
   /**
+   * LuxAlgo Swing Detection — Port of the #1 TradingView SMC indicator
+   *
+   * Original PineScript (LuxAlgo Smart Money Concepts):
+   *   swings(len) =>
+   *     var os = 0
+   *     upper = ta.highest(len)
+   *     lower = ta.lowest(len)
+   *     os := high[len] > upper ? 0 : low[len] < lower ? 1 : os[1]
+   *     top = os == 0 and os[1] != 0 ? high[len] : 0
+   *     btm = os == 1 and os[1] != 1 ? low[len] : 0
+   *
+   * How it works:
+   * - A bar is a swing high if its high hasn't been exceeded in the next `len` bars
+   * - A bar is a swing low if its low hasn't been undercut in the next `len` bars
+   * - State machine (os) ensures strict H-L-H-L alternation
+   * - Confirmed only after `len` bars pass (no repainting)
+   *
+   * After detection, applies joshyattridge-style deduplication:
+   * - Consecutive same-direction swings are reduced to the extreme (highest HH, lowest LL)
+   * - Ensures strict alternating high-low-high-low output
+   */
+  private detectLuxAlgoSwings(candles: CandleData[]): SwingPoint[] {
+    const len = this.config.pivotLeft ?? 10;
+
+    if (candles.length < len * 2 + 1) return [];
+
+    const swings: SwingPoint[] = [];
+
+    // State: 0 = last confirmed was a swing high, 1 = last confirmed was a swing low
+    let os = -1; // -1 = uninitialized
+
+    for (let i = len; i < candles.length; i++) {
+      // ta.highest(len) = highest high of bars [i-len+1 ... i] (current len bars)
+      let upper = -Infinity;
+      let lower = Infinity;
+      for (let j = i - len + 1; j <= i; j++) {
+        if (candles[j].high > upper) upper = candles[j].high;
+        if (candles[j].low < lower) lower = candles[j].low;
+      }
+
+      // Check bar [i - len] against the current window
+      const checkIdx = i - len;
+      if (checkIdx < 0) continue;
+
+      const checkBar = candles[checkIdx];
+      const prevOs = os;
+
+      // high[len] > upper → this bar's high exceeded everything after it → swing high (os = 0)
+      // low[len] < lower → this bar's low is below everything after it → swing low (os = 1)
+      if (checkBar.high > upper) {
+        os = 0;
+      } else if (checkBar.low < lower) {
+        os = 1;
+      }
+      // else: os stays the same
+
+      // Detect transitions (swing confirmations)
+      if (os === 0 && prevOs !== 0 && prevOs !== -1) {
+        // Transition to swing high state → confirm swing high at checkIdx
+        swings.push({
+          index: checkIdx,
+          type: 'high',
+          price: checkBar.high,
+          timestamp: checkBar.timestamp,
+        });
+      }
+
+      if (os === 1 && prevOs !== 1 && prevOs !== -1) {
+        // Transition to swing low state → confirm swing low at checkIdx
+        swings.push({
+          index: checkIdx,
+          type: 'low',
+          price: checkBar.low,
+          timestamp: checkBar.timestamp,
+        });
+      }
+    }
+
+    // Apply joshyattridge deduplication: remove consecutive same-direction swings
+    return this.deduplicateSwings(swings);
+  }
+
+  /**
+   * Deduplicate swings: enforce strict H-L-H-L alternation
+   * When two consecutive highs appear, keep the highest.
+   * When two consecutive lows appear, keep the lowest.
+   * (Port of joshyattridge/smart-money-concepts Python logic)
+   */
+  private deduplicateSwings(swings: SwingPoint[]): SwingPoint[] {
+    if (swings.length < 2) return swings;
+
+    let changed = true;
+    let result = [...swings];
+
+    while (changed) {
+      changed = false;
+      const filtered: SwingPoint[] = [];
+
+      for (let i = 0; i < result.length; i++) {
+        if (i === result.length - 1) {
+          filtered.push(result[i]);
+          break;
+        }
+
+        const curr = result[i];
+        const next = result[i + 1];
+
+        if (curr.type === next.type) {
+          // Same direction — keep the extreme
+          changed = true;
+          if (curr.type === 'high') {
+            filtered.push(curr.price >= next.price ? curr : next);
+          } else {
+            filtered.push(curr.price <= next.price ? curr : next);
+          }
+          i++; // skip next
+        } else {
+          filtered.push(curr);
+        }
+      }
+
+      result = filtered;
+    }
+
+    return result;
+  }
+
+  /**
    * Approach 1: Fractal/Pivot-Based Detection
-   * 
+   *
    * A candle at index i is a swing high if its high is the maximum among
    * [i - pivotLeft, ..., i + pivotRight].
-   * 
+   *
    * Non-repainting but delayed by pivotRight bars.
    */
   private detectFractalSwings(candles: CandleData[]): SwingPoint[] {

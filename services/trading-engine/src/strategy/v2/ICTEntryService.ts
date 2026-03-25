@@ -591,7 +591,9 @@ export class ICTEntryService {
     // ═══════════════════════════════════════════════════════
 
     // 1. Detect swings using fractal method
-    const fallbackService = new SwingService({ method: 'fractal', pivotLeft: 5, pivotRight: 5 });
+    // Use LuxAlgo swing detection — proven algorithm from the #1 TradingView SMC indicator
+    // pivotLeft controls the lookback length (equivalent to PineScript's zigzag_len)
+    const fallbackService = new SwingService({ method: 'luxalgo', pivotLeft: 10 });
     const allSwings = fallbackService.detectSwings(m15Candles);
     const swingHighs = allSwings.filter(s => s.type === 'high').sort((a, b) => a.index - b.index);
     const swingLows = allSwings.filter(s => s.type === 'low').sort((a, b) => a.index - b.index);
