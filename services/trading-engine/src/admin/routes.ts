@@ -1077,6 +1077,89 @@ router.put('/settings/:key', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/v1/admin/debug-bias/:symbol — Debug H4 bias for a symbol
+router.get('/debug-bias/:symbol', async (req: Request, res: Response) => {
+  try {
+    const { getDerivCandleProvider } = require('../marketData/DerivCandleProvider');
+    const dp = getDerivCandleProvider();
+    const symbol = req.params.symbol.toUpperCase();
+
+    if (!dp) {
+      return res.json({ error: 'No DerivCandleProvider available' });
+    }
+
+    const h4 = dp.getH4Candles(symbol, 50);
+    const m15 = dp.getM15Candles(symbol, 200);
+
+    // Run pivot detection manually
+    const candles = h4;
+    const pivots: any[] = [];
+    for (let i = 2; i < candles.length - 2; i++) {
+      const c = candles[i];
+      let isHigh = true, isLow = true;
+      for (let j = 1; j <= 2; j++) {
+        if (candles[i-j].high >= c.high || candles[i+j].high >= c.high) isHigh = false;
+        if (candles[i-j].low <= c.low || candles[i+j].low <= c.low) isLow = false;
+      }
+      if (isHigh) pivots.push({ i, type: 'high', price: c.high, time: c.startTime });
+      if (isLow) pivots.push({ i, type: 'low', price: c.low, time: c.startTime });
+    }
+
+    // Compress
+    const compressed: any[] = [];
+    if (pivots.length > 0) {
+      let group = [pivots[0]];
+      for (let i = 1; i < pivots.length; i++) {
+        if (pivots[i].type === group[0].type) { group.push(pivots[i]); }
+        else {
+          const best = group[0].type === 'high'
+            ? group.reduce((b: any, p: any) => p.price > b.price ? p : b, group[0])
+            : group.reduce((b: any, p: any) => p.price < b.price ? p : b, group[0]);
+          compressed.push(best);
+          group = [pivots[i]];
+        }
+      }
+      const last = group[0].type === 'high'
+        ? group.reduce((b: any, p: any) => p.price > b.price ? p : b, group[0])
+        : group.reduce((b: any, p: any) => p.price < b.price ? p : b, group[0]);
+      compressed.push(last);
+    }
+
+    // Classify
+    const highs = compressed.filter((p: any) => p.type === 'high');
+    const lows = compressed.filter((p: any) => p.type === 'low');
+    let bias = 'sideways';
+    let details: any = {};
+    if (highs.length >= 2 && lows.length >= 2) {
+      let hh=0,lh=0,hl=0,ll=0;
+      for(let i=1;i<highs.length;i++){if(highs[i].price>highs[i-1].price)hh++;else lh++}
+      for(let i=1;i<lows.length;i++){if(lows[i].price>lows[i-1].price)hl++;else ll++}
+      const bull=hh+hl, bear=lh+ll;
+      const lastPairHH = highs[highs.length-1].price > highs[highs.length-2].price;
+      const lastPairHL = lows[lows.length-1].price > lows[lows.length-2].price;
+      if (lastPairHH && lastPairHL) bias = 'bullish';
+      else if (!lastPairHH && !lastPairHL) bias = 'bearish';
+      else if (bear > bull) bias = 'bearish (broader)';
+      else if (bull > bear) bias = 'bullish (broader)';
+      details = { hh, lh, hl, ll, bull, bear, lastPairHH, lastPairHL };
+    }
+
+    res.json({
+      symbol,
+      h4CandleCount: h4.length,
+      m15CandleCount: m15.length,
+      h4Sample: h4.slice(0, 3).map((c: any) => ({ time: c.startTime, O: c.open, H: c.high, L: c.low, C: c.close })),
+      h4Last3: h4.slice(-3).map((c: any) => ({ time: c.startTime, O: c.open, H: c.high, L: c.low, C: c.close })),
+      rawPivots: pivots.length,
+      compressed: compressed.map((p: any) => ({ type: p.type, price: p.price })),
+      bias,
+      details,
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 // GET /api/v1/admin/engine-status
 // Returns live engine state: price feed health, candle counts, recent decisions
 router.get('/engine-status', async (req: Request, res: Response) => {
