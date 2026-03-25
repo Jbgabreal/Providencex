@@ -1180,7 +1180,7 @@ async function start(): Promise<void> {
 
       // Historical backfill now handled by DerivCandleProvider on WebSocket connect.
       // Start tick loop after a short delay to allow Deriv backfill to complete.
-      logger.info('[DerivCandleProvider] Waiting 10s for Deriv historical backfill before starting tick loop...');
+      logger.info('[DerivCandleProvider] Waiting 30s for Deriv historical backfill (H4+M15+M1 per symbol) before starting tick loop...');
       setTimeout(() => {
           logger.info('Starting tick loop...');
           setInterval(() => {
@@ -1195,7 +1195,7 @@ async function start(): Promise<void> {
               logger.error('Error in initial tick', error);
             });
           }, 5000); // Wait 5 seconds for services to be ready
-      }, 10000); // 10s delay for Deriv backfill
+      }, 30000); // 30s delay for Deriv multi-TF backfill
 
       // Start v4 Open Trades Service
       openTradesService.start();

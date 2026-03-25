@@ -197,34 +197,64 @@ export class DerivCandleProvider extends EventEmitter {
 
   /**
    * Subscribe to historical + live candles for all supported symbols.
-   * Staggers requests with a 2s delay between each to avoid Deriv dropping responses.
+   * For each symbol, requests:
+   *   1. H4 candles (50) — expanded into M1-spaced candles for MarketDataService aggregation
+   *   2. M15 candles (200) — expanded into M1-spaced candles
+   *   3. M1 candles (live subscription) — real-time updates
+   * Staggers symbols with 6s delay; within a symbol, staggers timeframes with 1s.
    */
   private subscribeAll(): void {
-    this.supportedSymbols.forEach((symbol, index) => {
+    this.supportedSymbols.forEach((symbol, symbolIndex) => {
       const derivSymbol = SYMBOL_MAP[symbol];
       if (!derivSymbol) return;
 
-      // Stagger requests: 0s, 2s, 4s, 6s...
-      setTimeout(() => {
-        if (!this.ws || this.ws.readyState !== 1) return; // WebSocket.OPEN = 1
+      const baseDelay = symbolIndex * 6000; // 6s per symbol
 
-        // Request 7 days of M1 candles (7 * 24 * 60 = 10080 candles)
-        // This gives enough data for H4 aggregation (42+ H4 candles)
-        const sevenDaysAgo = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000);
+      // Request 1: H4 historical candles (backfill for bias detection)
+      setTimeout(() => {
+        if (!this.ws || this.ws.readyState !== 1) return;
         const reqId = this.reqIdCounter++;
-        const request = {
+        this.ws!.send(JSON.stringify({
+          ticks_history: derivSymbol,
+          style: 'candles',
+          granularity: 14400, // H4
+          count: 50,
+          end: 'latest',
+          req_id: reqId,
+        }));
+        logger.info(`[DerivCandleProvider] Requesting H4 history for ${symbol} (${derivSymbol}) [${symbolIndex + 1}/${this.supportedSymbols.length}]`);
+      }, baseDelay);
+
+      // Request 2: M15 historical candles (backfill for setup detection)
+      setTimeout(() => {
+        if (!this.ws || this.ws.readyState !== 1) return;
+        const reqId = this.reqIdCounter++;
+        this.ws!.send(JSON.stringify({
+          ticks_history: derivSymbol,
+          style: 'candles',
+          granularity: 900, // M15
+          count: 200,
+          end: 'latest',
+          req_id: reqId,
+        }));
+        logger.info(`[DerivCandleProvider] Requesting M15 history for ${symbol} (${derivSymbol})`);
+      }, baseDelay + 1000);
+
+      // Request 3: M1 candles with live subscription (real-time updates)
+      setTimeout(() => {
+        if (!this.ws || this.ws.readyState !== 1) return;
+        const reqId = this.reqIdCounter++;
+        this.ws!.send(JSON.stringify({
           ticks_history: derivSymbol,
           style: 'candles',
           granularity: 60, // M1
-          start: sevenDaysAgo,
+          count: 5000,
           end: 'latest',
           subscribe: 1,
           req_id: reqId,
-        };
-
-        logger.info(`[DerivCandleProvider] Requesting 7d history + subscription for ${symbol} (${derivSymbol}) [${index + 1}/${this.supportedSymbols.length}]`);
-        this.ws!.send(JSON.stringify(request));
-      }, index * 2000);
+        }));
+        logger.info(`[DerivCandleProvider] Requesting M1 history + live subscription for ${symbol} (${derivSymbol})`);
+      }, baseDelay + 2000);
     });
   }
 
@@ -260,15 +290,19 @@ export class DerivCandleProvider extends EventEmitter {
 
   /**
    * Process historical candles from ticks_history response.
+   * H4/M15 candles are expanded into M1-spaced candles so MarketDataService can aggregate them.
    */
   private handleHistoricalCandles(msg: any): void {
     const candles = msg.candles;
     const derivSymbol = msg.echo_req?.ticks_history;
+    const granularity = msg.echo_req?.granularity || 60;
 
-    logger.info(`[DerivCandleProvider] Received candles response: symbol=${derivSymbol}, count=${candles?.length || 0}`);
+    const tfLabel = granularity === 14400 ? 'H4' : granularity === 900 ? 'M15' : 'M1';
+
+    logger.info(`[DerivCandleProvider] Received ${tfLabel} candles: symbol=${derivSymbol}, count=${candles?.length || 0}`);
 
     if (!candles || !Array.isArray(candles) || candles.length === 0) {
-      logger.warn(`[DerivCandleProvider] Empty candles for ${derivSymbol}`);
+      logger.warn(`[DerivCandleProvider] Empty ${tfLabel} candles for ${derivSymbol}`);
       return;
     }
 
@@ -280,24 +314,62 @@ export class DerivCandleProvider extends EventEmitter {
     }
 
     let inserted = 0;
-    for (const c of candles) {
-      const startTime = new Date(c.epoch * 1000);
-      const endTime = new Date(startTime.getTime() + 60000);
 
-      const candle: Candle = {
-        symbol: stdSymbol,
-        timeframe: 'M1',
-        open: Number(c.open),
-        high: Number(c.high),
-        low: Number(c.low),
-        close: Number(c.close),
-        volume: 1,
-        startTime,
-        endTime,
-      };
+    if (granularity === 60) {
+      // M1 candles — insert directly
+      for (const c of candles) {
+        const startTime = new Date(c.epoch * 1000);
+        const endTime = new Date(startTime.getTime() + 60000);
+        this.config.candleStore.addCandle({
+          symbol: stdSymbol, timeframe: 'M1',
+          open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close),
+          volume: 1, startTime, endTime,
+        });
+        inserted++;
+      }
+    } else {
+      // H4 or M15 candles — expand each into M1-spaced candles
+      // Each higher-TF candle becomes multiple M1 candles spread across its duration
+      // so MarketDataService can re-aggregate them correctly
+      const minutesPerCandle = granularity / 60; // H4=240, M15=15
 
-      this.config.candleStore.addCandle(candle);
-      inserted++;
+      for (const c of candles) {
+        const candleStartEpoch = c.epoch * 1000;
+        const open = Number(c.open);
+        const high = Number(c.high);
+        const low = Number(c.low);
+        const close = Number(c.close);
+
+        // Create M1 candles that reconstruct the OHLC pattern:
+        // First minute: open price, Last minute: close price, Middle: interpolated
+        for (let m = 0; m < minutesPerCandle; m++) {
+          const minuteStart = new Date(candleStartEpoch + m * 60000);
+          const minuteEnd = new Date(minuteStart.getTime() + 60000);
+
+          // Spread OHLC across the period: first=open, middle=high/low, last=close
+          let price: number;
+          if (m === 0) {
+            price = open;
+          } else if (m === Math.floor(minutesPerCandle / 3)) {
+            price = high;
+          } else if (m === Math.floor(2 * minutesPerCandle / 3)) {
+            price = low;
+          } else if (m === minutesPerCandle - 1) {
+            price = close;
+          } else {
+            // Linear interpolation from open to close
+            const t = m / (minutesPerCandle - 1);
+            price = open + (close - open) * t;
+          }
+
+          this.config.candleStore.addCandle({
+            symbol: stdSymbol, timeframe: 'M1',
+            open: price, high: Math.max(price, price), low: Math.min(price, price), close: price,
+            volume: 1, startTime: minuteStart, endTime: minuteEnd,
+          });
+          inserted++;
+        }
+      }
     }
 
     this.backfillComplete.add(stdSymbol);
@@ -308,7 +380,7 @@ export class DerivCandleProvider extends EventEmitter {
     this.updateTick(stdSymbol, closePrice, new Date(lastCandle.epoch * 1000));
 
     logger.info(
-      `[DerivCandleProvider] Loaded ${inserted} historical candles for ${stdSymbol} ` +
+      `[DerivCandleProvider] Loaded ${inserted} M1 candles from ${candles.length} ${tfLabel} candles for ${stdSymbol} ` +
       `(store now has ${this.config.candleStore.getCandleCount(stdSymbol)} candles)`
     );
   }
