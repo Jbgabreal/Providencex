@@ -951,9 +951,26 @@ export class ICTEntryService {
     // 3. Entry at the confirmation candle close
     const entryPrice = confirmCandle.close;
 
-    // 4. SL = below/above the M15 OB zone (with small buffer)
-    const slBuffer = (obHigh - obLow) * 0.2;
-    let stopLoss = dir === 'bullish' ? obLow - slBuffer : obHigh + slBuffer;
+    // 4. SL = structural swing invalidation level
+    // For SELL: SL at the recent swing HIGH (structure above us)
+    // For BUY: SL at the recent swing LOW (structure below us)
+    // This is the ICT way — SL at the point that invalidates the setup
+    const m1Swings = this.m1SwingService.detectSwings(m1Candles);
+    const recentM1Highs = m1Swings.filter(s => s.type === 'high' && s.index <= confirmIndex).sort((a, b) => b.index - a.index);
+    const recentM1Lows = m1Swings.filter(s => s.type === 'low' && s.index <= confirmIndex).sort((a, b) => b.index - a.index);
+
+    let stopLoss: number;
+    const slObBuffer = (obHigh - obLow) * 0.5; // Minimum buffer = half OB range
+
+    if (dir === 'bullish') {
+      // BUY SL: below the OB low or the recent M1 swing low — whichever is lower
+      const m1SwingLow = recentM1Lows.length > 0 ? recentM1Lows[0].price : obLow;
+      stopLoss = Math.min(obLow, m1SwingLow) - slObBuffer;
+    } else {
+      // SELL SL: above the OB high or the recent M1 swing high — whichever is higher
+      const m1SwingHigh = recentM1Highs.length > 0 ? recentM1Highs[0].price : obHigh;
+      stopLoss = Math.max(obHigh, m1SwingHigh) + slObBuffer;
+    }
 
     // 5. TP = M15 swing point (the HH for bullish, LL for bearish)
     let takeProfit: number;
