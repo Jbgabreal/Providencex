@@ -184,10 +184,13 @@ export class ICTEntryService {
    *   Stage 4: Classify HH/HL/LH/LL → bullish/bearish/neutral
    */
   private determineH4Bias(h4Candles: Candle[]): ICTBias {
-    const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
+    const ictLog = true; // Always log for debugging
+
+    // Log candle data verification
+    logger.info(`[H4-BIAS] Entry: ${h4Candles.length} candles, first.high=${h4Candles[0]?.high}, first.startTime=${h4Candles[0]?.startTime}, type=${typeof h4Candles[0]?.high}`);
 
     if (h4Candles.length < 5) {
-      if (ictLog) logger.info(`[H4-BIAS] Insufficient candles: ${h4Candles.length} (need ≥5)`);
+      logger.info(`[H4-BIAS] Insufficient candles: ${h4Candles.length} (need ≥5)`);
       return { direction: 'sideways' };
     }
 
