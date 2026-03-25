@@ -1777,7 +1777,7 @@ export class SMCStrategyV2 {
       }
 
       // Outside kill zone — show bias but no entry
-      if (!ictResult.setupZone && !ictResult.entry && ictResult.bias.direction !== 'sideways') {
+      if (!ictResult.setupZone && !ictResult.entry) {
         return createRejection(`Outside kill zone — H4 bias: ${ictResult.bias.direction} (no entry outside London/NY KZ)`);
       }
 
