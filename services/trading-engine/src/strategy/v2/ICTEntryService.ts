@@ -74,11 +74,16 @@ export interface ICTEntryResult {
 }
 
 export class ICTEntryService {
-  private h4StructuralService: StructuralSwingService; // 3-impulse rule for H4 external structure
-  private m15SwingService: SwingService;   // BOS-confirmed swings for M15 structural range
-  private m15BosService: BosService;       // BOS detection on M15
-  private m1SwingService: SwingService;    // Fractal swings for M1 liquidity sweep detection
+  private h4StructuralService: StructuralSwingService;
+  private m15SwingService: SwingService;
+  private m15BosService: BosService;
+  private m1SwingService: SwingService;
   private riskRewardRatio: number;
+
+  // Track broken OBs per symbol — once price closes beyond an OB, it's invalidated forever
+  // Key = "symbol:obLow:obHigh", cleared when new MSB forms (new structure)
+  private brokenOBs: Map<string, Set<string>> = new Map();
+  private lastMSBKey: Map<string, string> = new Map(); // Track when MSB changes
 
   constructor() {
     // H4: Structural swings using 3-consecutive-candle impulse rule for external structure
@@ -110,13 +115,36 @@ export class ICTEntryService {
     this.riskRewardRatio = parseFloat(process.env.SMC_RISK_REWARD || '3');
   }
 
+  /** Mark an OB as broken for a symbol — will not be re-entered */
+  private markOBBroken(symbol: string, obLow: number, obHigh: number): void {
+    const key = `${obLow.toFixed(2)}:${obHigh.toFixed(2)}`;
+    if (!this.brokenOBs.has(symbol)) this.brokenOBs.set(symbol, new Set());
+    this.brokenOBs.get(symbol)!.add(key);
+  }
+
+  /** Check if an OB has been broken before */
+  private isOBBroken(symbol: string, obLow: number, obHigh: number): boolean {
+    const key = `${obLow.toFixed(2)}:${obHigh.toFixed(2)}`;
+    return this.brokenOBs.get(symbol)?.has(key) ?? false;
+  }
+
+  /** Clear broken OBs when new MSB forms (new structure = fresh OBs) */
+  private checkMSBChange(symbol: string, msbKey: string): void {
+    const prevKey = this.lastMSBKey.get(symbol);
+    if (prevKey !== msbKey) {
+      this.brokenOBs.delete(symbol);
+      this.lastMSBKey.set(symbol, msbKey);
+    }
+  }
+
   /**
    * Main ICT entry pipeline
    */
   analyzeICTEntry(
     h4Candles: Candle[],
     m15Candles: Candle[],
-    m1Candles: Candle[]
+    m1Candles: Candle[],
+    symbol: string = 'UNKNOWN'
   ): ICTEntryResult {
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
@@ -152,7 +180,7 @@ export class ICTEntryService {
     // ═══════════════════════════════════════════════════════
     // STEP 2: M15 Setup — BOS in bias direction + OTE retracement
     // ═══════════════════════════════════════════════════════
-    const setupZone = this.detectM15Setup(m15Candles, bias);
+    const setupZone = this.detectM15Setup(m15Candles, bias, symbol);
     if (ictLog && setupZone.isValid) {
       logger.info(`[ICT] M15 OTE zone: ${setupZone.zoneLow.toFixed(2)}-${setupZone.zoneHigh.toFixed(2)}`);
     }
@@ -574,7 +602,7 @@ export class ICTEntryService {
    *   - OTE zone = swingLow + range * 0.60 to swingLow + range * 0.78
    *     (which is 60% to 78% retracement from the low)
    */
-  private detectM15Setup(m15Candles: Candle[], bias: ICTBias): ICTSetupZone {
+  private detectM15Setup(m15Candles: Candle[], bias: ICTBias, symbol: string = 'UNKNOWN'): ICTSetupZone {
     const reasons: string[] = [];
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
@@ -684,6 +712,10 @@ export class ICTEntryService {
       return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
+    // Track MSB changes — new MSB means new structure, clear broken OBs
+    const msbKey = `${bias.direction}:${lastSH.price.toFixed(2)}:${lastSL.price.toFixed(2)}`;
+    this.checkMSBChange(symbol, msbKey);
+
     // Log the full swing structure for visibility
     if (ictLog) {
       const msbType = (bias.direction === 'bullish' && bullishMSB) || (bias.direction === 'bearish' && bearishMSB) ? 'STRONG' : 'SIMPLE';
@@ -743,6 +775,13 @@ export class ICTEntryService {
       return { isValid: false, direction: bias.direction, hasDisplacement: false, hasFVG: false, zoneLow: 0, zoneHigh: 0, reasons };
     }
 
+    // Check if this OB was previously broken — don't re-enter a failed zone
+    if (this.isOBBroken(symbol, obLow, obHigh)) {
+      if (ictLog) logger.info(`[ICT] OB ${obLow.toFixed(5)}-${obHigh.toFixed(5)} already broken — skipping (wait for new MSB)`);
+      reasons.push(`OB ${obLow.toFixed(2)}-${obHigh.toFixed(2)} already broken — need new MSB`);
+      return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: false, zoneLow: obLow, zoneHigh: obHigh, reasons };
+    }
+
     // 3b. Detect FVG created by the impulse FROM the OB
     // The valid FVG is in the candles AFTER the OB — the displacement that followed
     // Check by PRICE LEVEL proximity (not just candle index)
@@ -791,14 +830,17 @@ export class ICTEntryService {
     }
 
     // 4. Check OB invalidation (PineScript: close < bottom invalidates bullish OB)
+    // Once broken, mark it so we NEVER re-enter this OB
     const currentPrice = m15Candles[m15Candles.length - 1].close;
     if (bias.direction === 'bullish' && currentPrice < obLow) {
-      if (ictLog) logger.info(`[ICT] Bu-OB INVALIDATED — price ${currentPrice.toFixed(5)} closed below OB low ${obLow.toFixed(5)}`);
+      this.markOBBroken(symbol, obLow, obHigh); // Mark as broken forever
+      if (ictLog) logger.info(`[ICT] Bu-OB INVALIDATED + MARKED — price ${currentPrice.toFixed(5)} closed below OB ${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
       reasons.push(`Bu-OB broken: price=${currentPrice.toFixed(5)} < OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
       return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: !!nearbyFVG, zoneLow: obLow, zoneHigh: obHigh, reasons };
     }
     if (bias.direction === 'bearish' && currentPrice > obHigh) {
-      if (ictLog) logger.info(`[ICT] Be-OB INVALIDATED — price ${currentPrice.toFixed(5)} closed above OB high ${obHigh.toFixed(5)}`);
+      this.markOBBroken(symbol, obLow, obHigh); // Mark as broken forever
+      if (ictLog) logger.info(`[ICT] Be-OB INVALIDATED + MARKED — price ${currentPrice.toFixed(5)} closed above OB ${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
       reasons.push(`Be-OB broken: price=${currentPrice.toFixed(5)} > OB=${obLow.toFixed(5)}-${obHigh.toFixed(5)}`);
       return { isValid: false, direction: bias.direction, hasDisplacement: true, hasFVG: !!nearbyFVG, zoneLow: obLow, zoneHigh: obHigh, reasons };
     }

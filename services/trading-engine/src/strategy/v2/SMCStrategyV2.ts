@@ -1770,7 +1770,7 @@ export class SMCStrategyV2 {
       }
 
       // Analyze ICT entry using strict ICT model
-      const ictResult = this.ictEntryService.analyzeICTEntry(h4Candles, m15Candles, m1Candles);
+      const ictResult = this.ictEntryService.analyzeICTEntry(h4Candles, m15Candles, m1Candles, symbol);
 
       // Check H4 bias
       if (ictResult.bias.direction === 'sideways') {
