@@ -1787,8 +1787,12 @@ export class SMCStrategyV2 {
 
       // Check M15 setup zone — and track POI even if not valid yet
       if (!ictResult.setupZone || !ictResult.setupZone.isValid) {
-        // Even though setup isn't valid, if we have an OB zone, track it as a POI
-        if (ictResult.setupZone && ictResult.setupZone.zoneLow > 0 && ictResult.setupZone.zoneHigh > 0) {
+        const subReasonRaw = ictResult.setupZone?.reasons?.[0] || '';
+        const isOBInvalidated = subReasonRaw.includes('broken') || subReasonRaw.includes('INVALIDATED');
+        const hasNoMSB = subReasonRaw.includes('No M15 MSB') || subReasonRaw.includes('Not enough');
+
+        // Only track as POI if we have a valid OB that isn't broken
+        if (ictResult.setupZone && ictResult.setupZone.zoneLow > 0 && ictResult.setupZone.zoneHigh > 0 && !isOBInvalidated && !hasNoMSB) {
           const currentPrice = m1Candles[m1Candles.length - 1]?.close || 0;
           const obMid = (ictResult.setupZone.zoneLow + ictResult.setupZone.zoneHigh) / 2;
           const isBuy = ictResult.bias.direction === 'bullish';
@@ -1827,6 +1831,7 @@ export class SMCStrategyV2 {
             status,
           });
         } else {
+          // OB invalidated, no MSB, or no zone — remove stale POI
           removePOI(symbol);
         }
 
