@@ -47,9 +47,9 @@ export class MarketDataService {
     if (this.derivProvider) {
       if (timeframe === 'H4') {
         const h4 = this.derivProvider.getH4Candles(symbol, limit);
+        logger.info(`[MarketDataService] ${symbol} H4: derivProvider has ${h4.length} candles`);
         if (h4.length > 0) {
-          logger.info(`[MarketDataService] ${symbol}: Using ${h4.length} real H4 candles from Deriv (requested ${limit})`);
-          // Convert MarketDataCandle → strategy Candle (needs timestamp string)
+          logger.info(`[MarketDataService] ${symbol}: Using ${h4.length} real H4 candles from Deriv, first high=${h4[0].high}, last close=${h4[h4.length-1].close}`);
           return h4.map(c => ({
             timestamp: c.startTime.toISOString(),
             open: c.open,
@@ -62,8 +62,8 @@ export class MarketDataService {
       }
       if (timeframe === 'M15') {
         const m15 = this.derivProvider.getM15Candles(symbol, limit);
+        logger.info(`[MarketDataService] ${symbol} M15: derivProvider has ${m15.length} candles`);
         if (m15.length > 0) {
-          logger.info(`[MarketDataService] ${symbol}: Using ${m15.length} real M15 candles from Deriv (requested ${limit})`);
           return m15.map(c => ({
             timestamp: c.startTime.toISOString(),
             open: c.open,
@@ -74,6 +74,8 @@ export class MarketDataService {
           })) as any;
         }
       }
+    } else {
+      logger.warn(`[MarketDataService] ${symbol} ${timeframe}: No derivProvider available, using M1 aggregation`);
     }
 
     if (!this.candleStore) {
