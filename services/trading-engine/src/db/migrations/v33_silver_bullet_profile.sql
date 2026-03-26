@@ -1,5 +1,13 @@
--- v33: Add ICT Silver Bullet strategy profile
+-- v33: Add Silver Bullet profile + make GOD strategy visible again
 
+-- Make the original GOD strategy visible as a separate option
+UPDATE strategy_profiles
+SET is_public = TRUE,
+    name = 'ICT GOD Strategy (Original)',
+    description = 'The original profitable ICT strategy that placed live trades. Uses the frozen GodSmcStrategy implementation with ICT Model (H4 bias, M15 setup, M1 entry). This is the exact code that generated real profits on live MT5.'
+WHERE key = 'first_successful_strategy_from_god';
+
+-- Add Silver Bullet
 INSERT INTO strategy_profiles (
   key,
   name,
