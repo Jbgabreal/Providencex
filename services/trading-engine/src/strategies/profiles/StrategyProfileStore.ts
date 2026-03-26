@@ -11,8 +11,15 @@ import { Logger } from '@providencex/shared-utils';
 
 const logger = new Logger('StrategyProfileStore');
 
-// Path to profiles JSON file
-const PROFILES_PATH = path.join(__dirname, 'strategy-profiles.json');
+// Path to profiles JSON file — try multiple paths for Docker vs local dev
+const PROFILES_CANDIDATES = [
+  path.join(__dirname, 'strategy-profiles.json'),                                    // Same dir (dev)
+  path.resolve(process.cwd(), 'src/strategies/profiles/strategy-profiles.json'),     // From service root (Docker)
+  path.resolve(process.cwd(), 'services/trading-engine/src/strategies/profiles/strategy-profiles.json'), // From repo root
+];
+const PROFILES_PATH = PROFILES_CANDIDATES.find(p => {
+  try { return require('fs').existsSync(p); } catch { return false; }
+}) || PROFILES_CANDIDATES[0];
 
 /**
  * Load all strategy profiles from disk

@@ -1253,7 +1253,7 @@ async function processIStrategyDecision(
       await decisionLogger.logDecision({
         timestamp: new Date().toISOString(),
         symbol,
-        strategy: 'low',
+        strategy: strategy.key as any,
         guardrail_mode: 'normal',
         guardrail_reason: 'Normal mode',
         decision: 'skip',
@@ -1287,7 +1287,7 @@ async function processIStrategyDecision(
     await decisionLogger.logDecision({
       timestamp: new Date().toISOString(),
       symbol,
-      strategy: 'low',
+      strategy: strategy.key as any,
       guardrail_mode: 'normal',
       guardrail_reason: 'Normal mode',
       decision: 'trade',
