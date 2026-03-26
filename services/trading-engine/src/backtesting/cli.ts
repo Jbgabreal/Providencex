@@ -87,6 +87,8 @@ function parseArgs(): {
   dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv';
   csvPath?: string;
   initialBalance: number;
+  riskPerTradeUsd?: number;
+  riskPerTradePercent?: number;
   outputDir?: string;
   strategyProfileKey?: string; // New: strategy profile key
 } {
@@ -99,6 +101,8 @@ function parseArgs(): {
   let dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv' = 'deriv';
   let csvPath: string | undefined;
   let initialBalance = 100;
+  let riskPerTradeUsd: number | undefined;
+  let riskPerTradePercent: number | undefined;
   let outputDir: string | undefined;
   let strategyProfileKey: string | undefined;
 
@@ -162,6 +166,20 @@ function parseArgs(): {
         i++;
         break;
 
+      case '--risk-usd':
+        if (nextArg) {
+          riskPerTradeUsd = parseFloat(nextArg);
+        }
+        i++;
+        break;
+
+      case '--risk-pct':
+        if (nextArg) {
+          riskPerTradePercent = parseFloat(nextArg);
+        }
+        i++;
+        break;
+
       case '--output-dir':
       case '-o':
         if (nextArg) {
@@ -193,6 +211,8 @@ function parseArgs(): {
     dataSource,
     csvPath,
     initialBalance,
+    riskPerTradeUsd,
+    riskPerTradePercent,
     outputDir,
     strategyProfileKey,
   };
@@ -324,10 +344,18 @@ async function main(): Promise<void> {
       endDate: args.to,
       timeframe: 'M5',
       initialBalance: args.initialBalance,
+      riskPerTradeUsd: args.riskPerTradeUsd, // Fixed USD risk per trade
+      riskPerTradePercent: args.riskPerTradePercent, // Custom risk percentage
       dataSource: args.dataSource,
       csvPath: args.csvPath,
       strategyProfileKey: args.strategyProfileKey, // New: strategy profile key
     };
+
+    if (args.riskPerTradeUsd) {
+      console.log(`[BacktestCLI] Using fixed risk: $${args.riskPerTradeUsd} per trade`);
+    } else if (args.riskPerTradePercent) {
+      console.log(`[BacktestCLI] Using ${args.riskPerTradePercent}% risk per trade`);
+    }
 
     // Build data loader config
     const dataLoaderConfig = {

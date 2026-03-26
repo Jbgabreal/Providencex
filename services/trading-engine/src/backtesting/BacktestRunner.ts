@@ -304,6 +304,7 @@ export class BacktestRunner {
           lastTradeTimestamps, // Share tracking across strategies
           overrideParamSet: this.config.overrideParamSet, // v11: Pass parameter overrides for optimization
           sourceTimeframe: 'M1', // SENIOR DEV FIX: Always M1 - we load real M1 data directly from MT5
+          riskPerTradeUsd: this.config.riskPerTradeUsd, // Fixed USD risk per trade
         };
         
         // If using strategy profile, inject the strategy instance

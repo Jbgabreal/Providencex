@@ -44,7 +44,8 @@ export interface BacktestConfig {
   endDate: string; // ISO date string: '2024-12-31'
   timeframe?: string; // Default: 'M5'
   initialBalance: number; // Starting account balance
-  riskPerTradePercent?: number; // Risk per trade (overrides strategy default)
+  riskPerTradePercent?: number; // Risk per trade as % (overrides strategy default)
+  riskPerTradeUsd?: number; // Fixed USD risk per trade (overrides percentage mode)
   spreadPips?: number; // Simulated spread in pips
   slippagePips?: number; // Simulated slippage in pips
   dataSource?: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv'; // Where to load candles from

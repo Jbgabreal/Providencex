@@ -150,12 +150,18 @@ export class PerAccountRiskService {
       profileRiskConfig
     );
 
-    // Get adjusted risk percent
-    const riskPercent = context.guardrailMode === 'reduced'
-      ? runtimeRisk.riskPercent * 0.5
-      : runtimeRisk.riskPercent;
-
-    const riskAmount = (riskPercent / 100) * context.accountEquity;
+    // Get risk amount - support both percentage and fixed USD modes
+    let riskAmount: number;
+    if (profileRiskConfig?.riskMode === 'usd' && profileRiskConfig.riskPerTradeUsd) {
+      riskAmount = context.guardrailMode === 'reduced'
+        ? profileRiskConfig.riskPerTradeUsd * 0.5
+        : profileRiskConfig.riskPerTradeUsd;
+    } else {
+      const riskPercent = context.guardrailMode === 'reduced'
+        ? runtimeRisk.riskPercent * 0.5
+        : runtimeRisk.riskPercent;
+      riskAmount = (riskPercent / 100) * context.accountEquity;
+    }
 
     // Lot size calculation per symbol type
     const pipValue = this.getPipValue(symbol, currentPrice);
@@ -189,7 +195,7 @@ export class PerAccountRiskService {
     }
 
     logger.debug(
-      `[${account.id}] Lot size calculation: risk_percent=${riskPercent}%, ` +
+      `[${account.id}] Lot size calculation: risk_mode=${profileRiskConfig?.riskMode || 'percentage'}, ` +
       `risk_amount=${riskAmount.toFixed(2)}, stop_loss_pips=${stopLossPips}, ` +
       `calculated_lot_size=${lotSize.toFixed(4)}, rounded=${roundedLotSize}, min_lot_size=${minLotSize}`
     );

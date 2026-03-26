@@ -63,6 +63,8 @@ export interface ReplayEngineConfig {
   sourceTimeframe?: string;
   // Strategy adapter (if using strategy profile instead of StrategyService)
   strategyAdapter?: import('../strategies/StrategyAdapter').StrategyAdapter;
+  // Fixed USD risk per trade (overrides percentage-based risk)
+  riskPerTradeUsd?: number;
 }
 
 /**
@@ -346,13 +348,15 @@ export class CandleReplayEngine {
     // Calculate position size based on risk
     const riskPercent = riskCheck.adjusted_risk_percent || 0.5;
     const stopLossDistance = Math.abs(signal.entry - signal.stopLoss);
-    const riskAmount = (this.currentBalance * riskPercent) / 100;
-    
+    const riskAmount = this.config.riskPerTradeUsd
+      ? this.config.riskPerTradeUsd
+      : (this.currentBalance * riskPercent) / 100;
+
     // Calculate lot size
-    // Simplified: lot_size = risk_amount / (stop_loss_distance * contract_size * pip_value)
+    // Profit formula: profit = priceDiff * volume * contractSize
+    // So: volume = riskAmount / (stopLossDistance * contractSize)
     const contractSize = this.getContractSize(symbol);
-    const pipValue = this.getPipValue(symbol, signal.entry);
-    const lotSize = riskAmount / (stopLossDistance * contractSize * pipValue);
+    const lotSize = riskAmount / (stopLossDistance * contractSize);
     
     // Normalize lot size (min 0.01, max reasonable)
     const normalizedLotSize = Math.max(0.01, Math.min(lotSize, 10.0));

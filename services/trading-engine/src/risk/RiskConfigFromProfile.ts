@@ -73,7 +73,7 @@ export function buildRiskConfigFromProfileConfig(config: any): StrategyProfileRi
     config,
     'risk_per_trade_percent',
     DEFAULT_RISK_CONFIG.riskPerTradePercent,
-    { min: 0.01, max: 5 }
+    { min: 0.01, max: 10 }
   );
 
   const maxDailyDrawdownPercent = readNumber(
@@ -143,7 +143,7 @@ export function mergeUserConfig(
     merged.riskPerTradeUsd = Math.max(1, Math.min(10000, userConfig.risk_per_trade_usd));
   } else if (userConfig.risk_mode === 'percentage' && typeof userConfig.risk_per_trade_pct === 'number') {
     merged.riskMode = 'percentage';
-    merged.riskPerTradePercent = Math.max(0.1, Math.min(5, userConfig.risk_per_trade_pct));
+    merged.riskPerTradePercent = Math.max(0.1, Math.min(10, userConfig.risk_per_trade_pct));
   }
 
   // Consecutive loss limit
