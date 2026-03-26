@@ -630,6 +630,29 @@ async function processTradingDecision(
         decisionLog.signal_reason = 'No valid SMC setup found';
       }
     }
+    // Journal the skip for learning (deduplicated by reason)
+    const skipReason = decisionLog.signal_reason || 'No setup';
+    const skipDedupeKey = `skip:${symbol}:${strategy}`;
+    if (lastSignalKey.get(skipDedupeKey) !== skipReason) {
+      lastSignalKey.set(skipDedupeKey, skipReason);
+      try {
+        const skipJournalId = await journalService.onSignalGenerated({
+          strategyKey: strategyDisplayName,
+          strategyVersion: 'SMCStrategyV2',
+          symbol,
+          direction: 'buy', // Unknown at this point
+          entryPrice: 0,
+          stopLoss: 0,
+          takeProfit: 0,
+          setupContext: { skipped: true, reason: skipReason, source: 'legacy_no_signal' },
+          entryContext: { reason: skipReason },
+        });
+        if (skipJournalId) {
+          await journalService.onSignalCancelled(skipJournalId, skipReason);
+        }
+      } catch {}
+    }
+
     await decisionLogger.logDecision(decisionLog);
     return decisionLog;
   }
@@ -1247,7 +1270,28 @@ async function processIStrategyDecision(
     const result: StrategyResult = await strategy.execute(context);
 
     if (!result.orders || result.orders.length === 0) {
-      return; // No signal — silent skip (strategies log their own reasons)
+      // Journal the skip (deduplicated by reason)
+      const skipReason = result.debug?.reason || 'No setup';
+      const iStrategySkipKey = `iskip:${strategy.key}:${symbol}`;
+      if (lastSignalKey.get(iStrategySkipKey) !== skipReason) {
+        lastSignalKey.set(iStrategySkipKey, skipReason);
+        try {
+          const skipId = await journalService.onSignalGenerated({
+            strategyKey: strategy.displayName,
+            strategyVersion: strategy.key,
+            strategyProfileKey: profileKey,
+            symbol,
+            direction: 'buy',
+            entryPrice: 0,
+            stopLoss: 0,
+            takeProfit: 0,
+            setupContext: { skipped: true, reason: skipReason, source: 'istrategy_no_signal' },
+            entryContext: { reason: skipReason },
+          });
+          if (skipId) await journalService.onSignalCancelled(skipId, skipReason);
+        } catch {}
+      }
+      return;
     }
 
     const order = result.orders[0];
