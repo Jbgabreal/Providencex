@@ -134,6 +134,20 @@ export class TradeJournalRepository {
     );
   }
 
+  async updateFilteredSignal(journalId: string, filterReasons: string[]): Promise<void> {
+    await this.pool.query(
+      `UPDATE trade_journal SET
+        setup_context = jsonb_set(
+          COALESCE(setup_context, '{}'),
+          '{filtered}',
+          'true'
+        ) || jsonb_build_object('filter_reasons', $2::jsonb),
+        updated_at = NOW()
+      WHERE id = $1`,
+      [journalId, JSON.stringify(filterReasons)]
+    );
+  }
+
   async cancel(journalId: string, reason: string): Promise<void> {
     await this.pool.query(
       `UPDATE trade_journal SET status = 'cancelled', close_reason = $2, updated_at = NOW() WHERE id = $1`,

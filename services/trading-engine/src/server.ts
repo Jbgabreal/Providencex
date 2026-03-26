@@ -828,6 +828,38 @@ async function processTradingDecision(
     return decisionLog;
   }
 
+  // Journal the signal for outcome tracking (ICT Sweep & Shift)
+  const legacyDedupeKey = `legacy:${symbol}:${signal.direction}`;
+  const legacyDedupeValue = `${signal.stopLoss.toFixed(3)}:${signal.takeProfit.toFixed(3)}`;
+  let legacyJournalId = '';
+  if (lastSignalKey.get(legacyDedupeKey) !== legacyDedupeValue) {
+    lastSignalKey.set(legacyDedupeKey, legacyDedupeValue);
+    try {
+      legacyJournalId = await journalService.onSignalGenerated({
+        strategyKey: 'ICT Sweep & Shift',
+        strategyVersion: 'SMCStrategyV2',
+        symbol: signal.symbol,
+        direction: signal.direction,
+        entryPrice: signal.entry,
+        stopLoss: signal.stopLoss,
+        takeProfit: signal.takeProfit,
+        rrTarget: signal.meta?.riskRewardRatio,
+        setupContext: { source: 'legacy_tick_loop' },
+        entryContext: { reason: signal.reason, orderKind: signal.orderKind },
+      });
+      if (legacyJournalId) {
+        signalOutcomeTracker.trackSignal(legacyJournalId, {
+          symbol: signal.symbol,
+          direction: signal.direction,
+          entryPrice: signal.entry,
+          stopLoss: signal.stopLoss,
+          takeProfit: signal.takeProfit,
+          strategyKey: 'ICT Sweep & Shift',
+        });
+      }
+    } catch {}
+  }
+
   // Step 4: Check risk constraints
   const riskCheck = riskService.canTakeNewTrade(riskContext);
   if (!riskCheck.allowed) {
@@ -917,6 +949,10 @@ async function processTradingDecision(
         decisionLog.execution_filter_action = 'skip';
         decisionLog.execution_filter_reasons = executionDecision.reasons;
         decisionLog.risk_reason = `v3 Execution Filter: ${executionDecision.reasons.join('; ')}`;
+        // Mark journal entry as filtered (keep tracking outcome for false negative detection)
+        if (legacyJournalId) {
+          try { await journalRepo.updateFilteredSignal(legacyJournalId, executionDecision.reasons); } catch {}
+        }
         await decisionLogger.logDecision(decisionLog);
         return decisionLog;
       }
@@ -1279,7 +1315,13 @@ async function processIStrategyDecision(
 
     if (executionDecision.action === 'SKIP') {
       logger.info(`[IStrategy] ${strategy.key} ${symbol}: Execution filter SKIP — ${executionDecision.reasons.join('; ')}`);
-      await journalService.onSignalCancelled(journalId, `Exec filter: ${executionDecision.reasons.join('; ')}`);
+      // Don't cancel — keep tracking the outcome to detect false negatives
+      // Mark as filtered in setup context so we know it was blocked
+      if (journalId) {
+        try {
+          await journalRepo.updateFilteredSignal(journalId, executionDecision.reasons);
+        } catch {}
+      }
 
       // Log decision
       await decisionLogger.logDecision({
