@@ -10,12 +10,14 @@ import {
   useAdminImports, useAdminShadowTrades, useAdminActionLogs,
   useEngineStatus,
 } from '@/hooks/useAdmin';
+import { useDecisions, useExposure, useBacktests, useDailyMetrics } from '@/hooks/useJournal';
 import {
   LayoutDashboard, Users, CreditCard, Gift, Star, Shield, Activity,
   Check, X, Eye, AlertTriangle, ChevronDown, ChevronUp, Radio,
+  BookOpen, TrendingUp, BarChart3, Target,
 } from 'lucide-react';
 
-type Tab = 'overview' | 'mentors' | 'billing' | 'referrals' | 'reviews' | 'support' | 'logs' | 'engine';
+type Tab = 'overview' | 'mentors' | 'billing' | 'referrals' | 'reviews' | 'support' | 'logs' | 'engine' | 'decisions' | 'exposure' | 'backtests' | 'metrics';
 
 const statusBadge = (status: string) => {
   const colors: Record<string, string> = {
@@ -41,6 +43,10 @@ export default function AdminPage() {
     { key: 'support', label: 'Support', icon: Shield },
     { key: 'logs', label: 'Audit Log', icon: Activity },
     { key: 'engine', label: 'Engine Monitor', icon: Radio },
+    { key: 'decisions', label: 'Decisions', icon: Target },
+    { key: 'exposure', label: 'Exposure', icon: TrendingUp },
+    { key: 'backtests', label: 'Backtests', icon: BarChart3 },
+    { key: 'metrics', label: 'Daily Metrics', icon: BookOpen },
   ];
 
   return (
@@ -69,6 +75,10 @@ export default function AdminPage() {
       {tab === 'support' && <SupportTab />}
       {tab === 'logs' && <LogsTab />}
       {tab === 'engine' && <EngineTab />}
+      {tab === 'decisions' && <DecisionsTab />}
+      {tab === 'exposure' && <ExposureTab />}
+      {tab === 'backtests' && <BacktestsTab />}
+      {tab === 'metrics' && <DailyMetricsTab />}
     </div>
   );
 }
@@ -529,6 +539,215 @@ function EngineTab() {
               )}
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== Decisions Tab ====================
+
+function DecisionsTab() {
+  const { data: decisions, isLoading } = useDecisions(100);
+
+  if (isLoading) return <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto" />;
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h2 className="text-lg font-semibold mb-4">Trade Decisions</h2>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead><tr className="text-left text-xs text-gray-500 uppercase">
+            <th className="pb-2">Time</th><th className="pb-2">Symbol</th><th className="pb-2">Decision</th>
+            <th className="pb-2">Strategy</th><th className="pb-2">Guardrail</th><th className="pb-2">Signal Reason</th>
+            <th className="pb-2">Risk Reason</th>
+          </tr></thead>
+          <tbody className="divide-y divide-gray-100">
+            {(decisions || []).map((d: any, i: number) => (
+              <tr key={d.id || i} className={d.decision === 'trade' ? 'bg-green-50/50' : ''}>
+                <td className="py-2 text-xs text-gray-400 whitespace-nowrap">
+                  {new Date(d.timestamp).toLocaleString()}
+                </td>
+                <td className="py-2 font-medium">{d.symbol}</td>
+                <td className="py-2">
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                    d.decision === 'trade' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                  }`}>{d.decision?.toUpperCase()}</span>
+                </td>
+                <td className="py-2 text-xs">{d.strategy}</td>
+                <td className="py-2">
+                  <span className={`px-1.5 py-0.5 rounded text-xs ${
+                    d.guardrail_mode === 'normal' ? 'bg-green-50 text-green-700' :
+                    d.guardrail_mode === 'reduced' ? 'bg-yellow-50 text-yellow-700' :
+                    'bg-red-50 text-red-700'
+                  }`}>{d.guardrail_mode}</span>
+                </td>
+                <td className="py-2 text-xs text-gray-600 max-w-[250px] truncate" title={d.signal_reason || ''}>
+                  {d.signal_reason || '—'}
+                </td>
+                <td className="py-2 text-xs text-gray-600 max-w-[200px] truncate" title={d.risk_reason || ''}>
+                  {d.risk_reason || '—'}
+                </td>
+              </tr>
+            ))}
+            {(!decisions || decisions.length === 0) && (
+              <tr><td colSpan={7} className="py-4 text-center text-gray-500">No decisions recorded</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ==================== Exposure Tab ====================
+
+function ExposureTab() {
+  const { data: exposure, isLoading } = useExposure();
+
+  if (isLoading) return <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto" />;
+  if (!exposure) return <p className="text-gray-500 text-center py-8">No exposure data available</p>;
+
+  const symbols = exposure.bySymbol || {};
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h2 className="text-lg font-semibold mb-4">Exposure by Symbol</h2>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead><tr className="text-left text-xs text-gray-500 uppercase">
+            <th className="pb-2">Symbol</th><th className="pb-2">Open Trades</th><th className="pb-2">Net Volume</th>
+            <th className="pb-2">Direction</th><th className="pb-2">Unrealized P&L</th>
+          </tr></thead>
+          <tbody className="divide-y divide-gray-100">
+            {Object.entries(symbols).map(([sym, data]: [string, any]) => (
+              <tr key={sym}>
+                <td className="py-2 font-medium">{sym}</td>
+                <td className="py-2">{data.count || 0}</td>
+                <td className="py-2">{(data.netVolume || 0).toFixed(2)}</td>
+                <td className="py-2">
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                    (data.netVolume || 0) > 0 ? 'bg-blue-100 text-blue-800' :
+                    (data.netVolume || 0) < 0 ? 'bg-orange-100 text-orange-800' :
+                    'bg-gray-100 text-gray-600'
+                  }`}>{(data.netVolume || 0) > 0 ? 'LONG' : (data.netVolume || 0) < 0 ? 'SHORT' : 'FLAT'}</span>
+                </td>
+                <td className={`py-2 font-medium ${(data.unrealizedPnl || 0) >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                  ${(data.unrealizedPnl || 0).toFixed(2)}
+                </td>
+              </tr>
+            ))}
+            {Object.keys(symbols).length === 0 && (
+              <tr><td colSpan={5} className="py-4 text-center text-gray-500">No open exposure</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ==================== Backtests Tab ====================
+
+function BacktestsTab() {
+  const { data: backtests, isLoading } = useBacktests(50);
+
+  if (isLoading) return <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto" />;
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h2 className="text-lg font-semibold mb-4">Backtest Runs</h2>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead><tr className="text-left text-xs text-gray-500 uppercase">
+            <th className="pb-2">Date</th><th className="pb-2">Symbol</th><th className="pb-2">Strategy</th>
+            <th className="pb-2">Period</th><th className="pb-2">Trades</th><th className="pb-2">Win Rate</th>
+            <th className="pb-2">PF</th><th className="pb-2">Max DD</th><th className="pb-2">Return</th>
+          </tr></thead>
+          <tbody className="divide-y divide-gray-100">
+            {(backtests || []).map((bt: any) => (
+              <tr key={bt.id}>
+                <td className="py-2 text-xs text-gray-400">{new Date(bt.createdAt).toLocaleDateString()}</td>
+                <td className="py-2 font-medium">{bt.symbol}</td>
+                <td className="py-2 text-xs">{bt.strategy}</td>
+                <td className="py-2 text-xs text-gray-500">{bt.fromDate} to {bt.toDate}</td>
+                <td className="py-2">{bt.totalTrades}</td>
+                <td className="py-2">{bt.winRate?.toFixed(1)}%</td>
+                <td className="py-2">{bt.profitFactor?.toFixed(2)}</td>
+                <td className="py-2 text-red-500">{bt.maxDrawdownPercent?.toFixed(1)}%</td>
+                <td className={`py-2 font-medium ${bt.totalReturnPercent >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                  {bt.totalReturnPercent >= 0 ? '+' : ''}{bt.totalReturnPercent?.toFixed(1)}%
+                </td>
+              </tr>
+            ))}
+            {(!backtests || backtests.length === 0) && (
+              <tr><td colSpan={9} className="py-4 text-center text-gray-500">No backtest runs found</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ==================== Daily Metrics Tab ====================
+
+function DailyMetricsTab() {
+  const { data: metrics, isLoading } = useDailyMetrics();
+
+  if (isLoading) return <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto" />;
+  if (!metrics) return <p className="text-gray-500 text-center py-8">No metrics available</p>;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Date</p>
+          <p className="text-lg font-bold text-gray-900">{metrics.date}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Total Decisions</p>
+          <p className="text-lg font-bold text-gray-900">{metrics.totalDecisions}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Total Trades</p>
+          <p className="text-lg font-bold text-green-600">{metrics.totalTrades}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Total Skips</p>
+          <p className="text-lg font-bold text-gray-600">{metrics.totalSkips}</p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold mb-4">Trades by Symbol</h2>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead><tr className="text-left text-xs text-gray-500 uppercase">
+              <th className="pb-2">Symbol</th><th className="pb-2">Trades</th><th className="pb-2">Skips</th>
+            </tr></thead>
+            <tbody className="divide-y divide-gray-100">
+              {Object.entries(metrics.tradesBySymbol || {}).map(([sym, stats]: [string, any]) => (
+                <tr key={sym}>
+                  <td className="py-2 font-medium">{sym}</td>
+                  <td className="py-2">{stats.trades}</td>
+                  <td className="py-2 text-gray-500">{stats.skips}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold mb-4">Top Skip Reasons</h2>
+        <div className="space-y-2">
+          {(metrics.topSkipReasons || []).map((item: any, i: number) => (
+            <div key={i} className="flex justify-between items-center p-2 bg-gray-50 rounded">
+              <span className="text-xs text-gray-700 flex-1">{item.reason}</span>
+              <span className="text-sm font-medium text-gray-500 ml-4">{item.count}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
