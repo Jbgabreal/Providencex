@@ -1269,7 +1269,7 @@ async function processIStrategyDecision(
     // Execute trade
     if (multiTenantEnabled) {
       await userAssignmentOrchestrator.processAssignmentsForSignal(
-        rawSignal, executionContext, 'normal', 'low'
+        rawSignal, executionContext, 'normal', strategy.key
       );
     } else {
       const lotSize = 0.01; // Default minimum — PerAccountRiskService handles sizing in multi-tenant

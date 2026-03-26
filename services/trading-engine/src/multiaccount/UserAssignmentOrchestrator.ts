@@ -170,6 +170,26 @@ export class UserAssignmentOrchestrator {
     const executions: Promise<any>[] = [];
 
     for (const ctx of assignments) {
+      // Filter: only execute for users assigned to THIS strategy's profile
+      // Match by implementation_key (e.g., GOD_SMC_V1, SILVER_BULLET_V1)
+      // or by strategy profile key matching the signal's strategyKey
+      if (strategyKey && ctx.strategyProfile.implementation_key) {
+        const signalStrategyKey = strategyKey.toLowerCase();
+        const assignedImplKey = ctx.strategyProfile.implementation_key.toLowerCase();
+        const assignedProfileKey = ctx.strategyProfile.key.toLowerCase();
+        // Allow match by implementation key, profile key, or legacy 'low'/'high'
+        const isMatch = assignedImplKey === signalStrategyKey
+          || assignedProfileKey === signalStrategyKey
+          || signalStrategyKey === 'low' // Legacy: 'low' matches any strategy (backward compatible)
+          || signalStrategyKey === assignedImplKey;
+        if (!isMatch) {
+          this.logger.debug(
+            `[UserAssignmentOrchestrator] Skipping user=${ctx.userId} — assigned to ${ctx.strategyProfile.key} (${ctx.strategyProfile.implementation_key}), signal from ${strategyKey}`
+          );
+          continue;
+        }
+      }
+
       const account: AccountInfo = await this.buildAccountInfoFromAssignment(ctx);
       const accountKey = `mt5:${account.id}`;
 
