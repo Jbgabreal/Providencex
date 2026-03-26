@@ -4,6 +4,14 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_TRADING_ENGINE_BASE_URL: process.env.NEXT_PUBLIC_TRADING_ENGINE_BASE_URL || 'http://localhost:3020',
   },
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'res.cloudinary.com',
+      },
+    ],
+  },
 };
 
 module.exports = nextConfig;

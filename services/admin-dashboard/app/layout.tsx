@@ -56,6 +56,9 @@ export default function RootLayout({
                     <Link href="/exposure" className="text-gray-500 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300 text-sm font-medium">
                       Exposure
                     </Link>
+                    <Link href="/journal" className="text-gray-500 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300 text-sm font-medium">
+                      Journal
+                    </Link>
                     <Link href="/backtests" className="text-gray-500 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 border-transparent hover:border-gray-300 text-sm font-medium">
                       Backtests
                     </Link>

@@ -83,6 +83,9 @@ importers:
       class-variance-authority:
         specifier: ^0.7.0
         version: 0.7.1
+      cloudinary:
+        specifier: ^2.9.0
+        version: 2.9.0
       clsx:
         specifier: ^2.0.0
         version: 2.1.1
@@ -98,6 +101,9 @@ importers:
       react-dom:
         specifier: ^18.2.0
         version: 18.3.1(react@18.3.1)
+      recharts:
+        specifier: ^2.12.0
+        version: 2.15.4(react-dom@18.3.1)(react@18.3.1)
       tailwind-merge:
         specifier: ^2.0.0
         version: 2.6.0
@@ -6858,6 +6864,13 @@ packages:
       string-width: 4.2.3
       strip-ansi: 6.0.1
       wrap-ansi: 6.2.0
+    dev: false
+
+  /cloudinary@2.9.0:
+    resolution: {integrity: sha512-F3iKMOy4y0zy0bi5JBp94SC7HY7i/ImfTPSUV07iJmRzH1Iz8WavFfOlJTR1zvYM/xKGoiGZ3my/zy64In0IQQ==}
+    engines: {node: '>=9'}
+    dependencies:
+      lodash: 4.17.21
     dev: false
 
   /clsx@1.2.1:
