@@ -52,6 +52,7 @@ export class MarketDataService {
           logger.info(`[MarketDataService] ${symbol}: Using ${h4.length} real H4 candles from Deriv, first high=${h4[0].high}, last close=${h4[h4.length-1].close}`);
           return h4.map(c => ({
             timestamp: c.startTime.toISOString(),
+            startTime: c.startTime,
             open: c.open,
             high: c.high,
             low: c.low,
@@ -66,6 +67,7 @@ export class MarketDataService {
         if (m15.length > 0) {
           return m15.map(c => ({
             timestamp: c.startTime.toISOString(),
+            startTime: c.startTime,
             open: c.open,
             high: c.high,
             low: c.low,

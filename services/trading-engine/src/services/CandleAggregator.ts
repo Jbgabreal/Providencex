@@ -138,12 +138,13 @@ function aggregateCandles(
 
   return {
     timestamp,
+    startTime: first.startTime, // Keep Date for strategies needing it (ICTEntryService)
     open,
     high,
     low,
     close,
     volume,
-  };
+  } as any;
 }
 
 /**
@@ -171,12 +172,13 @@ export function aggregateM1Candles(
       .slice(-limit)
       .map(c => ({
         timestamp: c.startTime.toISOString(),
+        startTime: c.startTime,  // Keep Date object for strategies that need it
         open: c.open,
         high: c.high,
         low: c.low,
         close: c.close,
         volume: c.volume,
-      }));
+      })) as any;
   }
 
   // Calculate how many M1 candles we need (with buffer for incomplete windows)
