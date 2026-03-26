@@ -26,6 +26,7 @@ export default function createJournalRouter(): Router {
         symbol: req.query.symbol as string | undefined,
         direction: req.query.direction as 'buy' | 'sell' | undefined,
         status: req.query.status as string | undefined,
+        excludeStatus: req.query.exclude_status as string | undefined,
         result: req.query.result as 'win' | 'loss' | 'breakeven' | undefined,
         dateFrom: req.query.from as string | undefined,
         dateTo: req.query.to as string | undefined,

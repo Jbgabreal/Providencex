@@ -776,9 +776,11 @@ function DailyMetricsTab() {
 function TradeJournalTab() {
   const [strategyFilter, setStrategyFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [showSkipped, setShowSkipped] = useState(false);
   const { data: journalData, isLoading } = useTradeJournal({
     strategy: strategyFilter || undefined,
     status: statusFilter || undefined,
+    excludeStatus: !statusFilter && !showSkipped ? 'skipped' : undefined,
     limit: 50,
   });
   const { data: summary } = useJournalSummary();
@@ -868,8 +870,14 @@ function TradeJournalTab() {
           <option value="signal">Signal (Detected)</option>
           <option value="open">Open</option>
           <option value="closed">Closed</option>
+          <option value="skipped">Skipped (No Setup)</option>
           <option value="cancelled">Cancelled</option>
         </select>
+        <label className="flex items-center gap-2 self-center cursor-pointer">
+          <input type="checkbox" checked={showSkipped} onChange={e => setShowSkipped(e.target.checked)}
+            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+          <span className="text-sm text-gray-500">Show skipped</span>
+        </label>
         <span className="self-center text-sm text-gray-400">{total} entries</span>
       </div>
 

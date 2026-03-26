@@ -44,6 +44,7 @@ export default function TradeJournalPage() {
   const [loading, setLoading] = useState(true);
   const [strategyFilter, setStrategyFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [showSkipped, setShowSkipped] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
 
   const fetchData = async () => {
@@ -51,6 +52,7 @@ export default function TradeJournalPage() {
       const params = new URLSearchParams();
       if (strategyFilter) params.append('strategy', strategyFilter);
       if (statusFilter) params.append('status', statusFilter);
+      else if (!showSkipped) params.append('exclude_status', 'skipped');
       params.append('limit', '100');
 
       const [tradesRes, summaryRes] = await Promise.all([
@@ -71,8 +73,8 @@ export default function TradeJournalPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [strategyFilter, statusFilter]);
-  useEffect(() => { const interval = setInterval(fetchData, 30000); return () => clearInterval(interval); }, [strategyFilter, statusFilter]);
+  useEffect(() => { fetchData(); }, [strategyFilter, statusFilter, showSkipped]);
+  useEffect(() => { const interval = setInterval(fetchData, 30000); return () => clearInterval(interval); }, [strategyFilter, statusFilter, showSkipped]);
 
   if (loading) {
     return (
@@ -158,8 +160,14 @@ export default function TradeJournalPage() {
           <option value="signal">Signal</option>
           <option value="open">Open</option>
           <option value="closed">Closed</option>
+          <option value="skipped">Skipped (No Setup)</option>
           <option value="cancelled">Cancelled</option>
         </select>
+        <label className="flex items-center gap-2 self-center cursor-pointer">
+          <input type="checkbox" checked={showSkipped} onChange={e => { setShowSkipped(e.target.checked); setLoading(true); }}
+            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+          <span className="text-sm text-gray-500">Show skipped</span>
+        </label>
         <span className="self-center text-sm text-gray-400">{total} entries</span>
       </div>
 

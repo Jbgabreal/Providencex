@@ -52,6 +52,7 @@ export interface JournalFilters {
   symbol?: string;
   direction?: 'buy' | 'sell';
   status?: string;
+  excludeStatus?: string;
   result?: 'win' | 'loss' | 'breakeven';
   dateFrom?: string;
   dateTo?: string;

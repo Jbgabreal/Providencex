@@ -40,7 +40,7 @@ export function useBacktests(limit = 20) {
 // ── Trade Journal (DB-backed, multi-strategy) ──
 
 export function useTradeJournal(filters?: {
-  strategy?: string; symbol?: string; status?: string; result?: string;
+  strategy?: string; symbol?: string; status?: string; excludeStatus?: string; result?: string;
   from?: string; to?: string; limit?: number; offset?: number;
 }) {
   return useQuery({
@@ -50,6 +50,7 @@ export function useTradeJournal(filters?: {
       if (filters?.strategy) params.strategy = filters.strategy;
       if (filters?.symbol) params.symbol = filters.symbol;
       if (filters?.status) params.status = filters.status;
+      if (filters?.excludeStatus) params.exclude_status = filters.excludeStatus;
       if (filters?.result) params.result = filters.result;
       if (filters?.from) params.from = filters.from;
       if (filters?.to) params.to = filters.to;

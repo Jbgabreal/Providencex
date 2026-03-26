@@ -176,6 +176,7 @@ export class TradeJournalRepository {
     if (filters.symbol) { conditions.push(`symbol = $${idx++}`); params.push(filters.symbol); }
     if (filters.direction) { conditions.push(`direction = $${idx++}`); params.push(filters.direction); }
     if (filters.status) { conditions.push(`status = $${idx++}`); params.push(filters.status); }
+    if (filters.excludeStatus) { conditions.push(`status != $${idx++}`); params.push(filters.excludeStatus); }
     if (filters.result) { conditions.push(`result = $${idx++}`); params.push(filters.result); }
     if (filters.dateFrom) { conditions.push(`created_at >= $${idx++}`); params.push(filters.dateFrom); }
     if (filters.dateTo) { conditions.push(`created_at <= $${idx++}`); params.push(filters.dateTo); }

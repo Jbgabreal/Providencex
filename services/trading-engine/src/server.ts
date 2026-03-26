@@ -636,20 +636,16 @@ async function processTradingDecision(
     if (lastSignalKey.get(skipDedupeKey) !== skipReason) {
       lastSignalKey.set(skipDedupeKey, skipReason);
       try {
-        const skipJournalId = await journalService.onSignalGenerated({
+        await journalRepo.createEntry({
           strategyKey: strategyDisplayName,
           strategyVersion: 'SMCStrategyV2',
           symbol,
-          direction: 'buy', // Unknown at this point
-          entryPrice: 0,
-          stopLoss: 0,
-          takeProfit: 0,
-          setupContext: { skipped: true, reason: skipReason, source: 'legacy_no_signal' },
+          direction: 'buy',
+          status: 'skipped' as any,
+          setupContext: { reason: skipReason, source: 'legacy_no_signal' },
           entryContext: { reason: skipReason },
+          exitContext: {},
         });
-        if (skipJournalId) {
-          await journalService.onSignalCancelled(skipJournalId, skipReason);
-        }
       } catch {}
     }
 
@@ -1276,19 +1272,17 @@ async function processIStrategyDecision(
       if (lastSignalKey.get(iStrategySkipKey) !== skipReason) {
         lastSignalKey.set(iStrategySkipKey, skipReason);
         try {
-          const skipId = await journalService.onSignalGenerated({
+          await journalRepo.createEntry({
             strategyKey: strategy.displayName,
             strategyVersion: strategy.key,
             strategyProfileKey: profileKey,
             symbol,
             direction: 'buy',
-            entryPrice: 0,
-            stopLoss: 0,
-            takeProfit: 0,
-            setupContext: { skipped: true, reason: skipReason, source: 'istrategy_no_signal' },
+            status: 'skipped' as any,
+            setupContext: { reason: skipReason, source: 'istrategy_no_signal' },
             entryContext: { reason: skipReason },
+            exitContext: {},
           });
-          if (skipId) await journalService.onSignalCancelled(skipId, skipReason);
         } catch {}
       }
       return;
