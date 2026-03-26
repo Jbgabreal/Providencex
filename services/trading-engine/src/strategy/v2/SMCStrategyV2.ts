@@ -18,7 +18,7 @@
 import { Logger } from '@providencex/shared-utils';
 import { MarketDataService } from '../../services/MarketDataService';
 import { Candle as MarketDataCandle } from '../../marketData/types';
-import { getDerivCandleProvider } from '../../marketData/DerivCandleProvider';
+
 import { updatePOI, removePOI, PointOfInterest } from './POIStore';
 import { EnhancedRawSignalV2 } from '@providencex/shared-types';
 import { MarketStructureHTF } from './MarketStructureHTF';
@@ -1738,28 +1738,12 @@ export class SMCStrategyV2 {
 
     try {
       // Get multi-timeframe candles: H4 (bias), M15 (setup), M1 (entry)
-      // Get H4/M15 directly from Deriv cache (real candles, no conversion)
-      // Falls back to MarketDataService aggregation if Deriv cache is empty
-      let h4Candles: MarketDataCandle[];
-      let m15Candles: MarketDataCandle[];
-
-      const dp = getDerivCandleProvider();
-      const realH4 = dp ? dp.getH4Candles(symbol, 50) : [];
-      const realM15 = dp ? dp.getM15Candles(symbol, 100) : [];
-
-      if (realH4.length > 0) {
-        h4Candles = realH4;
-        logger.info(`[ICT] ${symbol}: ${realH4.length} REAL H4 candles (${realH4[0].high.toFixed(0)}-${realH4[realH4.length-1].close.toFixed(0)})`);
-      } else {
-        h4Candles = await this.getCandles(symbol, 'H4', 50);
-        logger.info(`[ICT] ${symbol}: ${h4Candles.length} aggregated H4 candles (no Deriv cache)`);
-      }
-
-      if (realM15.length > 0) {
-        m15Candles = realM15;
-      } else {
-        m15Candles = await this.getCandles(symbol, 'M15', 100);
-      }
+      // Always use M1-aggregated H4/M15 so live matches backtest exactly.
+      // Deriv H4 cache has different candle boundaries than our aggregator,
+      // causing bias divergence between live and backtest on the same price data.
+      const h4Candles = await this.getCandles(symbol, 'H4', 50);
+      const m15Candles = await this.getCandles(symbol, 'M15', 100);
+      logger.info(`[ICT] ${symbol}: ${h4Candles.length} H4, ${m15Candles.length} M15 (M1-aggregated, matches backtest)`);
 
       const m1Candles = await this.getCandles(symbol, 'M1', 100);
 
