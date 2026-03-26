@@ -54,6 +54,13 @@ export class TradeJournalRepository {
       logger.warn('v32_trade_journal.sql not found — tried: ' + migrationDirs.join(', '));
     }
 
+    // Widen strategy column for display names
+    const v34Path = findMigration('v34_widen_strategy_column.sql');
+    if (v34Path) {
+      await this.pool.query(fs.readFileSync(v34Path, 'utf-8'));
+      logger.info('trade_decisions strategy column widened');
+    }
+
     // Seed Silver Bullet profile
     const v33Path = findMigration('v33_silver_bullet_profile.sql');
     if (v33Path) {
