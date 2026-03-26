@@ -702,8 +702,16 @@ export default function JournalPage() {
   const [filterTag, setFilterTag] = useState<string>('ALL');
   const [filterRating, setFilterRating] = useState<string>('ALL');
   const [filterNotes, setFilterNotes] = useState<'ALL' | 'WITH' | 'WITHOUT'>('ALL');
+  const [filterDateFrom, setFilterDateFrom] = useState<string>('');
+  const [filterDateTo, setFilterDateTo] = useState<string>('');
+  const [filterPnlMin, setFilterPnlMin] = useState<string>('');
+  const [filterPnlMax, setFilterPnlMax] = useState<string>('');
   const [sortBy, setSortBy] = useState<'date' | 'pnl' | 'rr'>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  // Pagination
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   useEffect(() => {
     Promise.all([
@@ -740,6 +748,10 @@ export default function JournalPage() {
     if (filterRating !== 'ALL') trades = trades.filter(t => notes[String(t.id)]?.rating === parseInt(filterRating));
     if (filterNotes === 'WITH') trades = trades.filter(t => notes[String(t.id)]?.entryAnalysis || notes[String(t.id)]?.postTradeReview);
     if (filterNotes === 'WITHOUT') trades = trades.filter(t => !notes[String(t.id)]?.entryAnalysis && !notes[String(t.id)]?.postTradeReview);
+    if (filterDateFrom) trades = trades.filter(t => t.date >= filterDateFrom);
+    if (filterDateTo) trades = trades.filter(t => t.date <= filterDateTo);
+    if (filterPnlMin) trades = trades.filter(t => t.pnl >= parseFloat(filterPnlMin));
+    if (filterPnlMax) trades = trades.filter(t => t.pnl <= parseFloat(filterPnlMax));
 
     trades.sort((a, b) => {
       let cmp = 0;
@@ -750,7 +762,13 @@ export default function JournalPage() {
     });
 
     return trades;
-  }, [data, notes, filterResult, filterDirection, filterMonth, filterTag, filterRating, filterNotes, sortBy, sortDir]);
+  }, [data, notes, filterResult, filterDirection, filterMonth, filterTag, filterRating, filterNotes, filterDateFrom, filterDateTo, filterPnlMin, filterPnlMax, sortBy, sortDir]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setCurrentPage(1); }, [filterResult, filterDirection, filterMonth, filterTag, filterRating, filterNotes, filterDateFrom, filterDateTo, filterPnlMin, filterPnlMax, sortBy, sortDir, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredTrades.length / pageSize));
+  const paginatedTrades = filteredTrades.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const months = useMemo(() => {
     if (!data) return [];
@@ -893,8 +911,8 @@ export default function JournalPage() {
       {/* ── Trades Tab ── */}
       {activeTab === 'trades' && (
         <div>
-          {/* Filters */}
-          <div className="flex flex-wrap gap-3 mb-6">
+          {/* Filters Row 1 - Dropdowns */}
+          <div className="flex flex-wrap gap-3 mb-3">
             <select value={filterResult} onChange={e => setFilterResult(e.target.value as any)}
               className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400">
               <option value="ALL">All Results</option>
@@ -945,17 +963,93 @@ export default function JournalPage() {
               <option value="rr-desc">Highest R:R</option>
               <option value="rr-asc">Lowest R:R</option>
             </select>
-            <div className="ml-auto text-sm text-gray-400 self-center">
-              {filteredTrades.length} trades
+          </div>
+
+          {/* Filters Row 2 - Date range + P&L range */}
+          <div className="flex flex-wrap items-center gap-3 mb-6">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-400">From</span>
+              <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
+                className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+              <span className="text-xs text-gray-400">To</span>
+              <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
+                className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-400">P&L Min $</span>
+              <input type="number" value={filterPnlMin} onChange={e => setFilterPnlMin(e.target.value)} placeholder="-100"
+                className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-700 w-24 focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+              <span className="text-xs text-gray-400">Max $</span>
+              <input type="number" value={filterPnlMax} onChange={e => setFilterPnlMax(e.target.value)} placeholder="500"
+                className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-700 w-24 focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+            </div>
+            {(filterDateFrom || filterDateTo || filterPnlMin || filterPnlMax) && (
+              <button onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); setFilterPnlMin(''); setFilterPnlMax(''); }}
+                className="text-xs text-red-500 hover:text-red-700 underline">
+                Clear range filters
+              </button>
+            )}
+            <div className="ml-auto flex items-center gap-3">
+              <select value={pageSize} onChange={e => setPageSize(parseInt(e.target.value))}
+                className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400">
+                <option value="10">10 per page</option>
+                <option value="25">25 per page</option>
+                <option value="50">50 per page</option>
+                <option value="100">100 per page</option>
+              </select>
+              <span className="text-sm text-gray-400">{filteredTrades.length} trades</span>
             </div>
           </div>
 
           {/* Trade Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredTrades.map(trade => (
+            {paginatedTrades.map(trade => (
               <TradeCard key={trade.id} trade={trade} note={notes[String(trade.id)]} onClick={() => setSelectedTrade(trade)} />
             ))}
           </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 mt-8">
+              <button onClick={() => setCurrentPage(1)} disabled={currentPage === 1}
+                className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed">
+                First
+              </button>
+              <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}
+                className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed">
+                Prev
+              </button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2)
+                .reduce<(number | 'gap')[]>((acc, p, i, arr) => {
+                  if (i > 0 && p - (arr[i - 1]) > 1) acc.push('gap');
+                  acc.push(p);
+                  return acc;
+                }, [])
+                .map((item, i) =>
+                  item === 'gap' ? (
+                    <span key={`gap-${i}`} className="px-2 text-gray-300">...</span>
+                  ) : (
+                    <button key={item} onClick={() => setCurrentPage(item)}
+                      className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                        currentPage === item
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                      }`}>
+                      {item}
+                    </button>
+                  )
+                )}
+              <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}
+                className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed">
+                Next
+              </button>
+              <button onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages}
+                className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed">
+                Last
+              </button>
+            </div>
+          )}
         </div>
       )}
 
