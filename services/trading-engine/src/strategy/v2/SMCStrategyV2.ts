@@ -1780,7 +1780,7 @@ export class SMCStrategyV2 {
       // Outside kill zone — still track POIs but show reason
       const lastM1 = m1Candles[m1Candles.length - 1];
       const hourUTC = lastM1?.startTime?.getUTCHours() ?? 0;
-      const isAsianKZ = hourUTC >= 0 && hourUTC <= 4;
+      const isAsianKZ = hourUTC >= 0 && hourUTC <= 6;
       const isLondonKZ = hourUTC >= 7 && hourUTC <= 11;
       const isNYKZ = hourUTC >= 12 && hourUTC <= 16;
       const outsideKZ = !isAsianKZ && !isLondonKZ && !isNYKZ;

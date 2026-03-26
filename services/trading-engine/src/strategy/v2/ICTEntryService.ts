@@ -120,13 +120,13 @@ export class ICTEntryService {
   ): ICTEntryResult {
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
-    // Session filter: Asian KZ (00:00-04:00 UTC), London KZ (07:00-11:00 UTC), NY KZ (12:00-16:00 UTC)
+    // Session filter: Asian KZ (00:00-06:00 UTC), London KZ (07:00-11:00 UTC), NY KZ (12:00-16:00 UTC)
     // M15 setup always computed (for POI tracking), only M1 entry blocked outside KZ
     let outsideKillZone = false;
     if (m1Candles.length > 0) {
       const lastCandle = m1Candles[m1Candles.length - 1];
       const hour = lastCandle.startTime.getUTCHours();
-      const isAsianKZ = hour >= 0 && hour <= 4;
+      const isAsianKZ = hour >= 0 && hour <= 6;
       const isLondonKZ = hour >= 7 && hour <= 11;
       const isNYKZ = hour >= 12 && hour <= 16;
       outsideKillZone = !isAsianKZ && !isLondonKZ && !isNYKZ;
