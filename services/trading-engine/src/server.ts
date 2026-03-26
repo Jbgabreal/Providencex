@@ -962,6 +962,13 @@ async function processTradingDecision(
       decisionLog.execution_filter_reasons = [];
       logger.debug(`[${symbol}] v3 Execution Filter PASSED`);
 
+      // Update journal entry to 'open' status
+      if (legacyJournalId) {
+        try {
+          await journalService.onTradeOpened(legacyJournalId, { entryPrice: signal.entry });
+        } catch {}
+      }
+
       // Step 5.5: Multi-Account / Multi-Tenant Execution
       if (accountRegistry.isMultiAccountMode() || multiTenantEnabled) {
         const executionContext: ExecutionFilterContext = {
@@ -1130,6 +1137,12 @@ async function processTradingDecision(
 
   // Step 7: Execute trade
   logger.info(`[${symbol}] Executing trade: ${signal.direction} @ ${signal.entry}, lot: ${lotSize}`);
+
+  // Update journal to 'open' if not already done by v3 filter pass
+  if (legacyJournalId) {
+    try { await journalService.onTradeOpened(legacyJournalId, { entryPrice: signal.entry, lotSize }); } catch {}
+  }
+
   const executionResult = await executionService.openTrade(signal, lotSize, strategy);
 
   // Step 8: Update stats and log decision
