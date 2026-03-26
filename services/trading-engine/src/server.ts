@@ -51,6 +51,7 @@ import performanceReportsRoutes, { initializePerformanceReportsService } from '.
 // v3 Execution Filter imports
 import { evaluateExecution } from './strategy/v3/ExecutionFilter';
 import { executionFilterConfig } from './config/executionFilterConfig';
+import { backtestExecutionFilterConfig } from './config/backtestExecutionFilterConfig';
 import { ExecutionFilterState } from './strategy/v3/ExecutionFilterState';
 import { convertToRawSignal } from './strategy/v3/SignalConverter';
 
@@ -284,7 +285,8 @@ signalOutcomeTracker.onSignalResolved = (strategyKey, symbol, direction) => {
 };
 
 // IStrategy instances loaded from env (e.g., ACTIVE_STRATEGIES=SILVER_BULLET_V1)
-const activeIStrategies: { strategy: IStrategy; profileKey: string }[] = [];
+// Each gets wrapped in a StrategyAdapter + StrategyPipelineConfig for the unified pipeline.
+const activeStrategyPipelines: { strategy: Strategy; config: StrategyPipelineConfig }[] = [];
 const activeStrategyKeys = (process.env.ACTIVE_STRATEGIES || '').split(',').filter(Boolean);
 if (activeStrategyKeys.length > 0) {
   logger.info(`[Server] Loading IStrategy instances: ${activeStrategyKeys.join(', ')}`);
@@ -292,14 +294,25 @@ if (activeStrategyKeys.length > 0) {
     activeStrategyKeys.map(async (key) => {
       try {
         const strategy = await getStrategyByProfileKey(key);
-        activeIStrategies.push({ strategy, profileKey: key });
-        logger.info(`[Server] Loaded IStrategy: ${strategy.key} (${strategy.displayName})`);
+        const adapter = new StrategyAdapter(strategy, marketDataService);
+        activeStrategyPipelines.push({
+          strategy: 'low', // Share same risk/guardrail bucket
+          config: {
+            displayName: strategy.displayName,
+            strategyKey: strategy.key,
+            profileKey: key,
+            strategyVersion: strategy.key,
+            skipV3Filter: strategy.key === 'GOD_SMC_V1', // GOD ran without v3 filters when profitable
+            signalSource: adapter,
+          },
+        });
+        logger.info(`[Server] Loaded IStrategy: ${strategy.key} (${strategy.displayName}), skipV3Filter=${strategy.key === 'GOD_SMC_V1'}`);
       } catch (err) {
         logger.error(`[Server] Failed to load strategy ${key}:`, err);
       }
     })
   ).then(() => {
-    logger.info(`[Server] ${activeIStrategies.length} IStrategy instance(s) active`);
+    logger.info(`[Server] ${activeStrategyPipelines.length} IStrategy pipeline(s) active`);
   });
 }
 
@@ -542,12 +555,27 @@ function convertPriceDistanceToPips(symbol: string, priceDistance: number): numb
   return priceDistance / 0.0001;
 }
 
+/** Config for routing IStrategy instances through the unified pipeline. */
+interface StrategyPipelineConfig {
+  displayName: string;
+  strategyKey: string;
+  profileKey: string | null;
+  strategyVersion: string;
+  skipV3Filter: boolean;
+  signalSource: {
+    generateSignal(symbol: string): Promise<import('./types').TradeSignal | null>;
+    getLastSmcReason(): string | null;
+  };
+}
+
 /**
- * Process a trading decision for a symbol and strategy
+ * Process a trading decision for a symbol and strategy.
+ * When pipelineConfig is provided, uses the adapter as signal source (IStrategy path).
  */
 async function processTradingDecision(
   symbol: string,
-  strategy: Strategy
+  strategy: Strategy,
+  pipelineConfig?: StrategyPipelineConfig
 ): Promise<TradeDecisionLog> {
   const timestamp = getNowInPXTimezone().toISO()!;
   const accountEquity = getAccountEquity();
@@ -569,7 +597,8 @@ async function processTradingDecision(
   riskContext.guardrail_mode = guardrailDecision.mode;
 
   // Build initial decision log
-  const strategyDisplayName = strategy === 'low' ? 'ICT Sweep & Shift' : strategy === 'high' ? 'ICT High Risk' : strategy;
+  const strategyDisplayName = pipelineConfig?.displayName ?? (strategy === 'low' ? 'ICT Sweep & Shift' : strategy === 'high' ? 'ICT High Risk' : strategy);
+  const signalSource = pipelineConfig?.signalSource ?? strategyService;
   const decisionLog: TradeDecisionLog = {
     timestamp,
     symbol,
@@ -590,28 +619,24 @@ async function processTradingDecision(
     return decisionLog;
   }
 
-  // Step 2: Get trade signal from strategy
+  // Step 2: Get trade signal from strategy (or IStrategy adapter)
   logger.debug(`[${symbol}] Generating signal...`);
-  const signal = await strategyService.generateSignal(symbol);
+  const signal = await signalSource.generateSignal(symbol);
 
   if (!signal) {
     // Check if this was an internal error vs "no setup"
     // Note: StrategyService.getLastStrategyError() is public method that returns error message if one occurred
     let strategyError: string | null = null;
-    if ('getLastStrategyError' in strategyService && typeof (strategyService as any).getLastStrategyError === 'function') {
-      strategyError = (strategyService as any).getLastStrategyError();
+    if ('getLastStrategyError' in signalSource && typeof (signalSource as any).getLastStrategyError === 'function') {
+      strategyError = (signalSource as any).getLastStrategyError();
     }
-    
+
     if (strategyError) {
       decisionLog.signal_reason = `strategy_error: ${strategyError}`;
-      // Log as risk_reason for visibility (execution filter fields remain null - error occurred before filter)
       decisionLog.risk_reason = `Strategy service error: ${strategyError}`;
     } else {
       // Try to get detailed SMC rejection reason
-      let smcReason: string | null = null;
-      if ('getLastSmcReason' in strategyService && typeof (strategyService as any).getLastSmcReason === 'function') {
-        smcReason = (strategyService as any).getLastSmcReason();
-      }
+      const smcReason = signalSource.getLastSmcReason();
       
       if (smcReason) {
         // Use detailed SMC rejection reason
@@ -638,11 +663,12 @@ async function processTradingDecision(
       try {
         await journalRepo.createEntry({
           strategyKey: strategyDisplayName,
-          strategyVersion: 'SMCStrategyV2',
+          strategyVersion: pipelineConfig?.strategyVersion ?? 'SMCStrategyV2',
+          strategyProfileKey: pipelineConfig?.profileKey ?? undefined,
           symbol,
           direction: 'buy',
           status: 'skipped' as any,
-          setupContext: { reason: skipReason, source: 'legacy_no_signal' },
+          setupContext: { reason: skipReason, source: pipelineConfig ? 'istrategy_no_signal' : 'legacy_no_signal' },
           entryContext: { reason: skipReason },
           exitContext: {},
         });
@@ -953,9 +979,11 @@ async function processTradingDecision(
       };
 
       // Evaluate execution filter (v3 + v4 exposure checks + v15 loss streak filter)
+      // GOD_SMC_V1 skips strict filter — uses relaxed config (was profitable without v3 filters)
+      const activeFilterConfig = pipelineConfig?.skipV3Filter ? backtestExecutionFilterConfig : executionFilterConfig;
       const executionDecision = await evaluateExecution(
         rawSignal,
-        executionFilterConfig,
+        activeFilterConfig,
         executionContext,
         openTradesService, // Pass OpenTradesService for v4 exposure checks
         orderFlowService, // v14: Pass order flow service
@@ -1244,16 +1272,9 @@ async function processTradingDecision(
   return decisionLog;
 }
 
-/**
- * Process a trading decision using an IStrategy instance
- * Runs the strategy, journals the signal, executes through the same pipeline
- */
-async function processIStrategyDecision(
-  symbol: string,
-  strategy: IStrategy,
-  profileKey: string
-): Promise<void> {
-  try {
+/* processIStrategyDecision removed — unified into processTradingDecision via StrategyPipelineConfig */
+/* eslint-disable */
+async function __processIStrategyDecision_removed(..._: any[]) { const strategy: any = null, symbol: any = null, profileKey: any = null; try {
     // Create strategy context with market data
     const context: StrategyContext = {
       symbol,
@@ -1464,13 +1485,13 @@ async function tickLoop(): Promise<void> {
       }
     }
 
-    // IStrategy path: Process all active IStrategy instances
-    for (const { strategy, profileKey } of activeIStrategies) {
+    // IStrategy path: routed through the same unified pipeline via StrategyAdapter
+    for (const { strategy: riskBucket, config: pConfig } of activeStrategyPipelines) {
       for (const symbol of config.symbols) {
         try {
-          await processIStrategyDecision(symbol, strategy, profileKey);
+          await processTradingDecision(symbol, riskBucket, pConfig);
         } catch (error) {
-          logger.error(`[IStrategy] Error processing ${strategy.key} ${symbol}`, error);
+          logger.error(`[IStrategy] Error processing ${pConfig.strategyKey} ${symbol}`, error);
         }
       }
     }
