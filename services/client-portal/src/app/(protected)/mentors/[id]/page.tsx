@@ -137,7 +137,7 @@ export default function MentorProfilePage() {
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-gray-500">Risk %</label>
-                  <input type="number" min="0.1" max="5" step="0.1" value={riskAmount}
+                  <input type="number" min="0.1" max="10" step="0.1" value={riskAmount}
                     onChange={(e) => setRiskAmount(Number(e.target.value))}
                     className="w-20 px-2 py-1 border border-gray-300 rounded text-sm" />
                 </div>
