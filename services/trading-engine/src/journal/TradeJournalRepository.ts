@@ -29,11 +29,17 @@ export class TradeJournalRepository {
   async initialize(): Promise<void> {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.resolve(__dirname, '../db/migrations/v32_trade_journal.sql');
-    if (fs.existsSync(migrationPath)) {
-      const sql = fs.readFileSync(migrationPath, 'utf-8');
-      await this.pool.query(sql);
+    // Run trade journal migration
+    const v32Path = path.resolve(__dirname, '../db/migrations/v32_trade_journal.sql');
+    if (fs.existsSync(v32Path)) {
+      await this.pool.query(fs.readFileSync(v32Path, 'utf-8'));
       logger.info('trade_journal table ensured');
+    }
+    // Seed Silver Bullet profile
+    const v33Path = path.resolve(__dirname, '../db/migrations/v33_silver_bullet_profile.sql');
+    if (fs.existsSync(v33Path)) {
+      await this.pool.query(fs.readFileSync(v33Path, 'utf-8'));
+      logger.info('Silver Bullet profile ensured');
     }
   }
 
