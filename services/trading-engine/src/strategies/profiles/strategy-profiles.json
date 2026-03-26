@@ -25,6 +25,30 @@
       "entryTypeDetermination": "strategy",
       "note": "This is a frozen snapshot. Do not modify the implementation (GodSmcStrategy). All future changes must use new implementations."
     }
+  },
+  {
+    "id": "ict_silver_bullet_v1",
+    "key": "ict_silver_bullet_v1",
+    "displayName": "ICT Silver Bullet V1",
+    "description": "ICT Silver Bullet strategy: liquidity sweep + displacement + FVG entry during 3 precise time windows (London Open 3-4AM, NY AM 10-11AM, NY PM 2-3PM). Targets opposite liquidity with minimum 1:2 R:R.",
+    "implementationKey": "SILVER_BULLET_V1",
+    "version": 1,
+    "createdAt": "2026-03-26T00:00:00.000Z",
+    "updatedAt": "2026-03-26T00:00:00.000Z",
+    "isDefault": false,
+    "isArchived": false,
+    "config": {
+      "minRiskReward": 2.0,
+      "maxRiskPercent": 1.0,
+      "liquidityTolerance": 0.0001,
+      "liquidityLookback": 50,
+      "minATRMultiplier": 1.5,
+      "m15Candles": 100,
+      "m1Candles": 100,
+      "slBufferPips": 2,
+      "windows": ["LDN_OPEN", "NY_AM", "NY_PM"],
+      "note": "ICT Silver Bullet — mechanical strategy with strict time window entries"
+    }
   }
 ]
 

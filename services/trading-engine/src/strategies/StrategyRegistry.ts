@@ -10,9 +10,7 @@ import { IStrategy } from './types';
 import { StrategyProfile } from './profiles/types';
 import { loadStrategyProfiles, getProfileByKey } from './profiles/StrategyProfileStore';
 import { GodSmcStrategy } from './god/GodSmcStrategy';
-// Import other strategy implementations as they are created
-// import { SmcStrategyV2 } from './smc/SmcStrategyV2';
-// import { SmcStrategyV3 } from './smc/SmcStrategyV3';
+import { SilverBulletStrategy } from './silver-bullet/SilverBulletStrategy';
 
 const logger = new Logger('StrategyRegistry');
 
@@ -26,11 +24,9 @@ const logger = new Logger('StrategyRegistry');
 const implementationMap: Record<string, new (profile: StrategyProfile) => IStrategy> = {
   // Frozen immutable implementation
   GOD_SMC_V1: GodSmcStrategy,
-  
-  // Future implementations can be added here:
-  // SMC_V2: SmcStrategyV2,
-  // SMC_V3: SmcStrategyV3,
-  // SMC_EXPERIMENTAL_1: SmcExperimentalStrategy,
+
+  // ICT Silver Bullet — liquidity sweep + displacement + FVG entry
+  SILVER_BULLET_V1: SilverBulletStrategy,
 };
 
 /**

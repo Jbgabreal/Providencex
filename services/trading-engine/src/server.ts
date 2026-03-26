@@ -36,6 +36,7 @@ import createIngestionRouter from './routes/ingestion';
 import createShadowRouter from './routes/shadow';
 import createAdminOpsRouter from './routes/adminOps';
 import createIntelligenceRouter from './routes/intelligence';
+import createJournalRouter from './routes/journal';
 import createUserAnalyticsRouter from './routes/userAnalytics';
 import createAuthRouter from './routes/auth';
 import { validatePrivyConfig } from './config';
@@ -117,6 +118,7 @@ app.use('/api/billing', createBillingRouter(config)); // Crypto billing & subscr
 app.use('/api/referrals', createReferralRouter(config)); // Referral program
 app.use('/api/notifications', createNotificationRouter(config)); // In-app notifications
 app.use('/api/intelligence', createIntelligenceRouter(config)); // BI, recommendations, risk assistant
+app.use('/api/v1/journal', createJournalRouter()); // Trade journal API
 app.use('/api/auth', createAuthRouter(config)); // Authentication API
 app.use('/api/v1', orderEventsRoutes); // v3 order events webhook
 app.use('/strategy-config', strategyConfigRoutes); // Strategy configuration verification
