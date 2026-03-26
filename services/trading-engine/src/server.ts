@@ -1239,9 +1239,12 @@ async function processIStrategyDecision(
       currentPrice: latestTick?.mid || signal.entry,
     };
 
-    // Run execution filter
+    // Run execution filter (skip for GOD_SMC_V1 — it ran without v3 filters when profitable)
+    const skipV3Filter = strategy.key === 'GOD_SMC_V1';
+    const { backtestExecutionFilterConfig } = await import('./config/backtestExecutionFilterConfig');
+    const filterConfig = skipV3Filter ? backtestExecutionFilterConfig : executionFilterConfig;
     const executionDecision = await evaluateExecution(
-      rawSignal, executionFilterConfig, executionContext,
+      rawSignal, filterConfig, executionContext,
       openTradesService, orderFlowService, executionFilterState
     );
 
