@@ -10,14 +10,14 @@ import {
   useAdminImports, useAdminShadowTrades, useAdminActionLogs,
   useEngineStatus,
 } from '@/hooks/useAdmin';
-import { useDecisions, useExposure, useBacktests, useDailyMetrics } from '@/hooks/useJournal';
+import { useDecisions, useExposure, useBacktests, useDailyMetrics, useTradeJournal, useJournalSummary } from '@/hooks/useJournal';
 import {
   LayoutDashboard, Users, CreditCard, Gift, Star, Shield, Activity,
   Check, X, Eye, AlertTriangle, ChevronDown, ChevronUp, Radio,
-  BookOpen, TrendingUp, BarChart3, Target,
+  BookOpen, TrendingUp, BarChart3, Target, FileText,
 } from 'lucide-react';
 
-type Tab = 'overview' | 'mentors' | 'billing' | 'referrals' | 'reviews' | 'support' | 'logs' | 'engine' | 'decisions' | 'exposure' | 'backtests' | 'metrics';
+type Tab = 'overview' | 'mentors' | 'billing' | 'referrals' | 'reviews' | 'support' | 'logs' | 'engine' | 'decisions' | 'exposure' | 'backtests' | 'metrics' | 'journal';
 
 const statusBadge = (status: string) => {
   const colors: Record<string, string> = {
@@ -47,6 +47,7 @@ export default function AdminPage() {
     { key: 'exposure', label: 'Exposure', icon: TrendingUp },
     { key: 'backtests', label: 'Backtests', icon: BarChart3 },
     { key: 'metrics', label: 'Daily Metrics', icon: BookOpen },
+    { key: 'journal', label: 'Trade Journal', icon: FileText },
   ];
 
   return (
@@ -79,6 +80,7 @@ export default function AdminPage() {
       {tab === 'exposure' && <ExposureTab />}
       {tab === 'backtests' && <BacktestsTab />}
       {tab === 'metrics' && <DailyMetricsTab />}
+      {tab === 'journal' && <TradeJournalTab />}
     </div>
   );
 }
@@ -748,6 +750,175 @@ function DailyMetricsTab() {
               <span className="text-sm font-medium text-gray-500 ml-4">{item.count}</span>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== Trade Journal Tab ====================
+
+function TradeJournalTab() {
+  const [strategyFilter, setStrategyFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const { data: journalData, isLoading } = useTradeJournal({
+    strategy: strategyFilter || undefined,
+    status: statusFilter || undefined,
+    limit: 50,
+  });
+  const { data: summary } = useJournalSummary();
+
+  if (isLoading) return <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto" />;
+
+  const entries = journalData?.entries || [];
+  const total = journalData?.total || 0;
+
+  return (
+    <div className="space-y-6">
+      {/* Summary Cards */}
+      {summary && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="bg-white rounded-lg shadow p-4">
+            <p className="text-xs text-gray-500">Total Signals</p>
+            <p className="text-2xl font-bold text-gray-900">{summary.totalSignals}</p>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <p className="text-xs text-gray-500">Open Trades</p>
+            <p className="text-2xl font-bold text-blue-600">{summary.openTrades}</p>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <p className="text-xs text-gray-500">Closed Trades</p>
+            <p className="text-2xl font-bold text-gray-900">{summary.closedTrades}</p>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <p className="text-xs text-gray-500">Win Rate</p>
+            <p className={`text-2xl font-bold ${summary.winRate >= 50 ? 'text-green-600' : 'text-red-500'}`}>
+              {summary.winRate}%
+            </p>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <p className="text-xs text-gray-500">Total P&L</p>
+            <p className={`text-2xl font-bold ${summary.totalProfit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+              ${summary.totalProfit.toFixed(2)}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Strategy Breakdown */}
+      {summary?.byStrategy && Object.keys(summary.byStrategy).length > 0 && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold mb-4">Performance by Strategy</h2>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead><tr className="text-left text-xs text-gray-500 uppercase">
+                <th className="pb-2">Strategy</th><th className="pb-2">Signals</th><th className="pb-2">Trades</th>
+                <th className="pb-2">W/L</th><th className="pb-2">Win Rate</th><th className="pb-2">Avg R</th><th className="pb-2">P&L</th>
+              </tr></thead>
+              <tbody className="divide-y divide-gray-100">
+                {Object.values(summary.byStrategy).map((s: any) => (
+                  <tr key={s.strategyKey}>
+                    <td className="py-2 font-medium">{s.strategyKey}</td>
+                    <td className="py-2">{s.totalSignals}</td>
+                    <td className="py-2">{s.totalTrades}</td>
+                    <td className="py-2">{s.wins}/{s.losses}</td>
+                    <td className="py-2">
+                      <span className={`font-semibold ${s.winRate >= 50 ? 'text-green-600' : 'text-red-500'}`}>
+                        {s.winRate}%
+                      </span>
+                    </td>
+                    <td className="py-2">{s.avgRMultiple}R</td>
+                    <td className={`py-2 font-semibold ${s.totalProfit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      ${s.totalProfit.toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="flex gap-3">
+        <select value={strategyFilter} onChange={e => setStrategyFilter(e.target.value)}
+          className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white">
+          <option value="">All Strategies</option>
+          <option value="GOD_SMC_V1">GOD Strategy</option>
+          <option value="SILVER_BULLET_V1">Silver Bullet</option>
+        </select>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white">
+          <option value="">All Status</option>
+          <option value="signal">Signal (Detected)</option>
+          <option value="open">Open</option>
+          <option value="closed">Closed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <span className="self-center text-sm text-gray-400">{total} entries</span>
+      </div>
+
+      {/* Journal Entries */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold mb-4">Journal Entries</h2>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead><tr className="text-left text-xs text-gray-500 uppercase">
+              <th className="pb-2">Time</th><th className="pb-2">Strategy</th><th className="pb-2">Symbol</th>
+              <th className="pb-2">Dir</th><th className="pb-2">Entry</th><th className="pb-2">SL</th>
+              <th className="pb-2">TP</th><th className="pb-2">R:R</th><th className="pb-2">Status</th>
+              <th className="pb-2">Result</th><th className="pb-2">P&L</th>
+            </tr></thead>
+            <tbody className="divide-y divide-gray-100">
+              {entries.map((e: any) => (
+                <tr key={e.id} className={
+                  e.status === 'open' ? 'bg-blue-50/50' :
+                  e.result === 'win' ? 'bg-green-50/50' :
+                  e.result === 'loss' ? 'bg-red-50/30' : ''
+                }>
+                  <td className="py-2 text-xs text-gray-400 whitespace-nowrap">
+                    {new Date(e.createdAt).toLocaleString()}
+                  </td>
+                  <td className="py-2 text-xs font-medium">{e.strategyKey}</td>
+                  <td className="py-2 font-medium">{e.symbol}</td>
+                  <td className="py-2">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      e.direction === 'buy' ? 'bg-blue-100 text-blue-800' : 'bg-orange-100 text-orange-800'
+                    }`}>{e.direction?.toUpperCase()}</span>
+                  </td>
+                  <td className="py-2 font-mono text-xs">{e.entryPrice?.toFixed(5)}</td>
+                  <td className="py-2 font-mono text-xs text-red-500">{e.stopLoss?.toFixed(5)}</td>
+                  <td className="py-2 font-mono text-xs text-green-600">{e.takeProfit?.toFixed(5)}</td>
+                  <td className="py-2">{e.rrTarget ? `1:${e.rrTarget}` : '-'}</td>
+                  <td className="py-2">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      e.status === 'open' ? 'bg-blue-100 text-blue-800' :
+                      e.status === 'closed' ? 'bg-gray-100 text-gray-800' :
+                      e.status === 'signal' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>{e.status}</span>
+                  </td>
+                  <td className="py-2">
+                    {e.result ? (
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                        e.result === 'win' ? 'bg-green-100 text-green-800' :
+                        e.result === 'loss' ? 'bg-red-100 text-red-800' :
+                        'bg-gray-100 text-gray-600'
+                      }`}>{e.result}</span>
+                    ) : '-'}
+                  </td>
+                  <td className={`py-2 font-semibold ${
+                    e.profit > 0 ? 'text-green-600' : e.profit < 0 ? 'text-red-500' : 'text-gray-400'
+                  }`}>
+                    {e.profit != null ? `$${e.profit.toFixed(2)}` : '-'}
+                  </td>
+                </tr>
+              ))}
+              {entries.length === 0 && (
+                <tr><td colSpan={11} className="py-4 text-center text-gray-500">No journal entries yet</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
