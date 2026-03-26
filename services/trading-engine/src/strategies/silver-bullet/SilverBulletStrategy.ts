@@ -22,7 +22,7 @@ const logger = new Logger('SilverBullet');
 
 export class SilverBulletStrategy implements IStrategy {
   readonly key = 'SILVER_BULLET_V1';
-  readonly displayName = 'ICT Silver Bullet V1';
+  readonly displayName = 'ICT Silver Bullet';
 
   private profile: StrategyProfile;
   private marketDataService: MarketDataService;

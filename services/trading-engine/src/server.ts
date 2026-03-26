@@ -563,10 +563,11 @@ async function processTradingDecision(
   riskContext.guardrail_mode = guardrailDecision.mode;
 
   // Build initial decision log
+  const strategyDisplayName = strategy === 'low' ? 'ICT Sweep & Shift' : strategy === 'high' ? 'ICT High Risk' : strategy;
   const decisionLog: TradeDecisionLog = {
     timestamp,
     symbol,
-    strategy,
+    strategy: strategyDisplayName as any,
     guardrail_mode: guardrailDecision.mode,
     guardrail_reason: guardrailDecision.reason_summary,
     decision: 'skip', // Default to skip
@@ -1200,7 +1201,8 @@ async function processIStrategyDecision(
     // Journal the signal
     const setupContext = order.metadata?.setup || signal.meta?.setupContext || {};
     const journalId = await journalService.onSignalGenerated({
-      strategyKey: strategy.key,
+      strategyKey: strategy.displayName,
+      strategyVersion: strategy.key,
       strategyProfileKey: profileKey,
       symbol: signal.symbol,
       direction: signal.direction,
@@ -1269,7 +1271,7 @@ async function processIStrategyDecision(
       await decisionLogger.logDecision({
         timestamp: new Date().toISOString(),
         symbol,
-        strategy: strategy.key as any,
+        strategy: strategy.displayName as any,
         guardrail_mode: 'normal',
         guardrail_reason: 'Normal mode',
         decision: 'skip',
@@ -1303,7 +1305,7 @@ async function processIStrategyDecision(
     await decisionLogger.logDecision({
       timestamp: new Date().toISOString(),
       symbol,
-      strategy: strategy.key as any,
+      strategy: strategy.displayName as any,
       guardrail_mode: 'normal',
       guardrail_reason: 'Normal mode',
       decision: 'trade',

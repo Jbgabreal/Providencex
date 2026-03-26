@@ -32,7 +32,7 @@ const logger = new Logger('GodSmcStrategy');
 
 export class GodSmcStrategy implements IStrategy {
   readonly key = 'GOD_SMC_V1';
-  readonly displayName = 'First Successful Strategy from GOD (Frozen)';
+  readonly displayName = 'ICT GOD Strategy (Original)';
 
   private marketDataService: MarketDataService;
   private ictEntryService: ICTEntryService;
