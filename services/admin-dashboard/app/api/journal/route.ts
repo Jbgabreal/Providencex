@@ -250,13 +250,13 @@ function computeStreaks(trades: Trade[]): StreakInfo[] {
 
 export async function GET() {
   try {
-    const csvPath = path.resolve(
-      process.cwd(),
-      '../trading-engine/backtests/FULL_JOURNAL_Sep25_Mar26.csv'
-    );
+    // Try local data dir first (Railway), then trading-engine path (local dev)
+    const localPath = path.resolve(process.cwd(), 'data/FULL_JOURNAL_Sep25_Mar26.csv');
+    const devPath = path.resolve(process.cwd(), '../trading-engine/backtests/FULL_JOURNAL_Sep25_Mar26.csv');
+    const csvPath = fs.existsSync(localPath) ? localPath : devPath;
 
     if (!fs.existsSync(csvPath)) {
-      return NextResponse.json({ error: 'CSV file not found' }, { status: 404 });
+      return NextResponse.json({ error: 'CSV file not found at ' + localPath + ' or ' + devPath }, { status: 404 });
     }
 
     const csv = fs.readFileSync(csvPath, 'utf-8');

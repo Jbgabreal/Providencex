@@ -4,7 +4,9 @@ import fs from 'fs';
 import path from 'path';
 
 // Store screenshot URLs in a JSON file alongside trade notes
-const SCREENSHOTS_JSON = path.resolve(process.cwd(), '../trading-engine/backtests/trade_screenshots.json');
+const SCREENSHOTS_JSON = fs.existsSync(path.resolve(process.cwd(), 'data'))
+  ? path.resolve(process.cwd(), 'data/trade_screenshots.json')
+  : path.resolve(process.cwd(), '../trading-engine/backtests/trade_screenshots.json');
 
 type ScreenshotMap = Record<string, { setup?: string; result?: string }>;
 

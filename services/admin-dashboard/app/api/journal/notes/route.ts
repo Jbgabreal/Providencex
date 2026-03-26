@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
-const NOTES_PATH = path.resolve(process.cwd(), '../trading-engine/backtests/trade_notes.json');
+const NOTES_PATH = fs.existsSync(path.resolve(process.cwd(), 'data'))
+  ? path.resolve(process.cwd(), 'data/trade_notes.json')
+  : path.resolve(process.cwd(), '../trading-engine/backtests/trade_notes.json');
 
 export interface TradeNote {
   entryAnalysis: string;
