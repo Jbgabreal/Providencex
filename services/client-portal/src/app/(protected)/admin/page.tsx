@@ -500,11 +500,18 @@ function EngineTab() {
                     {new Date(d.timestamp).toLocaleTimeString()}
                   </td>
                   <td className="py-2 text-xs font-medium">
-                    <span className={`px-1.5 py-0.5 rounded ${
-                      d.strategy?.includes('GOD') ? 'bg-purple-50 text-purple-700' :
-                      d.strategy?.includes('Silver') ? 'bg-cyan-50 text-cyan-700' :
-                      'bg-indigo-50 text-indigo-700'
-                    }`}>{d.strategy}</span>
+                    {(() => {
+                      const name = d.strategy === 'low' ? 'ICT Sweep & Shift'
+                        : d.strategy === 'high' ? 'ICT High Risk'
+                        : d.strategy === 'GOD_SMC_V1' ? 'ICT GOD Strategy (Original)'
+                        : d.strategy === 'SILVER_BULLET_V1' ? 'ICT Silver Bullet'
+                        : d.strategy || 'Unknown';
+                      return <span className={`px-1.5 py-0.5 rounded ${
+                        name.includes('GOD') ? 'bg-purple-50 text-purple-700' :
+                        name.includes('Silver') ? 'bg-cyan-50 text-cyan-700' :
+                        'bg-indigo-50 text-indigo-700'
+                      }`}>{name}</span>;
+                    })()}
                   </td>
                   <td className="py-2 font-medium">{d.symbol}</td>
                   <td className="py-2">

@@ -237,11 +237,18 @@ export default function EnginePage() {
                 <tr key={d.id}>
                   <td className="px-4 py-3 text-sm text-gray-500">{new Date(d.timestamp).toLocaleTimeString()}</td>
                   <td className="px-4 py-3">
-                    <span className={`px-2 py-1 text-xs rounded-full ${
-                      d.strategy?.includes('GOD') ? 'bg-purple-100 text-purple-800' :
-                      d.strategy?.includes('Silver') ? 'bg-cyan-100 text-cyan-800' :
-                      'bg-indigo-100 text-indigo-800'
-                    }`}>{d.strategy}</span>
+                    {(() => {
+                      const name = d.strategy === 'low' ? 'ICT Sweep & Shift'
+                        : d.strategy === 'high' ? 'ICT High Risk'
+                        : d.strategy === 'GOD_SMC_V1' ? 'ICT GOD Strategy (Original)'
+                        : d.strategy === 'SILVER_BULLET_V1' ? 'ICT Silver Bullet'
+                        : d.strategy || 'Unknown';
+                      return <span className={`px-2 py-1 text-xs rounded-full ${
+                        name.includes('GOD') ? 'bg-purple-100 text-purple-800' :
+                        name.includes('Silver') ? 'bg-cyan-100 text-cyan-800' :
+                        'bg-indigo-100 text-indigo-800'
+                      }`}>{name}</span>;
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-sm font-medium text-gray-900">{d.symbol}</td>
                   <td className="px-4 py-3">

@@ -200,11 +200,18 @@ export default function DecisionsPage() {
                       {decision.symbol}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                        decision.strategy?.includes('GOD') ? 'bg-purple-100 text-purple-800' :
-                        decision.strategy?.includes('Silver') ? 'bg-cyan-100 text-cyan-800' :
-                        'bg-indigo-100 text-indigo-800'
-                      }`}>{decision.strategy}</span>
+                      {(() => {
+                        const name = decision.strategy === 'low' ? 'ICT Sweep & Shift'
+                          : decision.strategy === 'high' ? 'ICT High Risk'
+                          : decision.strategy === 'GOD_SMC_V1' ? 'ICT GOD Strategy (Original)'
+                          : decision.strategy === 'SILVER_BULLET_V1' ? 'ICT Silver Bullet'
+                          : decision.strategy || 'Unknown';
+                        return <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                          name.includes('GOD') ? 'bg-purple-100 text-purple-800' :
+                          name.includes('Silver') ? 'bg-cyan-100 text-cyan-800' :
+                          'bg-indigo-100 text-indigo-800'
+                        }`}>{name}</span>;
+                      })()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span
