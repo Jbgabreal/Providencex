@@ -85,5 +85,18 @@ export default function createJournalRouter(): Router {
     }
   });
 
+  // DELETE /api/v1/journal/trades — clear all journal entries
+  router.delete('/trades', async (req: Request, res: Response) => {
+    try {
+      const pool = (repo as any).pool;
+      const result = await pool.query('DELETE FROM trade_journal');
+      logger.info(`Cleared ${result.rowCount} journal entries`);
+      res.json({ success: true, deleted: result.rowCount });
+    } catch (err: any) {
+      logger.error('Failed to clear journal', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   return router;
 }
