@@ -40,6 +40,10 @@ import createJournalRouter from './routes/journal';
 import createUserAnalyticsRouter from './routes/userAnalytics';
 import createAuthRouter from './routes/auth';
 import { validatePrivyConfig } from './config';
+import { IStrategy, StrategyContext, StrategyResult } from './strategies/types';
+import { StrategyAdapter } from './strategies/StrategyAdapter';
+import { getStrategyByProfileKey } from './strategies/StrategyRegistry';
+import { TradeJournalService, TradeJournalRepository } from './journal';
 import orderEventsRoutes, { initializeOrderEventService } from './routes/orderEvents';
 import strategyConfigRoutes from './routes/strategyConfig';
 import performanceReportsRoutes, { initializePerformanceReportsService } from './routes/performanceReports';
@@ -266,6 +270,31 @@ const guardrailService = new GuardrailService();
 const riskService = new RiskService();
 const executionService = new ExecutionService(priceFeed, candleStore, orderFlowService); // v14: Pass order flow service for smart entry refinement
 const decisionLogger = new DecisionLogger();
+
+// Trade Journal Service
+const journalRepo = new TradeJournalRepository(config.databaseUrl);
+journalRepo.initialize().catch(err => logger.error('Failed to initialize trade journal', err));
+const journalService = new TradeJournalService(journalRepo);
+
+// IStrategy instances loaded from env (e.g., ACTIVE_STRATEGIES=SILVER_BULLET_V1)
+const activeIStrategies: { strategy: IStrategy; profileKey: string }[] = [];
+const activeStrategyKeys = (process.env.ACTIVE_STRATEGIES || '').split(',').filter(Boolean);
+if (activeStrategyKeys.length > 0) {
+  logger.info(`[Server] Loading IStrategy instances: ${activeStrategyKeys.join(', ')}`);
+  Promise.all(
+    activeStrategyKeys.map(async (key) => {
+      try {
+        const strategy = await getStrategyByProfileKey(key);
+        activeIStrategies.push({ strategy, profileKey: key });
+        logger.info(`[Server] Loaded IStrategy: ${strategy.key} (${strategy.displayName})`);
+      } catch (err) {
+        logger.error(`[Server] Failed to load strategy ${key}:`, err);
+      }
+    })
+  ).then(() => {
+    logger.info(`[Server] ${activeIStrategies.length} IStrategy instance(s) active`);
+  });
+}
 
 // v3 Execution Filter state helper
 const executionFilterState = new ExecutionFilterState();
@@ -1140,6 +1169,142 @@ async function processTradingDecision(
 }
 
 /**
+ * Process a trading decision using an IStrategy instance
+ * Runs the strategy, journals the signal, executes through the same pipeline
+ */
+async function processIStrategyDecision(
+  symbol: string,
+  strategy: IStrategy,
+  profileKey: string
+): Promise<void> {
+  try {
+    // Create strategy context with market data
+    const context: StrategyContext = {
+      symbol,
+      timeframe: 'M1',
+      candles: [],
+      marketDataService,
+    };
+
+    // Execute strategy
+    const result: StrategyResult = await strategy.execute(context);
+
+    if (!result.orders || result.orders.length === 0) {
+      return; // No signal — silent skip (strategies log their own reasons)
+    }
+
+    const order = result.orders[0];
+    const signal = order.signal;
+
+    // Journal the signal
+    const setupContext = order.metadata?.setup || signal.meta?.setupContext || {};
+    const journalId = await journalService.onSignalGenerated({
+      strategyKey: strategy.key,
+      strategyProfileKey: profileKey,
+      symbol: signal.symbol,
+      direction: signal.direction,
+      entryPrice: signal.entry,
+      stopLoss: signal.stopLoss,
+      takeProfit: signal.takeProfit,
+      rrTarget: signal.meta?.riskRewardRatio,
+      setupContext,
+      entryContext: { orderKind: signal.orderKind, reason: signal.reason },
+    });
+
+    logger.info(
+      `[IStrategy] ${strategy.key} ${symbol}: ${signal.direction.toUpperCase()} @ ${signal.entry.toFixed(2)} ` +
+      `| SL: ${signal.stopLoss.toFixed(2)} | TP: ${signal.takeProfit.toFixed(2)}`
+    );
+
+    // Convert to RawSignal for execution filter
+    const { convertToRawSignal } = await import('./strategy/v3/SignalConverter');
+    const htfTrend = (signal.meta?.ictBias || signal.direction === 'buy' ? 'bullish' : 'bearish') as import('./types').TrendDirection;
+    const rawSignal = convertToRawSignal(signal, htfTrend);
+
+    // Get execution context
+    const spread = await marketDataService.getCurrentSpread(symbol);
+    const spreadPips = convertPriceDistanceToPips(symbol, spread);
+    const todayTradeCount = await executionFilterState.getTodayTradeCount(symbol, 'low');
+    const lastTradeAt = await executionFilterState.getLastTradeTimestamp(symbol, 'low');
+    const openTrades = await executionFilterState.getOpenTradeCount(symbol);
+    const latestTick = priceFeed.getLatestTick(symbol);
+
+    const executionContext = {
+      guardrailMode: 'normal' as const,
+      spreadPips,
+      now: new Date(),
+      openTradesForSymbol: openTrades,
+      todayTradeCountForSymbolStrategy: todayTradeCount,
+      lastTradeAtForSymbolStrategy: lastTradeAt,
+      currentPrice: latestTick?.mid || signal.entry,
+    };
+
+    // Run execution filter
+    const executionDecision = await evaluateExecution(
+      rawSignal, executionFilterConfig, executionContext,
+      openTradesService, orderFlowService, executionFilterState
+    );
+
+    if (executionDecision.action === 'SKIP') {
+      logger.info(`[IStrategy] ${strategy.key} ${symbol}: Execution filter SKIP — ${executionDecision.reasons.join('; ')}`);
+      await journalService.onSignalCancelled(journalId, `Exec filter: ${executionDecision.reasons.join('; ')}`);
+
+      // Log decision
+      await decisionLogger.logDecision({
+        timestamp: new Date().toISOString(),
+        symbol,
+        strategy: 'low',
+        guardrail_mode: 'normal',
+        guardrail_reason: 'Normal mode',
+        decision: 'skip',
+        signal_reason: signal.reason,
+        risk_reason: `v3 Execution Filter: ${executionDecision.reasons.join('; ')}`,
+        execution_filter_action: 'skip',
+        execution_filter_reasons: executionDecision.reasons,
+        risk_score: null,
+      });
+      return;
+    }
+
+    // Execute trade
+    if (multiTenantEnabled) {
+      await userAssignmentOrchestrator.processAssignmentsForSignal(
+        rawSignal, executionContext, 'normal', 'low'
+      );
+    } else {
+      const lotSize = 0.01; // Default minimum — PerAccountRiskService handles sizing in multi-tenant
+      const executionResult = await executionService.openTrade(signal, lotSize, 'low');
+
+      if (executionResult?.success) {
+        await journalService.onTradeOpened(journalId, {
+          lotSize,
+          entryPrice: signal.entry,
+        });
+      }
+    }
+
+    // Log decision
+    await decisionLogger.logDecision({
+      timestamp: new Date().toISOString(),
+      symbol,
+      strategy: 'low',
+      guardrail_mode: 'normal',
+      guardrail_reason: 'Normal mode',
+      decision: 'trade',
+      signal_reason: signal.reason,
+      execution_filter_action: 'pass',
+      execution_filter_reasons: [],
+      risk_score: null,
+      trade_request: { direction: signal.direction, entry: signal.entry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, lotSize: 0.01 },
+    });
+
+    logger.info(`[IStrategy] ${strategy.key} ${symbol}: TRADE EXECUTED`);
+  } catch (error) {
+    logger.error(`[IStrategy] ${strategy.key} ${symbol}: Error`, error);
+  }
+}
+
+/**
  * Tick loop - processes trading decisions for all symbols
  */
 async function tickLoop(): Promise<void> {
@@ -1150,13 +1315,23 @@ async function tickLoop(): Promise<void> {
     ensureDailyStatsReset('low');
     ensureDailyStatsReset('high');
 
-    // For v1: Process all symbols with low-risk strategy
-    // In production, this could be configurable per symbol
+    // Legacy path: Process all symbols with StrategyService (SMCStrategyV2)
     for (const symbol of config.symbols) {
       try {
         await processTradingDecision(symbol, 'low');
       } catch (error) {
         logger.error(`Error processing ${symbol}`, error);
+      }
+    }
+
+    // IStrategy path: Process all active IStrategy instances
+    for (const { strategy, profileKey } of activeIStrategies) {
+      for (const symbol of config.symbols) {
+        try {
+          await processIStrategyDecision(symbol, strategy, profileKey);
+        } catch (error) {
+          logger.error(`[IStrategy] Error processing ${strategy.key} ${symbol}`, error);
+        }
       }
     }
 
