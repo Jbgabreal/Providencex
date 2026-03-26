@@ -18,6 +18,7 @@ interface Decision {
   id: string;
   timestamp: string;
   symbol: string;
+  strategy: string;
   decision: string;
   guardrail_mode: string;
   signal_reason?: string;
@@ -222,6 +223,7 @@ export default function EnginePage() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Strategy</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Decision</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Guardrail</th>
@@ -234,6 +236,13 @@ export default function EnginePage() {
               {data.recentDecisions.map((d) => (
                 <tr key={d.id}>
                   <td className="px-4 py-3 text-sm text-gray-500">{new Date(d.timestamp).toLocaleTimeString()}</td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-1 text-xs rounded-full ${
+                      d.strategy?.includes('GOD') ? 'bg-purple-100 text-purple-800' :
+                      d.strategy?.includes('Silver') ? 'bg-cyan-100 text-cyan-800' :
+                      'bg-indigo-100 text-indigo-800'
+                    }`}>{d.strategy}</span>
+                  </td>
                   <td className="px-4 py-3 text-sm font-medium text-gray-900">{d.symbol}</td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-1 text-xs rounded-full ${d.decision === 'trade' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>

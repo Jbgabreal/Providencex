@@ -484,6 +484,7 @@ function EngineTab() {
             <thead>
               <tr className="text-left text-xs text-gray-500 uppercase">
                 <th className="pb-2">Time</th>
+                <th className="pb-2">Strategy</th>
                 <th className="pb-2">Symbol</th>
                 <th className="pb-2">Decision</th>
                 <th className="pb-2">Guardrail</th>
@@ -497,6 +498,13 @@ function EngineTab() {
                 <tr key={d.id} className={d.decision === 'trade' ? 'bg-green-50/50' : ''}>
                   <td className="py-2 text-xs text-gray-500 whitespace-nowrap">
                     {new Date(d.timestamp).toLocaleTimeString()}
+                  </td>
+                  <td className="py-2 text-xs font-medium">
+                    <span className={`px-1.5 py-0.5 rounded ${
+                      d.strategy?.includes('GOD') ? 'bg-purple-50 text-purple-700' :
+                      d.strategy?.includes('Silver') ? 'bg-cyan-50 text-cyan-700' :
+                      'bg-indigo-50 text-indigo-700'
+                    }`}>{d.strategy}</span>
                   </td>
                   <td className="py-2 font-medium">{d.symbol}</td>
                   <td className="py-2">
@@ -537,7 +545,7 @@ function EngineTab() {
                 </tr>
               ))}
               {recentDecisions.length === 0 && (
-                <tr><td colSpan={7} className="py-4 text-center text-gray-500">No decisions recorded yet</td></tr>
+                <tr><td colSpan={8} className="py-4 text-center text-gray-500">No decisions recorded yet</td></tr>
               )}
             </tbody>
           </table>

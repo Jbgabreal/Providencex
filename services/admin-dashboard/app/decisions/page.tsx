@@ -114,8 +114,9 @@ export default function DecisionsPage() {
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
             >
               <option value="">All</option>
-              <option value="low">Low Risk</option>
-              <option value="high">High Risk</option>
+              <option value="ICT Sweep & Shift">ICT Sweep & Shift</option>
+              <option value="ICT GOD Strategy (Original)">ICT GOD Strategy</option>
+              <option value="ICT Silver Bullet">ICT Silver Bullet</option>
             </select>
           </div>
           <div>
@@ -198,8 +199,12 @@ export default function DecisionsPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       {decision.symbol}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {decision.strategy}
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                        decision.strategy?.includes('GOD') ? 'bg-purple-100 text-purple-800' :
+                        decision.strategy?.includes('Silver') ? 'bg-cyan-100 text-cyan-800' :
+                        'bg-indigo-100 text-indigo-800'
+                      }`}>{decision.strategy}</span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span
