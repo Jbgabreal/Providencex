@@ -90,12 +90,14 @@ function parseArgs(): {
   riskPerTradeUsd?: number;
   riskPerTradePercent?: number;
   outputDir?: string;
-  strategyProfileKey?: string; // New: strategy profile key
+  strategyProfileKey?: string;
+  strategyExplicitlySet?: boolean;
 } {
   const args = process.argv.slice(2);
   
   let symbol: string | string[] = 'XAUUSD';
   let strategies: ('low' | 'high')[] = ['low'];
+  let strategyExplicitlySet = false;
   let from = '2024-01-01';
   let to = '2024-12-31';
   let dataSource: 'csv' | 'postgres' | 'mt5' | 'mock' | 'deriv' = 'deriv';
@@ -124,6 +126,7 @@ function parseArgs(): {
           strategies = nextArg.includes(',')
             ? nextArg.split(',').map(s => s.trim()) as ('low' | 'high')[]
             : [nextArg as 'low' | 'high'];
+          strategyExplicitlySet = true;
         }
         i++;
         break;
@@ -215,6 +218,7 @@ function parseArgs(): {
     riskPerTradePercent,
     outputDir,
     strategyProfileKey,
+    strategyExplicitlySet,
   };
 }
 
@@ -323,8 +327,8 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    // Validate: cannot use both --strategy and --strategy-profile
-    if (args.strategyProfileKey && args.strategies.length > 0) {
+    // Validate: cannot use both --strategy (explicit) and --strategy-profile
+    if (args.strategyProfileKey && args.strategyExplicitlySet) {
       logger.error('[BacktestCLI] Cannot use both --strategy and --strategy-profile. Use --strategy-profile only.');
       process.exit(1);
     }

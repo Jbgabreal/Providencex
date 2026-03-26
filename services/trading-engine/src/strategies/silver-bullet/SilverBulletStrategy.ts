@@ -26,6 +26,7 @@ export class SilverBulletStrategy implements IStrategy {
 
   private profile: StrategyProfile;
   private marketDataService: MarketDataService;
+  private _lastWindowLog: number = 0;
   private timeWindowService: SilverBulletTimeWindowService;
   private entryService: SilverBulletEntryService;
 
@@ -72,16 +73,7 @@ export class SilverBulletStrategy implements IStrategy {
   async execute(context: StrategyContext): Promise<StrategyResult> {
     const { symbol } = context;
 
-    // Step 1: Check if we're in a Silver Bullet time window
-    const windowCheck = this.timeWindowService.isInSilverBulletWindow();
-    if (!windowCheck.active || !windowCheck.window) {
-      return {
-        orders: [],
-        debug: { reason: 'Outside Silver Bullet time window', symbol },
-      };
-    }
-
-    // Step 2: Get candle data
+    // Step 1: Get candle data (need candle time for window check in backtesting)
     const marketData = context.marketDataService || this.marketDataService;
     const m15Count = this.profile.config?.m15Candles || 100;
     const m1Count = this.profile.config?.m1Candles || 100;
@@ -101,6 +93,21 @@ export class SilverBulletStrategy implements IStrategy {
         debug: { reason: `Insufficient candles: M15=${m15Candles?.length || 0}, M1=${m1Candles?.length || 0}` },
       };
     }
+
+    // Step 2: Check time window (use last candle time for backtest compatibility)
+    const lastCandle = m1Candles[m1Candles.length - 1];
+    // Candle type has `timestamp` (ISO string) or `startTime` (Date)
+    const rawTime = (lastCandle as any).timestamp || (lastCandle as any).startTime;
+    const candleTime = rawTime instanceof Date ? rawTime : new Date(rawTime || Date.now());
+    const windowCheck = this.timeWindowService.isInSilverBulletWindow(candleTime);
+
+    if (!windowCheck.active || !windowCheck.window) {
+      return {
+        orders: [],
+        debug: { reason: `Outside Silver Bullet window`, symbol },
+      };
+    }
+    logger.info(`[SilverBullet] ${symbol}: In ${windowCheck.window.label} window at ${candleTime}`);
 
     // Step 3: Run Silver Bullet analysis
     const setup = this.entryService.analyzeSilverBullet(
