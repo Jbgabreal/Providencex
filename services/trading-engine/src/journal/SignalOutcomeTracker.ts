@@ -18,6 +18,7 @@ export class SignalOutcomeTracker {
   private priceFeed: any; // DerivCandleProvider
   private intervalMs: number;
   private timer: NodeJS.Timeout | null = null;
+  public onSignalResolved?: (strategyKey: string, symbol: string, direction: string) => void;
   private activeSignals: Map<string, {
     id: string;
     symbol: string;
@@ -158,6 +159,9 @@ export class SignalOutcomeTracker {
             `${result.toUpperCase()} (${hit}) | Entry: ${signal.entryPrice.toFixed(5)} → ${exitPrice.toFixed(5)} | ` +
             `P&L: $${simulatedProfit.toFixed(2)} | R: ${rMultiple.toFixed(2)}`
           );
+
+          // Notify so dedupe cache can be cleared
+          this.onSignalResolved?.(signal.strategyKey, signal.symbol, signal.direction);
 
           resolved.push(id);
         }

@@ -277,6 +277,12 @@ journalRepo.initialize().catch(err => logger.error('Failed to initialize trade j
 const journalService = new TradeJournalService(journalRepo);
 const signalOutcomeTracker = new SignalOutcomeTracker(journalRepo, priceFeed, 10000);
 
+// Signal deduplication — prevent journaling the same setup repeatedly
+const lastSignalKey = new Map<string, string>(); // "strategy:symbol:direction" → "sl:tp" hash
+signalOutcomeTracker.onSignalResolved = (strategyKey, symbol, direction) => {
+  lastSignalKey.delete(`${strategyKey}:${symbol}:${direction}`);
+};
+
 // IStrategy instances loaded from env (e.g., ACTIVE_STRATEGIES=SILVER_BULLET_V1)
 const activeIStrategies: { strategy: IStrategy; profileKey: string }[] = [];
 const activeStrategyKeys = (process.env.ACTIVE_STRATEGIES || '').split(',').filter(Boolean);
@@ -1197,6 +1203,14 @@ async function processIStrategyDecision(
 
     const order = result.orders[0];
     const signal = order.signal;
+
+    // Deduplicate: skip if same strategy+symbol+direction still has the same SL/TP zone
+    const dedupeKey = `${strategy.key}:${signal.symbol}:${signal.direction}`;
+    const dedupeValue = `${signal.stopLoss.toFixed(3)}:${signal.takeProfit.toFixed(3)}`;
+    if (lastSignalKey.get(dedupeKey) === dedupeValue) {
+      return; // Same setup zone — already journaled
+    }
+    lastSignalKey.set(dedupeKey, dedupeValue);
 
     // Journal the signal
     const setupContext = order.metadata?.setup || signal.meta?.setupContext || {};
