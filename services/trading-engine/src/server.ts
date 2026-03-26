@@ -1266,24 +1266,26 @@ async function processIStrategyDecision(
     const result: StrategyResult = await strategy.execute(context);
 
     if (!result.orders || result.orders.length === 0) {
-      // Journal the skip (deduplicated by reason)
       const skipReason = result.debug?.reason || 'No setup';
+
+      // Always log to decisions table (every tick) so engine monitor shows GOD strategy
+      await decisionLogger.logDecision({
+        timestamp: new Date().toISOString(),
+        symbol,
+        strategy: strategy.displayName as any,
+        guardrail_mode: 'normal',
+        guardrail_reason: 'Normal mode: No active avoid windows',
+        decision: 'skip',
+        signal_reason: skipReason,
+        risk_score: null,
+        execution_filter_action: null,
+        execution_filter_reasons: null,
+      });
+
+      // Journal the skip (deduplicated — only when reason changes)
       const iStrategySkipKey = `iskip:${strategy.key}:${symbol}`;
       if (lastSignalKey.get(iStrategySkipKey) !== skipReason) {
         lastSignalKey.set(iStrategySkipKey, skipReason);
-        // Log to decisions table so it shows in engine monitor
-        await decisionLogger.logDecision({
-          timestamp: new Date().toISOString(),
-          symbol,
-          strategy: strategy.displayName as any,
-          guardrail_mode: 'normal',
-          guardrail_reason: 'Normal mode: No active avoid windows',
-          decision: 'skip',
-          signal_reason: skipReason,
-          risk_score: null,
-          execution_filter_action: null,
-          execution_filter_reasons: null,
-        });
         try {
           await journalRepo.createEntry({
             strategyKey: strategy.displayName,
