@@ -29,17 +29,38 @@ export class TradeJournalRepository {
   async initialize(): Promise<void> {
     const fs = await import('fs');
     const path = await import('path');
+
+    // Try multiple paths: compiled dist vs source src (Docker vs local dev)
+    const migrationDirs = [
+      path.resolve(__dirname, '../db/migrations'),          // From dist/journal/ → dist/db/migrations
+      path.resolve(process.cwd(), 'src/db/migrations'),     // From cwd (services/trading-engine)
+      path.resolve(process.cwd(), 'services/trading-engine/src/db/migrations'), // From repo root
+    ];
+
+    const findMigration = (filename: string): string | null => {
+      for (const dir of migrationDirs) {
+        const fullPath = path.join(dir, filename);
+        if (fs.existsSync(fullPath)) return fullPath;
+      }
+      return null;
+    };
+
     // Run trade journal migration
-    const v32Path = path.resolve(__dirname, '../db/migrations/v32_trade_journal.sql');
-    if (fs.existsSync(v32Path)) {
+    const v32Path = findMigration('v32_trade_journal.sql');
+    if (v32Path) {
       await this.pool.query(fs.readFileSync(v32Path, 'utf-8'));
       logger.info('trade_journal table ensured');
+    } else {
+      logger.warn('v32_trade_journal.sql not found — tried: ' + migrationDirs.join(', '));
     }
+
     // Seed Silver Bullet profile
-    const v33Path = path.resolve(__dirname, '../db/migrations/v33_silver_bullet_profile.sql');
-    if (fs.existsSync(v33Path)) {
+    const v33Path = findMigration('v33_silver_bullet_profile.sql');
+    if (v33Path) {
       await this.pool.query(fs.readFileSync(v33Path, 'utf-8'));
       logger.info('Silver Bullet profile ensured');
+    } else {
+      logger.warn('v33_silver_bullet_profile.sql not found — tried: ' + migrationDirs.join(', '));
     }
   }
 
