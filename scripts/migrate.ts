@@ -41,6 +41,9 @@ const MIGRATION_FILES = [
   'v30_admin_operations.sql',
   // Phase 10: Intelligence
   'v31_intelligence.sql',
+  // Phase 11: Trade Journal + Silver Bullet
+  'v32_trade_journal.sql',
+  'v33_silver_bullet_profile.sql',
 ];
 
 async function main() {
