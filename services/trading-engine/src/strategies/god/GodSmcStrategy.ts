@@ -63,7 +63,7 @@ export class GodSmcStrategy implements IStrategy {
     
     // Use MarketDataService from context if provided, otherwise use instance
     const marketDataService = context.marketDataService || this.marketDataService;
-    
+
     try {
       // Get required timeframes for ICT model
       // H4 for bias, M15 for setup, M1 for entry

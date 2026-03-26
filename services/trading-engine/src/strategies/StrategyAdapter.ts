@@ -19,6 +19,7 @@ const logger = new Logger('StrategyAdapter');
 export class StrategyAdapter {
   private strategy: IStrategy;
   private marketDataService: MarketDataService;
+  private lastReason: string | null = null;
 
   constructor(strategy: IStrategy, marketDataService: MarketDataService) {
     this.strategy = strategy;
@@ -41,8 +42,9 @@ export class StrategyAdapter {
       // Execute strategy
       const result: StrategyResult = await this.strategy.execute(context);
 
-      // If no orders, return null
+      // If no orders, capture debug reason and return null
       if (!result.orders || result.orders.length === 0) {
+        this.lastReason = result.debug?.reason || null;
         return null;
       }
 
@@ -60,9 +62,7 @@ export class StrategyAdapter {
    * Get last SMC reason (for compatibility with StrategyService)
    */
   getLastSmcReason(): string | null {
-    // Strategy implementations can store rejection reasons in debug metadata
-    // For now, return null (can be enhanced later)
-    return null;
+    return this.lastReason;
   }
 
   /**

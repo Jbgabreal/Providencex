@@ -310,9 +310,13 @@ export class CandleReplayEngine {
       currentPrice: historicalCandle.close,
     };
 
+    // Skip v3 execution filter for GOD_SMC_V1 — it was profitable without filters (matches live behavior)
+    const strategyKey = signal.meta?.strategyKey || signal.meta?.profileKey || '';
+    const skipV3Filter = strategyKey === 'GOD_SMC_V1' || strategyKey === 'first_successful_strategy_from_god';
+
     // SENIOR DEV: Use relaxed execution filter for backtesting
     // Allows us to see if signals are being generated vs blocked by filters
-    const useRelaxedFilters = process.env.BACKTEST_RELAXED_FILTERS === 'true' || 
+    const useRelaxedFilters = skipV3Filter || process.env.BACKTEST_RELAXED_FILTERS === 'true' ||
                               process.env.BACKTEST_DEBUG === 'true';
     const filterConfig = useRelaxedFilters ? backtestExecutionFilterConfig : executionFilterConfig;
     
