@@ -43,7 +43,7 @@ import { validatePrivyConfig } from './config';
 import { IStrategy, StrategyContext, StrategyResult } from './strategies/types';
 import { StrategyAdapter } from './strategies/StrategyAdapter';
 import { getStrategyByProfileKey } from './strategies/StrategyRegistry';
-import { TradeJournalService, TradeJournalRepository } from './journal';
+import { TradeJournalService, TradeJournalRepository, SignalOutcomeTracker } from './journal';
 import orderEventsRoutes, { initializeOrderEventService } from './routes/orderEvents';
 import strategyConfigRoutes from './routes/strategyConfig';
 import performanceReportsRoutes, { initializePerformanceReportsService } from './routes/performanceReports';
@@ -275,6 +275,7 @@ const decisionLogger = new DecisionLogger();
 const journalRepo = new TradeJournalRepository(config.databaseUrl);
 journalRepo.initialize().catch(err => logger.error('Failed to initialize trade journal', err));
 const journalService = new TradeJournalService(journalRepo);
+const signalOutcomeTracker = new SignalOutcomeTracker(journalRepo, priceFeed, 10000);
 
 // IStrategy instances loaded from env (e.g., ACTIVE_STRATEGIES=SILVER_BULLET_V1)
 const activeIStrategies: { strategy: IStrategy; profileKey: string }[] = [];
@@ -1211,6 +1212,18 @@ async function processIStrategyDecision(
       entryContext: { orderKind: signal.orderKind, reason: signal.reason },
     });
 
+    // Track signal outcome against live price
+    if (journalId) {
+      signalOutcomeTracker.trackSignal(journalId, {
+        symbol: signal.symbol,
+        direction: signal.direction,
+        entryPrice: signal.entry,
+        stopLoss: signal.stopLoss,
+        takeProfit: signal.takeProfit,
+        strategyKey: strategy.key,
+      });
+    }
+
     logger.info(
       `[IStrategy] ${strategy.key} ${symbol}: ${signal.direction.toUpperCase()} @ ${signal.entry.toFixed(2)} ` +
       `| SL: ${signal.stopLoss.toFixed(2)} | TP: ${signal.takeProfit.toFixed(2)}`
@@ -1363,6 +1376,8 @@ async function start(): Promise<void> {
       logger.info('[DerivCandleProvider] Waiting 30s for Deriv historical backfill (H4+M15+M1 per symbol) before starting tick loop...');
       setTimeout(() => {
           logger.info('Starting tick loop...');
+          signalOutcomeTracker.start();
+          logger.info('[SignalOutcomeTracker] Started — tracking signal outcomes against live price');
           setInterval(() => {
             tickLoop().catch((error) => {
               logger.error('Unhandled error in tick loop', error);

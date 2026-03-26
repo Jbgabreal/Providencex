@@ -1,0 +1,193 @@
+/**
+ * Signal Outcome Tracker
+ *
+ * Monitors journal entries with status='signal' against live price.
+ * When price hits TP or SL, updates the journal with the simulated result.
+ * This allows validating strategies without executing real trades.
+ *
+ * Runs on a loop every N seconds, checking all active signals.
+ */
+
+import { Logger } from '@providencex/shared-utils';
+import { TradeJournalRepository } from './TradeJournalRepository';
+
+const logger = new Logger('SignalOutcomeTracker');
+
+export class SignalOutcomeTracker {
+  private repo: TradeJournalRepository;
+  private priceFeed: any; // DerivCandleProvider
+  private intervalMs: number;
+  private timer: NodeJS.Timeout | null = null;
+  private activeSignals: Map<string, {
+    id: string;
+    symbol: string;
+    direction: 'buy' | 'sell';
+    entryPrice: number;
+    stopLoss: number;
+    takeProfit: number;
+    strategyKey: string;
+    createdAt: Date;
+  }> = new Map();
+
+  constructor(repo: TradeJournalRepository, priceFeed: any, intervalMs = 10000) {
+    this.repo = repo;
+    this.priceFeed = priceFeed;
+    this.intervalMs = intervalMs;
+  }
+
+  /**
+   * Start the outcome tracking loop
+   */
+  start(): void {
+    logger.info(`[SignalOutcomeTracker] Starting with ${this.intervalMs}ms interval`);
+    this.timer = setInterval(() => this.checkOutcomes(), this.intervalMs);
+    // Initial load
+    this.loadActiveSignals().catch(err => logger.error('[SignalOutcomeTracker] Initial load failed', err));
+  }
+
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    logger.info('[SignalOutcomeTracker] Stopped');
+  }
+
+  /**
+   * Register a new signal for tracking (called when journal entry is created)
+   */
+  trackSignal(journalId: string, data: {
+    symbol: string;
+    direction: 'buy' | 'sell';
+    entryPrice: number;
+    stopLoss: number;
+    takeProfit: number;
+    strategyKey: string;
+  }): void {
+    this.activeSignals.set(journalId, {
+      id: journalId,
+      ...data,
+      createdAt: new Date(),
+    });
+    logger.debug(`[SignalOutcomeTracker] Tracking signal ${journalId}: ${data.strategyKey} ${data.direction} ${data.symbol}`);
+  }
+
+  /**
+   * Load active signals from DB (for restart recovery)
+   */
+  private async loadActiveSignals(): Promise<void> {
+    try {
+      const { entries } = await this.repo.list({ status: 'signal', limit: 200 });
+      let loaded = 0;
+      for (const entry of entries) {
+        if (entry.entryPrice && entry.stopLoss && entry.takeProfit && entry.id) {
+          this.activeSignals.set(entry.id, {
+            id: entry.id,
+            symbol: entry.symbol,
+            direction: entry.direction,
+            entryPrice: entry.entryPrice,
+            stopLoss: entry.stopLoss,
+            takeProfit: entry.takeProfit,
+            strategyKey: entry.strategyKey,
+            createdAt: entry.createdAt || new Date(),
+          });
+          loaded++;
+        }
+      }
+      if (loaded > 0) {
+        logger.info(`[SignalOutcomeTracker] Loaded ${loaded} active signals from DB`);
+      }
+    } catch (err) {
+      logger.error('[SignalOutcomeTracker] Failed to load active signals', err);
+    }
+  }
+
+  /**
+   * Check all active signals against current price
+   */
+  private async checkOutcomes(): Promise<void> {
+    if (this.activeSignals.size === 0) return;
+
+    const resolved: string[] = [];
+
+    for (const [id, signal] of this.activeSignals) {
+      try {
+        const tick = this.priceFeed?.getLatestTick?.(signal.symbol);
+        if (!tick) continue;
+
+        const currentPrice = tick.mid || (tick.bid + tick.ask) / 2;
+        let hit: 'tp' | 'sl' | null = null;
+
+        if (signal.direction === 'buy') {
+          if (currentPrice >= signal.takeProfit) hit = 'tp';
+          else if (currentPrice <= signal.stopLoss) hit = 'sl';
+        } else {
+          if (currentPrice <= signal.takeProfit) hit = 'tp';
+          else if (currentPrice >= signal.stopLoss) hit = 'sl';
+        }
+
+        if (hit) {
+          const exitPrice = hit === 'tp' ? signal.takeProfit : signal.stopLoss;
+          const risk = Math.abs(signal.entryPrice - signal.stopLoss);
+          const priceDiff = signal.direction === 'buy'
+            ? exitPrice - signal.entryPrice
+            : signal.entryPrice - exitPrice;
+
+          // Simulate P&L using $1 per pip for gold, proportional for others
+          const pipValue = this.getPipMultiplier(signal.symbol);
+          const simulatedProfit = priceDiff * pipValue;
+          const rMultiple = risk > 0 ? priceDiff / risk : 0;
+          const result: 'win' | 'loss' | 'breakeven' = hit === 'tp' ? 'win' : 'loss';
+
+          await this.repo.updateOnClose(id, {
+            exitPrice,
+            profit: Math.round(simulatedProfit * 100) / 100,
+            rMultiple: Math.round(rMultiple * 100) / 100,
+            result,
+            closeReason: hit === 'tp' ? 'tp_hit_simulated' : 'sl_hit_simulated',
+            exitContext: {
+              simulated: true,
+              currentPrice,
+              hitType: hit,
+              timeToHit: Date.now() - signal.createdAt.getTime(),
+            },
+          });
+
+          logger.info(
+            `[SignalOutcomeTracker] ${signal.strategyKey} ${signal.symbol} ${signal.direction}: ` +
+            `${result.toUpperCase()} (${hit}) | Entry: ${signal.entryPrice.toFixed(5)} → ${exitPrice.toFixed(5)} | ` +
+            `P&L: $${simulatedProfit.toFixed(2)} | R: ${rMultiple.toFixed(2)}`
+          );
+
+          resolved.push(id);
+        }
+
+        // Expire signals older than 4 hours (stale setups)
+        const ageMs = Date.now() - signal.createdAt.getTime();
+        if (ageMs > 4 * 60 * 60 * 1000) {
+          await this.repo.cancel(id, 'expired_4h');
+          logger.debug(`[SignalOutcomeTracker] Expired signal ${id} (${signal.strategyKey} ${signal.symbol})`);
+          resolved.push(id);
+        }
+      } catch (err) {
+        logger.error(`[SignalOutcomeTracker] Error checking signal ${id}`, err);
+      }
+    }
+
+    // Remove resolved signals
+    for (const id of resolved) {
+      this.activeSignals.delete(id);
+    }
+  }
+
+  /**
+   * Get pip multiplier for simulated P&L calculation
+   * Using standard lot sizes: XAUUSD = 100, Forex = 100000, US30 = 1
+   */
+  private getPipMultiplier(symbol: string): number {
+    const s = symbol.toUpperCase();
+    if (s === 'XAUUSD' || s === 'GOLD') return 100;  // $1 move on 1 lot = $100
+    if (s === 'US30') return 1; // $1 move on 1 lot = $1
+    return 100000; // Forex: 1 pip move on 1 lot = $10
+  }
+}
