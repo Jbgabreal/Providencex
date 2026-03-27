@@ -226,8 +226,8 @@ export class FVGScalpStrategy implements IStrategy {
       const c2 = candles[i];     // Displacement candle
       const c3 = candles[i + 1];
 
-      // Bullish FVG: candle1.high < candle3.low (gap up)
-      if (bias === 'bullish' && c1.high < c3.low && c2.close > c2.open) {
+      // Bullish FVG: candle1.high < candle3.low AND candle2 closes above candle1.high (LuxAlgo displacement check)
+      if (bias === 'bullish' && c1.high < c3.low && c2.close > c1.high) {
         const gapSize = c3.low - c1.high;
         if (gapSize >= minGapSize) {
           const fvg: FVG = {
@@ -240,16 +240,16 @@ export class FVGScalpStrategy implements IStrategy {
             timestamp: new Date((c2 as any).timestamp || (c2 as any).endTime || Date.now()),
             filled: false,
           };
-          // Check if already filled by subsequent candles
+          // FVG is "filled" only when price closes below the FAR boundary (strict mitigation)
           for (let j = i + 2; j < candles.length; j++) {
-            if (candles[j].low <= fvg.mid) { fvg.filled = true; break; }
+            if (candles[j].close < fvg.low) { fvg.filled = true; break; }
           }
           if (!fvg.filled) fvgs.push(fvg);
         }
       }
 
-      // Bearish FVG: candle1.low > candle3.high (gap down)
-      if (bias === 'bearish' && c1.low > c3.high && c2.close < c2.open) {
+      // Bearish FVG: candle1.low > candle3.high AND candle2 closes below candle1.low (LuxAlgo displacement check)
+      if (bias === 'bearish' && c1.low > c3.high && c2.close < c1.low) {
         const gapSize = c1.low - c3.high;
         if (gapSize >= minGapSize) {
           const fvg: FVG = {
@@ -262,8 +262,9 @@ export class FVGScalpStrategy implements IStrategy {
             timestamp: new Date((c2 as any).timestamp || (c2 as any).endTime || Date.now()),
             filled: false,
           };
+          // Strict mitigation: filled only when price closes above far boundary
           for (let j = i + 2; j < candles.length; j++) {
-            if (candles[j].high >= fvg.mid) { fvg.filled = true; break; }
+            if (candles[j].close > fvg.high) { fvg.filled = true; break; }
           }
           if (!fvg.filled) fvgs.push(fvg);
         }
@@ -286,86 +287,57 @@ export class FVGScalpStrategy implements IStrategy {
     const minSL = isGold ? this.minSLPoints : 0.0005;
     const maxSL = isGold ? this.maxSLPoints : 0.0030;
 
-    // Check each FVG — is price currently in the zone?
-    for (const fvg of fvgs.reverse()) { // Check most recent first
-      const inZone = currentPrice >= fvg.low && currentPrice <= fvg.high;
-      if (!inZone) continue;
-
+    // KEY INSIGHT: 60%+ of FVGs remain unfilled. Use them as SUPPORT/RESISTANCE (bounce off),
+    // NOT as fill targets. Enter when price touches the FVG zone and bounces away.
+    for (const fvg of fvgs.reverse()) { // Most recent first
       // Dedup: skip FVGs we've already traded
       const isGoldSymbol = symbol.toUpperCase() === 'XAUUSD' || symbol.toUpperCase() === 'GOLD';
       const fvgKey = `${symbol}:${fvg.direction}:${isGoldSymbol ? fvg.low.toFixed(1) : fvg.low.toFixed(4)}:${isGoldSymbol ? fvg.high.toFixed(1) : fvg.high.toFixed(4)}`;
       if (this.usedFVGs.has(fvgKey)) continue;
 
-      // M1 confirmation: look for reversal pattern in last 5 M1 candles at the FVG
       if (m1Candles.length < 5) continue;
-      const recent5 = m1Candles.slice(-5);
+      const recent = m1Candles.slice(-5);
+      const lastM1 = recent[recent.length - 1];
 
       let confirmed = false;
       if (bias === 'bullish') {
-        // Bullish: find a candle that dipped into FVG AND a subsequent bullish candle that closed strong
-        let touchedFVG = false;
-        let reversalCandle: Candle | null = null;
-        for (let k = 0; k < recent5.length; k++) {
-          const c = recent5[k];
-          if (c.low <= fvg.high) touchedFVG = true; // Price touched FVG
-          if (touchedFVG && c.close > c.open) {
-            const bodyRatio = Math.abs(c.close - c.open) / Math.max(c.high - c.low, 0.001);
-            // Accept if: body > 50% of range AND close is above FVG midpoint
-            if (bodyRatio > 0.5 && c.close >= fvg.mid) {
-              reversalCandle = c;
-              break;
-            }
-            // Also accept engulfing: current body > previous body
-            if (k > 0) {
-              const prev = recent5[k - 1];
-              if (Math.abs(c.close - c.open) > Math.abs(prev.close - prev.open) && c.close > prev.high) {
-                reversalCandle = c;
-                break;
-              }
-            }
-          }
-        }
-        confirmed = reversalCandle !== null;
+        // Bullish FVG acts as SUPPORT — price dips to FVG top edge and bounces UP
+        // Entry: price was near/touching FVG zone, now closing bullish above it
+        const priceTouchedZone = recent.some(c => c.low <= fvg.high && c.low >= fvg.low);
+        const priceNearZone = Math.abs(lastM1.low - fvg.high) <= fvg.size * 2; // Within 2x FVG size
+        const closedBullishAbove = lastM1.close > lastM1.open && lastM1.close > fvg.high;
+        const bodyStrong = Math.abs(lastM1.close - lastM1.open) > (lastM1.high - lastM1.low) * 0.5;
+        // Also check: previous candle made a low near the FVG, current candle reversed
+        const prevDipped = recent.length > 1 && recent[recent.length - 2].low <= fvg.high * 1.001;
+
+        confirmed = closedBullishAbove && bodyStrong && (priceTouchedZone || prevDipped || priceNearZone);
       } else {
-        // Bearish: find a candle that spiked into FVG AND a subsequent bearish candle
-        let touchedFVG = false;
-        let reversalCandle: Candle | null = null;
-        for (let k = 0; k < recent5.length; k++) {
-          const c = recent5[k];
-          if (c.high >= fvg.low) touchedFVG = true;
-          if (touchedFVG && c.close < c.open) {
-            const bodyRatio = Math.abs(c.close - c.open) / Math.max(c.high - c.low, 0.001);
-            if (bodyRatio > 0.5 && c.close <= fvg.mid) {
-              reversalCandle = c;
-              break;
-            }
-            if (k > 0) {
-              const prev = recent5[k - 1];
-              if (Math.abs(c.close - c.open) > Math.abs(prev.close - prev.open) && c.close < prev.low) {
-                reversalCandle = c;
-                break;
-              }
-            }
-          }
-        }
-        confirmed = reversalCandle !== null;
+        // Bearish FVG acts as RESISTANCE — price spikes to FVG bottom edge and drops DOWN
+        const priceTouchedZone = recent.some(c => c.high >= fvg.low && c.high <= fvg.high);
+        const priceNearZone = Math.abs(lastM1.high - fvg.low) <= fvg.size * 2;
+        const closedBearishBelow = lastM1.close < lastM1.open && lastM1.close < fvg.low;
+        const bodyStrong = Math.abs(lastM1.close - lastM1.open) > (lastM1.high - lastM1.low) * 0.5;
+        const prevSpiked = recent.length > 1 && recent[recent.length - 2].high >= fvg.low * 0.999;
+
+        confirmed = closedBearishBelow && bodyStrong && (priceTouchedZone || prevSpiked || priceNearZone);
       }
 
       if (!confirmed) continue;
 
-      // Calculate SL and TP
+      // Calculate SL and TP — bounce off FVG as S/R
       const direction: 'buy' | 'sell' = bias === 'bullish' ? 'buy' : 'sell';
       const entryPrice = currentPrice;
       let stopLoss: number;
       let slDistance: number;
 
       if (direction === 'buy') {
-        // SL below FVG low + buffer
-        const buffer = isGold ? 1.0 : 0.0002;
+        // Bullish bounce: SL below FVG low (if price breaks through the FVG support, setup is invalid)
+        const buffer = isGold ? 1.5 : 0.0003;
         stopLoss = fvg.low - buffer;
         slDistance = entryPrice - stopLoss;
       } else {
-        const buffer = isGold ? 1.0 : 0.0002;
+        // Bearish bounce: SL above FVG high (if price breaks through the FVG resistance, setup is invalid)
+        const buffer = isGold ? 1.5 : 0.0003;
         stopLoss = fvg.high + buffer;
         slDistance = stopLoss - entryPrice;
       }
