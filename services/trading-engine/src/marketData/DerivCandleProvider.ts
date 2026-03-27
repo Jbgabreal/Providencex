@@ -69,6 +69,9 @@ export class DerivCandleProvider extends EventEmitter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private backfillComplete = new Set<string>();
+  private m1RetryCount: Map<string, number> = new Map();
+  private m1RetryInProgress: Set<string> = new Set();
+  private static MAX_M1_RETRIES = 5;
 
   // Direct H4 and M15 candle caches (real Deriv data, not expanded/re-aggregated)
   private h4Candles: Map<string, Candle[]> = new Map();
@@ -172,6 +175,10 @@ export class DerivCandleProvider extends EventEmitter {
       this.ws.on('open', () => {
         logger.info('[DerivCandleProvider] WebSocket connected');
 
+        // Reset retry counters on fresh connection
+        this.m1RetryCount.clear();
+        this.m1RetryInProgress.clear();
+
         // Keepalive ping every 30s
         this.pingInterval = setInterval(() => {
           if (this.ws?.readyState === WebSocket.OPEN) {
@@ -270,7 +277,10 @@ export class DerivCandleProvider extends EventEmitter {
 
       // Request 3: M1 candles with live subscription (real-time updates)
       setTimeout(() => {
-        if (!this.ws || this.ws.readyState !== 1) return;
+        if (!this.ws || this.ws.readyState !== 1) {
+          logger.error(`[DerivCandleProvider] ❌ WebSocket not ready for M1 request: ${symbol} (readyState=${this.ws?.readyState})`);
+          return;
+        }
         const reqId = this.reqIdCounter++;
         this.ws!.send(JSON.stringify({
           ticks_history: derivSymbol,
@@ -281,9 +291,83 @@ export class DerivCandleProvider extends EventEmitter {
           subscribe: 1,
           req_id: reqId,
         }));
-        logger.info(`[DerivCandleProvider] Requesting M1 history + live subscription for ${symbol} (${derivSymbol})`);
+        logger.info(`[DerivCandleProvider] Requesting M1 history + live subscription for ${symbol} (${derivSymbol}) [reqId=${reqId}]`);
       }, baseDelay + 2000);
     });
+
+    // Verify M1 data loaded after all subscriptions should have completed
+    const totalDelay = this.supportedSymbols.length * 6000 + 15000; // extra 15s for API responses
+    setTimeout(() => this.verifyM1Data(), totalDelay);
+  }
+
+  /**
+   * Verify M1 candle data loaded for all symbols. Retry if missing.
+   */
+  private verifyM1Data(): void {
+    for (const symbol of this.supportedSymbols) {
+      const count = this.config.candleStore.getCandleCount(symbol);
+      if (count === 0) {
+        logger.error(`[DerivCandleProvider] ❌ M1 VERIFICATION FAILED: ${symbol} has 0 M1 candles in CandleStore after backfill!`);
+        const derivSymbol = SYMBOL_MAP[symbol];
+        if (derivSymbol) {
+          logger.info(`[DerivCandleProvider] Retrying M1 subscription for ${symbol}...`);
+          this.retryM1Subscription(derivSymbol);
+        }
+      } else {
+        logger.info(`[DerivCandleProvider] ✅ M1 verified: ${symbol} has ${count} M1 candles in CandleStore`);
+      }
+    }
+  }
+
+  /**
+   * Retry M1 subscription for a single symbol (Deriv symbol format).
+   * Uses exponential backoff and prevents duplicate retries.
+   */
+  private retryM1Subscription(derivSymbol: string): void {
+    const stdSymbol = REVERSE_SYMBOL_MAP[derivSymbol] || derivSymbol;
+
+    // Prevent duplicate retries
+    if (this.m1RetryInProgress.has(stdSymbol)) return;
+
+    const retryNum = (this.m1RetryCount.get(stdSymbol) || 0) + 1;
+    if (retryNum > DerivCandleProvider.MAX_M1_RETRIES) {
+      logger.error(`[DerivCandleProvider] ❌ M1 max retries (${DerivCandleProvider.MAX_M1_RETRIES}) reached for ${stdSymbol}. Giving up — will retry on next reconnect.`);
+      return;
+    }
+    this.m1RetryCount.set(stdSymbol, retryNum);
+    this.m1RetryInProgress.add(stdSymbol);
+
+    // Exponential backoff: 10s, 20s, 40s, 80s, 160s
+    const backoffMs = 10000 * Math.pow(2, retryNum - 1);
+    logger.info(`[DerivCandleProvider] 🔄 M1 retry #${retryNum} for ${stdSymbol} in ${backoffMs / 1000}s...`);
+
+    setTimeout(() => {
+      this.m1RetryInProgress.delete(stdSymbol);
+
+      if (!this.ws || this.ws.readyState !== 1) {
+        logger.error(`[DerivCandleProvider] Cannot retry M1 — WebSocket not connected`);
+        return;
+      }
+
+      // Check if data arrived in the meantime
+      const count = this.config.candleStore.getCandleCount(stdSymbol);
+      if (count > 0) {
+        logger.info(`[DerivCandleProvider] ✅ M1 already loaded for ${stdSymbol} (${count} candles) — skipping retry`);
+        return;
+      }
+
+      const reqId = this.reqIdCounter++;
+      this.ws!.send(JSON.stringify({
+        ticks_history: derivSymbol,
+        style: 'candles',
+        granularity: 60,
+        count: 1000,
+        end: 'latest',
+        subscribe: 1,
+        req_id: reqId,
+      }));
+      logger.info(`[DerivCandleProvider] 🔄 Retry M1 #${retryNum} for ${stdSymbol} (${derivSymbol}) [reqId=${reqId}]`);
+    }, backoffMs);
   }
 
   /**
@@ -296,7 +380,31 @@ export class DerivCandleProvider extends EventEmitter {
     // Error handling
     if (msg.error) {
       const symbol = msg.echo_req?.ticks_history || 'unknown';
-      logger.error(`[DerivCandleProvider] API error for ${symbol}: ${msg.error.message} (code: ${msg.error.code})`);
+      const granularity = msg.echo_req?.granularity || '?';
+      const tfLabel = granularity === 14400 ? 'H4' : granularity === 900 ? 'M15' : granularity === 60 ? 'M1' : `g${granularity}`;
+      logger.error(`[DerivCandleProvider] API error for ${symbol} (${tfLabel}): ${msg.error.message} (code: ${msg.error.code})`);
+      // If M1 subscription fails, schedule a retry with backoff
+      if (granularity === 60) {
+        const stdSymbol = REVERSE_SYMBOL_MAP[symbol];
+        logger.error(`[DerivCandleProvider] ❌ M1 subscription FAILED for ${stdSymbol || symbol}`);
+        this.retryM1Subscription(symbol);
+      }
+      // If H4/M15 fail, retry once after 30s
+      if ((granularity === 14400 || granularity === 900) && this.ws?.readyState === 1) {
+        setTimeout(() => {
+          if (!this.ws || this.ws.readyState !== 1) return;
+          const reqId = this.reqIdCounter++;
+          this.ws!.send(JSON.stringify({
+            ticks_history: symbol,
+            style: 'candles',
+            granularity,
+            count: granularity === 14400 ? 50 : 200,
+            end: 'latest',
+            req_id: reqId,
+          }));
+          logger.info(`[DerivCandleProvider] 🔄 Retry ${tfLabel} for ${REVERSE_SYMBOL_MAP[symbol] || symbol} [reqId=${reqId}]`);
+        }, 30000);
+      }
       return;
     }
 
@@ -313,6 +421,11 @@ export class DerivCandleProvider extends EventEmitter {
     // Tick history response (may come as 'history' msg_type for non-candle styles)
     if (msg.msg_type === 'history') {
       logger.warn(`[DerivCandleProvider] Got 'history' instead of 'candles' — check request style param`);
+    }
+
+    // Log unhandled message types for debugging
+    if (msg.msg_type && !['ping', 'candles', 'ohlc', 'history'].includes(msg.msg_type) && !msg.error) {
+      logger.warn(`[DerivCandleProvider] Unhandled msg_type: ${msg.msg_type} (keys: ${Object.keys(msg).join(', ')})`);
     }
   }
 
@@ -390,10 +503,17 @@ export class DerivCandleProvider extends EventEmitter {
     const closePrice = Number(lastCandle.close);
     this.updateTick(stdSymbol, closePrice, new Date(lastCandle.epoch * 1000));
 
-    logger.info(
-      `[DerivCandleProvider] Loaded ${inserted} M1 candles from ${candles.length} ${tfLabel} candles for ${stdSymbol} ` +
-      `(store now has ${this.config.candleStore.getCandleCount(stdSymbol)} candles)`
-    );
+    if (granularity === 60) {
+      logger.info(
+        `[DerivCandleProvider] ✅ M1 BACKFILL: Loaded ${inserted} M1 candles for ${stdSymbol} ` +
+        `(CandleStore now has ${this.config.candleStore.getCandleCount(stdSymbol)} M1 candles)`
+      );
+    } else {
+      logger.info(
+        `[DerivCandleProvider] ${tfLabel} cache loaded: ${inserted} candles for ${stdSymbol} ` +
+        `(M1 CandleStore has ${this.config.candleStore.getCandleCount(stdSymbol)} candles)`
+      );
+    }
   }
 
   /**

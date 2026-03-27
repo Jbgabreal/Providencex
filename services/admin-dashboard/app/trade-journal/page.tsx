@@ -19,9 +19,20 @@ interface JournalEntry {
   profit?: number;
   rMultiple?: number;
   closeReason?: string;
+  executedTradeId?: string;
   entryContext: Record<string, any>;
   setupContext: Record<string, any>;
   createdAt: string;
+}
+
+/** Determine if a journal entry is a real MT5 trade, simulated, or skipped */
+function getTradeType(e: JournalEntry): 'live' | 'simulated' | 'skipped' {
+  if (e.status === 'skipped') return 'skipped';
+  if (e.executedTradeId) return 'live';
+  if (e.closeReason?.includes('_simulated')) return 'simulated';
+  // signal/open/closed without executed_trade_id = simulated
+  if (['signal', 'open', 'closed'].includes(e.status) && !e.executedTradeId) return 'simulated';
+  return 'simulated';
 }
 
 interface JournalSummary {
@@ -178,6 +189,7 @@ export default function TradeJournalPage() {
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
                 <th className="text-left py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Time</th>
+                <th className="text-center py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Type</th>
                 <th className="text-left py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Strategy</th>
                 <th className="text-left py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Symbol</th>
                 <th className="text-left py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Dir</th>
@@ -191,15 +203,28 @@ export default function TradeJournalPage() {
               </tr>
             </thead>
             <tbody>
-              {entries.map(e => (
+              {entries.map(e => {
+                const tradeType = getTradeType(e);
+                const isSimulated = tradeType === 'simulated';
+                const isSkipped = tradeType === 'skipped';
+                return (
                 <tr key={e.id}
                   onClick={() => setSelectedEntry(e)}
                   className={`border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors ${
+                    isSkipped ? 'opacity-40' :
+                    isSimulated ? 'bg-amber-50/20' :
                     e.status === 'open' ? 'bg-blue-50/30' :
                     e.result === 'win' ? 'bg-emerald-50/30' :
                     e.result === 'loss' ? 'bg-red-50/20' : ''
                   }`}>
                   <td className="py-2 px-3 text-xs text-gray-400 whitespace-nowrap">{new Date(e.createdAt).toLocaleString()}</td>
+                  <td className="py-2 px-3 text-center">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                      tradeType === 'live' ? 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300' :
+                      tradeType === 'simulated' ? 'bg-amber-100 text-amber-700' :
+                      'bg-gray-100 text-gray-400'
+                    }`}>{tradeType === 'live' ? 'LIVE' : tradeType === 'simulated' ? 'SIM' : 'SKIP'}</span>
+                  </td>
                   <td className="py-2 px-3 text-xs font-medium">{e.strategyKey}</td>
                   <td className="py-2 px-3 font-medium">{e.symbol}</td>
                   <td className="py-2 px-3">
@@ -225,7 +250,7 @@ export default function TradeJournalPage() {
                         e.result === 'win' ? 'bg-emerald-100 text-emerald-800' :
                         e.result === 'loss' ? 'bg-red-100 text-red-800' :
                         'bg-gray-100 text-gray-600'
-                      }`}>{e.result}</span>
+                      }`}>{e.result}{isSimulated ? ' (sim)' : ''}</span>
                     ) : '-'}
                   </td>
                   <td className={`py-2 px-3 text-right font-semibold ${
@@ -234,9 +259,10 @@ export default function TradeJournalPage() {
                     {e.profit != null ? `$${e.profit.toFixed(2)}` : '-'}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {entries.length === 0 && (
-                <tr><td colSpan={11} className="py-8 text-center text-gray-400">No journal entries yet</td></tr>
+                <tr><td colSpan={12} className="py-8 text-center text-gray-400">No journal entries yet</td></tr>
               )}
             </tbody>
           </table>
@@ -253,6 +279,26 @@ export default function TradeJournalPage() {
               </h3>
               <button onClick={() => setSelectedEntry(null)} className="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
             </div>
+
+            {/* Trade Type Banner */}
+            {(() => {
+              const type = getTradeType(selectedEntry);
+              if (type === 'live') return (
+                <div className="mb-4 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+                  LIVE TRADE — Executed on MT5 (ticket: {selectedEntry.executedTradeId || 'N/A'})
+                </div>
+              );
+              if (type === 'simulated') return (
+                <div className="mb-4 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold">
+                  SIMULATED — Signal generated but not sent to MT5. {selectedEntry.closeReason?.includes('_simulated') ? 'SL/TP outcome simulated from price data.' : 'Blocked by execution filter.'}
+                </div>
+              );
+              return (
+                <div className="mb-4 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200 text-gray-500 text-xs font-semibold">
+                  SKIPPED — No valid setup found
+                </div>
+              );
+            })()}
 
             <div className="grid grid-cols-2 gap-3 mb-4">
               {[
