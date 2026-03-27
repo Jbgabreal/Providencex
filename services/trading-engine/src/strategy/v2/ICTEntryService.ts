@@ -116,7 +116,8 @@ export class ICTEntryService {
   analyzeICTEntry(
     h4Candles: Candle[],
     m15Candles: Candle[],
-    m1Candles: Candle[]
+    m1Candles: Candle[],
+    symbol: string = 'XAUUSD'
   ): ICTEntryResult {
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
 
@@ -169,7 +170,7 @@ export class ICTEntryService {
     // ═══════════════════════════════════════════════════════
     // STEP 3: M1 Entry — Liquidity sweep of M1 swing → enter
     // ═══════════════════════════════════════════════════════
-    const entry = this.detectM1Entry(m1Candles, m15Candles, bias, setupZone);
+    const entry = this.detectM1Entry(m1Candles, m15Candles, bias, setupZone, symbol);
 
     return {
       bias,
@@ -897,7 +898,8 @@ export class ICTEntryService {
     m1Candles: Candle[],
     m15Candles: Candle[],
     bias: ICTBias,
-    setupZone: ICTSetupZone
+    setupZone: ICTSetupZone,
+    symbol: string = 'XAUUSD'
   ): ICTEntry {
     const reasons: string[] = [];
     const ictLog = process.env.ICT_DEBUG === 'true' || process.env.SMC_DEBUG === 'true';
@@ -948,42 +950,55 @@ export class ICTEntryService {
       logger.info(`[ICT] M1: ⚠️ OB has no FVG — lower probability setup`);
     }
 
-    // 2. After price touches OB, look for M1 confirmation candle
-    // Bullish: a bullish engulfing or CHoCH (candle closes above its open with body > prior candle)
-    // Bearish: a bearish engulfing or CHoCH
+    // 2. After price touches OB, look for M1 CHoCH + confirmation candle
+    // ICT requires Change of Character (CHoCH) — M1 structure must shift before entry
+    // Simply being bullish at the OB isn't enough; price must break a recent M1 swing high (buy) or low (sell)
     let confirmIndex = -1;
     let confirmCandle: Candle | null = null;
+
+    // Find recent M1 swing high/low BEFORE the OB touch for CHoCH detection
+    const recentSwingsForChoch = this.m1SwingService.detectSwings(m1Candles.slice(0, Math.min(touchIndex + 15, m1Candles.length)));
+    const swingHighsBeforeTouch = recentSwingsForChoch.filter(s => s.type === 'high' && s.index <= touchIndex + 5).sort((a, b) => b.index - a.index);
+    const swingLowsBeforeTouch = recentSwingsForChoch.filter(s => s.type === 'low' && s.index <= touchIndex + 5).sort((a, b) => b.index - a.index);
 
     for (let i = touchIndex; i < m1Candles.length; i++) {
       const c = m1Candles[i];
       const prev = i > 0 ? m1Candles[i - 1] : null;
 
       if (dir === 'bullish') {
-        // Bullish confirmation: bullish candle (close > open) with decent body
         const isBullish = c.close > c.open;
         const bodySize = Math.abs(c.close - c.open);
         const prevBody = prev ? Math.abs(prev.close - prev.open) : 0;
         const isEngulfing = prev && isBullish && bodySize > prevBody && c.close > (prev?.high || 0);
-        const isStrongBullish = isBullish && bodySize > (c.high - c.low) * 0.5; // Body > 50% of range
+        const isStrongBullish = isBullish && bodySize > (c.high - c.low) * 0.6; // Tightened: body > 60% of range
 
-        if (isEngulfing || isStrongBullish) {
+        // CHoCH check: candle must close above the most recent M1 swing high (structure shift)
+        const recentSwingHigh = swingHighsBeforeTouch[0];
+        const hasChoCH = recentSwingHigh ? c.close > recentSwingHigh.price : false;
+        const confirmType = hasChoCH ? 'CHoCH' : isEngulfing ? 'engulfing' : isStrongBullish ? 'strong bullish' : null;
+
+        // Accept CHoCH (best), engulfing (good), or strong bullish (acceptable)
+        if (hasChoCH || isEngulfing || isStrongBullish) {
           confirmIndex = i;
           confirmCandle = c;
-          reasons.push(`M1 bullish confirmation at idx ${i}: ${isEngulfing ? 'engulfing' : 'strong bullish'} close=${c.close.toFixed(5)}`);
+          reasons.push(`M1 bullish confirmation at idx ${i}: ${confirmType || 'strong bullish'} close=${c.close.toFixed(5)}`);
           break;
         }
       } else {
-        // Bearish confirmation: bearish candle (close < open) with decent body
         const isBearish = c.close < c.open;
         const bodySize = Math.abs(c.close - c.open);
         const prevBody = prev ? Math.abs(prev.close - prev.open) : 0;
         const isEngulfing = prev && isBearish && bodySize > prevBody && c.close < (prev?.low || Infinity);
-        const isStrongBearish = isBearish && bodySize > (c.high - c.low) * 0.5;
+        const isStrongBearish = isBearish && bodySize > (c.high - c.low) * 0.6; // Tightened from 50% to 60%
 
-        if (isEngulfing || isStrongBearish) {
+        const recentSwingLow = swingLowsBeforeTouch[0];
+        const hasChoCH = recentSwingLow ? c.close < recentSwingLow.price : false;
+        const confirmType = hasChoCH ? 'CHoCH' : isEngulfing ? 'engulfing' : isStrongBearish ? 'strong bearish' : null;
+
+        if (hasChoCH || isEngulfing || isStrongBearish) {
           confirmIndex = i;
           confirmCandle = c;
-          reasons.push(`M1 bearish confirmation at idx ${i}: ${isEngulfing ? 'engulfing' : 'strong bearish'} close=${c.close.toFixed(5)}`);
+          reasons.push(`M1 bearish confirmation at idx ${i}: ${confirmType} close=${c.close.toFixed(5)}`);
           break;
         }
       }
@@ -1006,14 +1021,32 @@ export class ICTEntryService {
     const recentM1Lows = m1Swings.filter(s => s.type === 'low' && s.index <= confirmIndex).sort((a, b) => b.index - a.index);
 
     let stopLoss: number;
-    const slObBuffer = (obHigh - obLow) * 0.3; // Small buffer beyond OB edge
+    // Minimum SL distance to avoid noise stop-outs
+    const isGold = symbol.toUpperCase() === 'XAUUSD' || symbol.toUpperCase() === 'GOLD';
+    const minSlDistance = isGold ? 5.0 : 0.0010; // 5 points for gold, 10 pips for forex
 
     if (dir === 'bullish') {
-      // BUY SL: below the OB low (structural invalidation) with buffer
-      stopLoss = obLow - slObBuffer;
+      // BUY SL: Use the most recent M1 swing low (structural invalidation)
+      // Fallback to OB low if no M1 swing found
+      const m1SwingLow = recentM1Lows[0];
+      const structuralLevel = m1SwingLow ? m1SwingLow.price : obLow;
+      const buffer = isGold ? 1.5 : 0.0003; // Fixed buffer: 1.5 pts gold, 3 pips forex
+      stopLoss = structuralLevel - buffer;
+      if (ictLog) logger.info(`[ICT] SL: M1 swing low=${m1SwingLow?.price?.toFixed(3) || 'none'}, OB low=${obLow.toFixed(3)}, using=${structuralLevel.toFixed(3)}, SL=${stopLoss.toFixed(3)}`);
     } else {
-      // SELL SL: above the OB high (structural invalidation) with buffer
-      stopLoss = obHigh + slObBuffer;
+      // SELL SL: Use the most recent M1 swing high (structural invalidation)
+      const m1SwingHigh = recentM1Highs[0];
+      const structuralLevel = m1SwingHigh ? m1SwingHigh.price : obHigh;
+      const buffer = isGold ? 1.5 : 0.0003;
+      stopLoss = structuralLevel + buffer;
+      if (ictLog) logger.info(`[ICT] SL: M1 swing high=${m1SwingHigh?.price?.toFixed(3) || 'none'}, OB high=${obHigh.toFixed(3)}, using=${structuralLevel.toFixed(3)}, SL=${stopLoss.toFixed(3)}`);
+    }
+
+    // Enforce minimum SL distance
+    const slDist = Math.abs(entryPrice - stopLoss);
+    if (slDist < minSlDistance) {
+      if (ictLog) logger.info(`[ICT] ❌ SL too tight: ${slDist.toFixed(3)} < min ${minSlDistance} — widening to minimum`);
+      stopLoss = dir === 'bullish' ? entryPrice - minSlDistance : entryPrice + minSlDistance;
     }
 
     // 5. TP = M15 swing point (the HH for bullish, LL for bearish)
