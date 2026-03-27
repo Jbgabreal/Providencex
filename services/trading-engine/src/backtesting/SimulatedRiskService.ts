@@ -32,9 +32,10 @@ export class SimulatedRiskService {
     date: string; // YYYY-MM-DD
     realizedPnL: number;
     tradesTaken: number;
-    balance: number;
-    consecutiveLosses: number; // Current streak of consecutive losses
-    dailyStopped: boolean;     // True if trading stopped for the day
+    balance: number;          // Current balance (updated on each trade)
+    dayStartBalance: number;  // Balance at start of day (never changes)
+    consecutiveLosses: number;
+    dailyStopped: boolean;
   }> = new Map();
 
   constructor(config: SimulatedRiskConfig) {
@@ -97,14 +98,15 @@ export class SimulatedRiskService {
       };
     }
 
-    // Check percentage-of-balance daily loss cap (scales with account growth)
+    // Check percentage-of-balance daily loss cap (based on DAY START balance, not current)
     if (this.config.maxDailyLossPct) {
-      const maxLossAmount = (currentBalance * this.config.maxDailyLossPct) / 100;
+      const dayStartBalance = stats.dayStartBalance; // Locked at first access of the day
+      const maxLossAmount = (dayStartBalance * this.config.maxDailyLossPct) / 100;
       if (stats.realizedPnL <= -maxLossAmount) {
         stats.dailyStopped = true;
         return {
           allowed: false,
-          reason: `Daily ${this.config.maxDailyLossPct}% loss cap reached: ${stats.realizedPnL.toFixed(2)} <= -$${maxLossAmount.toFixed(2)} (${this.config.maxDailyLossPct}% of $${currentBalance.toFixed(2)})`,
+          reason: `Daily ${this.config.maxDailyLossPct}% loss cap reached: ${stats.realizedPnL.toFixed(2)} <= -$${maxLossAmount.toFixed(2)} (${this.config.maxDailyLossPct}% of day start $${dayStartBalance.toFixed(2)})`,
         };
       }
     }
@@ -175,6 +177,7 @@ export class SimulatedRiskService {
     realizedPnL: number;
     tradesTaken: number;
     balance: number;
+    dayStartBalance: number;
     consecutiveLosses: number;
     dailyStopped: boolean;
   } {
@@ -184,6 +187,7 @@ export class SimulatedRiskService {
         realizedPnL: 0,
         tradesTaken: 0,
         balance: currentBalance,
+        dayStartBalance: currentBalance, // Locked at day start
         consecutiveLosses: 0,
         dailyStopped: false,
       });
