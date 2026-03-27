@@ -217,12 +217,15 @@ export class BacktestRunner {
       const isScalpingStrategy = this.config.strategyProfileKey === 'fvg_scalp_v1';
       const simulatedRisk = new SimulatedRiskService({
         initialBalance: this.config.initialBalance,
-        lowRiskMaxDailyLoss: isScalpingStrategy ? 10.0 : 1.0,   // 10% for scalping, 1% for swing
+        lowRiskMaxDailyLoss: isScalpingStrategy ? 50.0 : 1.0,   // 50% for scalping (USD cap is the real limit), 1% for swing
         lowRiskMaxTrades: isScalpingStrategy ? 30 : 2,            // 30 trades/day for scalping
-        highRiskMaxDailyLoss: isScalpingStrategy ? 15.0 : 3.0,
+        highRiskMaxDailyLoss: isScalpingStrategy ? 50.0 : 3.0,
         highRiskMaxTrades: isScalpingStrategy ? 50 : 4,
         defaultLowRiskPerTrade: this.config.riskPerTradePercent || 0.5,
         defaultHighRiskPerTrade: (this.config.riskPerTradePercent || 0.5) * 3,
+        // FVG Scalp specific: hard daily limits
+        maxDailyLossUsd: isScalpingStrategy ? 200 : undefined,     // Stop at $200 loss per day
+        maxConsecutiveLosses: isScalpingStrategy ? 3 : undefined,  // Stop after 3 consecutive losses
       });
 
       // Initialize ExecutionFilterState for v3

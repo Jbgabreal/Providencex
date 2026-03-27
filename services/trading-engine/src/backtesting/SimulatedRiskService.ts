@@ -18,6 +18,8 @@ export interface SimulatedRiskConfig {
   highRiskMaxTrades?: number;
   defaultLowRiskPerTrade?: number; // Percent
   defaultHighRiskPerTrade?: number; // Percent
+  maxDailyLossUsd?: number;        // Hard USD cap on daily loss (e.g., $200)
+  maxConsecutiveLosses?: number;    // Stop trading after N consecutive losses in a day
 }
 
 /**
@@ -30,6 +32,8 @@ export class SimulatedRiskService {
     realizedPnL: number;
     tradesTaken: number;
     balance: number;
+    consecutiveLosses: number; // Current streak of consecutive losses
+    dailyStopped: boolean;     // True if trading stopped for the day
   }> = new Map();
 
   constructor(config: SimulatedRiskConfig) {
@@ -65,12 +69,39 @@ export class SimulatedRiskService {
           maxTrades: this.config.highRiskMaxTrades!,
         };
 
-    // Check daily loss limit
+    // Check if already stopped for the day (consecutive loss or hard limit)
+    if (stats.dailyStopped) {
+      return {
+        allowed: false,
+        reason: `Trading stopped for ${today} (daily limit reached)`,
+      };
+    }
+
+    // Check daily loss limit (percentage)
     const maxDailyLossAmount = (currentBalance * strategyConfig.maxDailyLoss) / 100;
     if (stats.realizedPnL <= -maxDailyLossAmount) {
+      stats.dailyStopped = true;
       return {
         allowed: false,
         reason: `Daily loss limit reached: ${stats.realizedPnL.toFixed(2)} <= -${maxDailyLossAmount.toFixed(2)}`,
+      };
+    }
+
+    // Check hard USD daily loss cap
+    if (this.config.maxDailyLossUsd && stats.realizedPnL <= -this.config.maxDailyLossUsd) {
+      stats.dailyStopped = true;
+      return {
+        allowed: false,
+        reason: `Daily USD loss cap reached: ${stats.realizedPnL.toFixed(2)} <= -$${this.config.maxDailyLossUsd}`,
+      };
+    }
+
+    // Check consecutive losses
+    if (this.config.maxConsecutiveLosses && stats.consecutiveLosses >= this.config.maxConsecutiveLosses) {
+      stats.dailyStopped = true;
+      return {
+        allowed: false,
+        reason: `Max consecutive losses reached: ${stats.consecutiveLosses} >= ${this.config.maxConsecutiveLosses} — stopped for the day`,
       };
     }
 
@@ -114,6 +145,13 @@ export class SimulatedRiskService {
     stats.realizedPnL += pnl;
     stats.tradesTaken += 1;
     stats.balance = currentBalance;
+
+    // Track consecutive losses
+    if (pnl < 0) {
+      stats.consecutiveLosses += 1;
+    } else {
+      stats.consecutiveLosses = 0; // Reset on win
+    }
   }
 
   /**
@@ -124,6 +162,8 @@ export class SimulatedRiskService {
     realizedPnL: number;
     tradesTaken: number;
     balance: number;
+    consecutiveLosses: number;
+    dailyStopped: boolean;
   } {
     if (!this.dailyStats.has(date)) {
       this.dailyStats.set(date, {
@@ -131,6 +171,8 @@ export class SimulatedRiskService {
         realizedPnL: 0,
         tradesTaken: 0,
         balance: currentBalance,
+        consecutiveLosses: 0,
+        dailyStopped: false,
       });
     }
     return this.dailyStats.get(date)!;
