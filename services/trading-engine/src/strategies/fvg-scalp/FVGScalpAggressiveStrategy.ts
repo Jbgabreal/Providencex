@@ -54,8 +54,9 @@ interface SessionWindow {
 }
 
 const SESSIONS: SessionWindow[] = [
-  { label: 'Asian', startHourUTC: 1, startMinUTC: 0, endHourUTC: 7, endMinUTC: 0 },
-  { label: 'London+NY', startHourUTC: 7, startMinUTC: 0, endHourUTC: 21, endMinUTC: 0 },
+  { label: 'London', startHourUTC: 7, startMinUTC: 0, endHourUTC: 12, endMinUTC: 0 },
+  { label: 'NY AM', startHourUTC: 13, startMinUTC: 0, endHourUTC: 16, endMinUTC: 0 },
+  { label: 'NY PM', startHourUTC: 18, startMinUTC: 0, endHourUTC: 20, endMinUTC: 0 },
 ];
 
 export class FVGScalpAggressiveStrategy implements IStrategy {
@@ -125,10 +126,10 @@ export class FVGScalpAggressiveStrategy implements IStrategy {
       return { orders: [], debug: { reason: 'HTF bias is neutral (ranging)' } };
     }
 
-    // Step 3: Detect M5 FVGs in bias direction
+    // Step 3: Detect M5 FVGs in bias direction (with 1.2x displacement, 8h tracking)
     const fvgs = this.detectM5FVGs(m5Candles, bias);
     if (fvgs.length === 0) {
-      return { orders: [], debug: { reason: `No valid M5 ${bias} FVGs found` } };
+      return { orders: [], debug: { reason: `No valid M5 ${bias} FVGs found`, activeFVGs: this.activeFVGs.size } };
     }
 
     // Step 4: Check if M1 price is touching/filling any FVG
@@ -275,8 +276,10 @@ export class FVGScalpAggressiveStrategy implements IStrategy {
       const ts = new Date((c2 as any).timestamp || (c2 as any).endTime || Date.now());
       const isGold = true; // FVG key uses 1 decimal for gold
 
-      // Bullish FVG: candle1.high < candle3.low (any gap, no displacement requirement)
-      if (c1.high < c3.low && c2.close > c2.open) {
+      // Bullish FVG: candle1.high < candle3.low + displacement (candle2 body > 1.2x avg body)
+      const c2Body = Math.abs(c2.close - c2.open);
+      const isDisplacement = c2Body > avgBody * 1.2;
+      if (c1.high < c3.low && c2.close > c2.open && isDisplacement) {
         const gapSize = c3.low - c1.high;
         if (gapSize >= minGapSize) {
           const fvgKey = `bull:${isGold ? c1.high.toFixed(1) : c1.high.toFixed(4)}:${isGold ? c3.low.toFixed(1) : c3.low.toFixed(4)}`;
@@ -290,8 +293,10 @@ export class FVGScalpAggressiveStrategy implements IStrategy {
         }
       }
 
-      // Bearish FVG: candle1.low > candle3.high (any gap, no displacement requirement)
-      if (c1.low > c3.high && c2.close < c2.open) {
+      // Bearish FVG: candle1.low > candle3.high + displacement (candle2 body > 1.2x avg body)
+      const c2BodyBear = Math.abs(c2.close - c2.open);
+      const isDisplacementBear = c2BodyBear > avgBody * 1.2;
+      if (c1.low > c3.high && c2.close < c2.open && isDisplacementBear) {
         const gapSize = c1.low - c3.high;
         if (gapSize >= minGapSize) {
           const fvgKey = `bear:${isGold ? c3.high.toFixed(1) : c3.high.toFixed(4)}:${isGold ? c1.low.toFixed(1) : c1.low.toFixed(4)}`;
@@ -325,8 +330,8 @@ export class FVGScalpAggressiveStrategy implements IStrategy {
       for (let i = 0; i < entries.length - 50; i++) this.activeFVGs.delete(entries[i][0]);
     }
 
-    // Return unfilled FVGs matching the current bias, max 4 hours old
-    const maxAgeMs = 4 * 60 * 60 * 1000; // 4 hours
+    // Return unfilled FVGs matching the current bias, max 8 hours old (aggressive tracks longer)
+    const maxAgeMs = 8 * 60 * 60 * 1000; // 8 hours
     const now = new Date((candles[candles.length - 1] as any).timestamp || Date.now()).getTime();
     return Array.from(this.activeFVGs.values()).filter(f =>
       f.direction === bias && !f.filled && (now - f.timestamp.getTime()) < maxAgeMs
@@ -361,7 +366,7 @@ export class FVGScalpAggressiveStrategy implements IStrategy {
       if (bias === 'bullish') {
         // Bullish FVG = SUPPORT. Enter BUY when price touches/nears FVG and shows bullish reaction.
         // Proximity check: price must have been near/in the FVG zone recently
-        const proximity = isGold ? fvg.size * 5 : fvg.size * 5; // Within 5x FVG size (aggressive)
+        const proximity = isGold ? fvg.size * 3 : fvg.size * 3;
         const anyRecentNearFVG = recent.some(c => c.low <= fvg.high + proximity && c.low >= fvg.low - proximity);
         if (!anyRecentNearFVG) continue; // Price not near this FVG at all
 
@@ -373,7 +378,7 @@ export class FVGScalpAggressiveStrategy implements IStrategy {
 
         // Accept ANY of these confirmations:
         // A) Strong bullish candle (body > 40% of range) closing above FVG mid
-        const strongBullish = isBullish && bodyRatio > 0.3 && lastM1.close >= fvg.mid; // 30% body (aggressive)
+        const strongBullish = isBullish && bodyRatio > 0.4 && lastM1.close >= fvg.mid;
         // B) Engulfing: current candle body > previous candle body AND closes higher
         const prev = recent[recent.length - 2];
         const engulfing = prev && isBullish && bodySize > Math.abs(prev.close - prev.open) * 1.1 && lastM1.close > prev.high;
@@ -392,7 +397,7 @@ export class FVGScalpAggressiveStrategy implements IStrategy {
         const candleRange = lastM1.high - lastM1.low;
         const bodyRatio = candleRange > 0 ? bodySize / candleRange : 0;
 
-        const strongBearish = isBearish && bodyRatio > 0.3 && lastM1.close <= fvg.mid; // 30% body (aggressive)
+        const strongBearish = isBearish && bodyRatio > 0.4 && lastM1.close <= fvg.mid;
         const prev = recent[recent.length - 2];
         const engulfing = prev && isBearish && bodySize > Math.abs(prev.close - prev.open) * 1.1 && lastM1.close < prev.low;
         const rejection = isBearish && lastM1.high >= fvg.low && lastM1.close < fvg.low;
