@@ -873,15 +873,15 @@ async function processTradingDecision(
     return decisionLog;
   }
 
-  // Journal the signal for outcome tracking (ICT Sweep & Shift)
-  const legacyDedupeKey = `legacy:${symbol}:${signal.direction}`;
+  // Journal the signal for outcome tracking (all strategies)
+  const legacyDedupeKey = `legacy:${symbol}:${strategyDisplayName}:${signal.direction}`;
   const legacyDedupeValue = `${signal.stopLoss.toFixed(3)}:${signal.takeProfit.toFixed(3)}`;
   let legacyJournalId = '';
   if (lastSignalKey.get(legacyDedupeKey) !== legacyDedupeValue) {
     lastSignalKey.set(legacyDedupeKey, legacyDedupeValue);
     try {
       legacyJournalId = await journalService.onSignalGenerated({
-        strategyKey: 'ICT Sweep & Shift',
+        strategyKey: strategyDisplayName,
         strategyVersion: 'SMCStrategyV2',
         symbol: signal.symbol,
         direction: signal.direction,
@@ -889,7 +889,7 @@ async function processTradingDecision(
         stopLoss: signal.stopLoss,
         takeProfit: signal.takeProfit,
         rrTarget: signal.meta?.riskRewardRatio,
-        setupContext: { source: 'legacy_tick_loop' },
+        setupContext: { source: 'legacy_tick_loop', strategy: strategyDisplayName },
         entryContext: { reason: signal.reason, orderKind: signal.orderKind },
       });
       if (legacyJournalId) {
@@ -899,7 +899,7 @@ async function processTradingDecision(
           entryPrice: signal.entry,
           stopLoss: signal.stopLoss,
           takeProfit: signal.takeProfit,
-          strategyKey: 'ICT Sweep & Shift',
+          strategyKey: strategyDisplayName,
         });
       }
     } catch {}
