@@ -1568,38 +1568,42 @@ class MT5Client:
     
     def _get_filling_modes(self, symbol: str, symbol_info) -> list:
         """
-        Determine the appropriate order filling modes for a symbol
-        Returns: List of ORDER_FILLING_* constants to try in order
+        Determine the appropriate order filling modes for a symbol.
+        Returns: List of ORDER_FILLING_* constants to try in order.
+
+        IMPORTANT: MT5 has TWO different enums:
+          - symbol_info.filling_mode is a BITMASK: bit 0 (1)=FOK, bit 1 (2)=IOC
+          - order_send type_filling uses CONSTANTS: FOK=0, IOC=1, RETURN=2
+        These are NOT the same values! Don't use ORDER_FILLING_* to check the bitmask.
         """
         if symbol_info is None:
-            # Fallback: try common modes in order of preference
             logger.warning(f"Symbol {symbol} info is None, trying all filling modes as fallback")
-            return [mt5.ORDER_FILLING_RETURN, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_FOK]
-        
+            return [mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN]
+
         filling_modes = symbol_info.filling_mode
         modes_to_try = []
-        
-        # Log available filling modes
-        logger.debug(f"Symbol {symbol} available filling modes (bitmask): {filling_modes}")
-        
-        # Order of preference: RETURN (most flexible) > IOC > FOK
-        # Check available filling modes and add in preferred order
-        if filling_modes & mt5.ORDER_FILLING_RETURN:
-            modes_to_try.append(mt5.ORDER_FILLING_RETURN)
-            logger.debug(f"  - ORDER_FILLING_RETURN (1) is available")
-        if filling_modes & mt5.ORDER_FILLING_IOC:
-            modes_to_try.append(mt5.ORDER_FILLING_IOC)
-            logger.debug(f"  - ORDER_FILLING_IOC (2) is available")
-        if filling_modes & mt5.ORDER_FILLING_FOK:
+
+        logger.info(f"Symbol {symbol} filling_mode bitmask: {filling_modes}")
+
+        # Bitmask bit 0 (value 1) = FOK supported → use ORDER_FILLING_FOK (=0) in order_send
+        if filling_modes & 1:
             modes_to_try.append(mt5.ORDER_FILLING_FOK)
-            logger.debug(f"  - ORDER_FILLING_FOK (4) is available")
-        
-        # If no modes found, try all as fallback
-        if not modes_to_try:
-            modes_to_try = [mt5.ORDER_FILLING_RETURN, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_FOK]
-            logger.warning(f"Symbol {symbol} has no recognized filling modes (bitmask={filling_modes}), "
-                          f"trying all modes as fallback")
-        
+            logger.info(f"  - FOK available (bitmask bit 0)")
+
+        # Bitmask bit 1 (value 2) = IOC supported → use ORDER_FILLING_IOC (=1) in order_send
+        if filling_modes & 2:
+            modes_to_try.append(mt5.ORDER_FILLING_IOC)
+            logger.info(f"  - IOC available (bitmask bit 1)")
+
+        # RETURN (=2) is always worth trying as fallback for exchange execution
+        modes_to_try.append(mt5.ORDER_FILLING_RETURN)
+        logger.info(f"  - RETURN added as fallback")
+
+        # If bitmask was 0 or unrecognized, ensure FOK is first (most common)
+        if not (filling_modes & 1) and not (filling_modes & 2):
+            modes_to_try = [mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN]
+            logger.warning(f"Symbol {symbol} bitmask={filling_modes} unrecognized, trying all modes")
+
         return modes_to_try
     
     def get_open_positions(self) -> Dict[str, Any]:
