@@ -107,10 +107,16 @@ export class FVGScalpStrategy implements IStrategy {
       return { orders: [], debug: { reason: 'Outside FVG Scalp session windows' } };
     }
 
-    // Step 2: Determine H1 bias (simple: last 3 H1 candles net direction)
-    const bias = this.getH1Bias(h1Candles || m5Candles);
+    // Step 2: Determine bias using H4 candles (stronger trend filter)
+    // H4 trend eliminates counter-trend trades that have 0% win rate
+    let h4Candles: Candle[] = [];
+    try {
+      h4Candles = await marketData.getRecentCandles(symbol, 'H4', 20);
+    } catch {}
+    // Use H4 bias if available (more reliable), fall back to H1
+    const bias = h4Candles.length >= 5 ? this.getHTFBias(h4Candles) : this.getH1Bias(h1Candles || m5Candles);
     if (bias === 'neutral') {
-      return { orders: [], debug: { reason: 'H1 bias is neutral (ranging)' } };
+      return { orders: [], debug: { reason: 'HTF bias is neutral (ranging)' } };
     }
 
     // Step 3: Detect M5 FVGs in bias direction
@@ -174,6 +180,44 @@ export class FVGScalpStrategy implements IStrategy {
       if (timeMinutes >= start && timeMinutes < end) return s;
     }
     return null;
+  }
+
+  private getHTFBias(candles: Candle[]): 'bullish' | 'bearish' | 'neutral' {
+    if (candles.length < 5) return 'neutral';
+
+    // H4 bias: compare swing structure over last 10-20 candles
+    // Higher highs + higher lows = bullish
+    // Lower highs + lower lows = bearish
+    const recent = candles.slice(-10);
+    const firstHalf = recent.slice(0, 5);
+    const secondHalf = recent.slice(-5);
+
+    const firstHighest = Math.max(...firstHalf.map(c => c.high));
+    const firstLowest = Math.min(...firstHalf.map(c => c.low));
+    const secondHighest = Math.max(...secondHalf.map(c => c.high));
+    const secondLowest = Math.min(...secondHalf.map(c => c.low));
+
+    const hh = secondHighest > firstHighest; // Higher high
+    const hl = secondLowest > firstLowest;   // Higher low
+    const lh = secondHighest < firstHighest; // Lower high
+    const ll = secondLowest < firstLowest;   // Lower low
+
+    // Strong bullish: HH + HL
+    if (hh && hl) return 'bullish';
+    // Strong bearish: LH + LL
+    if (lh && ll) return 'bearish';
+    // Weak bullish: price trending up (last close vs first close)
+    if (hh || hl) return 'bullish';
+    // Weak bearish: price trending down
+    if (lh || ll) return 'bearish';
+
+    // Fallback: net direction of last close vs first close
+    const netMove = recent[recent.length - 1].close - recent[0].open;
+    const avgRange = recent.reduce((s, c) => s + (c.high - c.low), 0) / recent.length;
+    if (netMove > avgRange * 0.5) return 'bullish';
+    if (netMove < -avgRange * 0.5) return 'bearish';
+
+    return 'neutral';
   }
 
   private getH1Bias(candles: Candle[]): 'bullish' | 'bearish' | 'neutral' {
