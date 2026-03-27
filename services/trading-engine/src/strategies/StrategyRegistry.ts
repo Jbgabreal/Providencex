@@ -13,6 +13,7 @@ import { GodSmcStrategy } from './god/GodSmcStrategy';
 import { SilverBulletStrategy } from './silver-bullet/SilverBulletStrategy';
 import { FVGScalpStrategy } from './fvg-scalp/FVGScalpStrategy';
 import { FVGScalpAggressiveStrategy } from './fvg-scalp/FVGScalpAggressiveStrategy';
+import { MomentumScalpStrategy } from './fvg-scalp/MomentumScalpStrategy';
 
 const logger = new Logger('StrategyRegistry');
 
@@ -35,6 +36,9 @@ const implementationMap: Record<string, new (profile: StrategyProfile) => IStrat
 
   // FVG Scalp Aggressive — more trades, looser filters, near-24h sessions
   FVG_SCALP_AGG_V1: FVGScalpAggressiveStrategy,
+
+  // Momentum Scalp — displacement continuation, rides momentum instead of fading
+  MOMENTUM_SCALP_V1: MomentumScalpStrategy,
 };
 
 /**

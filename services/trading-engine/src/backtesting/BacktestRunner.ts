@@ -214,7 +214,7 @@ export class BacktestRunner {
       });
 
       // Risk limits per strategy profile — scalping strategies need higher limits
-      const isScalpingStrategy = this.config.strategyProfileKey === 'fvg_scalp_v1' || this.config.strategyProfileKey === 'fvg_scalp_aggressive_v1';
+      const isScalpingStrategy = this.config.strategyProfileKey === 'fvg_scalp_v1' || this.config.strategyProfileKey === 'fvg_scalp_aggressive_v1' || this.config.strategyProfileKey === 'momentum_scalp_v1';
       const simulatedRisk = new SimulatedRiskService({
         initialBalance: this.config.initialBalance,
         lowRiskMaxDailyLoss: isScalpingStrategy ? 50.0 : 1.0,   // 50% for scalping (USD cap is the real limit), 1% for swing

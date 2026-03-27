@@ -89,6 +89,26 @@
       "sessions": ["Asian", "London+NY"],
       "note": "FVG Scalp Aggressive — more trades, looser filters, near-24h sessions"
     }
+  },
+  {
+    "id": "momentum_scalp_v1",
+    "key": "momentum_scalp_v1",
+    "displayName": "Momentum Scalp V1",
+    "description": "Displacement continuation: rides momentum after strong M1 pushes. Enters on pullback into FVGs created by the displacement. Works in volatile/impulsive markets where FVG bounce fails.",
+    "implementationKey": "MOMENTUM_SCALP_V1",
+    "version": 1,
+    "createdAt": "2026-03-27T00:00:00.000Z",
+    "updatedAt": "2026-03-27T00:00:00.000Z",
+    "isDefault": false,
+    "isArchived": false,
+    "config": {
+      "riskRewardTarget": 2.0,
+      "minDisplacementCandles": 3,
+      "minBodyRatio": 0.45,
+      "maxSLPoints": 8.0,
+      "minSLPoints": 2.0,
+      "note": "Momentum Scalp — displacement continuation for volatile markets"
+    }
   }
 ]
 

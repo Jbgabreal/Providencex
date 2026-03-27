@@ -333,7 +333,7 @@ export class CandleReplayEngine {
 
     // Skip v3 execution filter for GOD_SMC_V1 — it was profitable without filters (matches live behavior)
     const strategyKey = signal.meta?.strategyKey || signal.meta?.profileKey || '';
-    const skipV3Filter = strategyKey === 'GOD_SMC_V1' || strategyKey === 'first_successful_strategy_from_god' || strategyKey === 'FVG_SCALP_V1' || strategyKey === 'FVG_SCALP_AGG_V1';
+    const skipV3Filter = strategyKey === 'GOD_SMC_V1' || strategyKey === 'first_successful_strategy_from_god' || strategyKey === 'FVG_SCALP_V1' || strategyKey === 'FVG_SCALP_AGG_V1' || strategyKey === 'MOMENTUM_SCALP_V1';
 
     // SENIOR DEV: Use relaxed execution filter for backtesting
     // Allows us to see if signals are being generated vs blocked by filters

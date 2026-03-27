@@ -126,6 +126,10 @@ export class FVGScalpAggressiveStrategy implements IStrategy {
       return { orders: [], debug: { reason: 'HTF bias is neutral (ranging)' } };
     }
 
+    // Risk management handles consolidation periods via:
+    // - 3 consecutive loss daily cool-off (stops tilt trading in chop)
+    // - $200 max daily loss cap (absolute protection)
+
     // Step 3: Detect M5 FVGs in bias direction (with 1.2x displacement, 8h tracking)
     const fvgs = this.detectM5FVGs(m5Candles, bias);
     if (fvgs.length === 0) {
