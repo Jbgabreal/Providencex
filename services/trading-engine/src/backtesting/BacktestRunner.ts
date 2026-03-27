@@ -226,8 +226,7 @@ export class BacktestRunner {
         defaultHighRiskPerTrade: (this.config.riskPerTradePercent || 0.5) * 3,
         // Scalping daily limits: percentage scales with balance, 3 consec loss cool-off
         maxDailyLossPct: isScalpingStrategy ? 20 : undefined,      // Stop at 20% of day start balance
-        maxConsecutiveLosses: isScalpingStrategy ? 3 : undefined,  // Stop after 3 consecutive losses
-        maxDailyLossingTrades: isScalpingStrategy ? 3 : undefined, // Hard cap: 3 total losses per day (doesn't reset on wins)
+        maxConsecutiveLosses: isScalpingStrategy ? 3 : undefined,  // Stop after 3 consecutive losses (resets on win)
         maxConcurrentPositions: isScalpingStrategy ? 3 : undefined, // Max 3 open
       });
 
