@@ -24,6 +24,11 @@ const SYMBOL_OPTIONS = [
   { value: 'US100', label: 'Nasdaq (US100)' },
   { value: 'EURJPY', label: 'EUR/JPY' },
   { value: 'GBPJPY', label: 'GBP/JPY' },
+  { value: 'V10', label: 'Volatility 10 (24/7)' },
+  { value: 'V25', label: 'Volatility 25 (24/7)' },
+  { value: 'V50', label: 'Volatility 50 (24/7)' },
+  { value: 'V75', label: 'Volatility 75 (24/7)' },
+  { value: 'V100', label: 'Volatility 100 (24/7)' },
 ];
 
 interface Props {
