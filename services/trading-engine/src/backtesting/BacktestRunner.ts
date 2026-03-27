@@ -215,6 +215,7 @@ export class BacktestRunner {
 
       // Risk limits per strategy profile — scalping strategies need higher limits
       const isScalpingStrategy = this.config.strategyProfileKey === 'fvg_scalp_v1' || this.config.strategyProfileKey === 'fvg_scalp_aggressive_v1' || this.config.strategyProfileKey === 'momentum_scalp_v1' || this.config.strategyProfileKey === 'ict_silver_bullet_v1';
+      // Risk config applied
       const simulatedRisk = new SimulatedRiskService({
         initialBalance: this.config.initialBalance,
         lowRiskMaxDailyLoss: isScalpingStrategy ? 50.0 : 1.0,   // 50% for scalping (USD cap is the real limit), 1% for swing
@@ -226,7 +227,8 @@ export class BacktestRunner {
         // Scalping daily limits: percentage scales with balance, 3 consec loss cool-off
         maxDailyLossPct: isScalpingStrategy ? 20 : undefined,      // Stop at 20% of day start balance
         maxConsecutiveLosses: isScalpingStrategy ? 3 : undefined,  // Stop after 3 consecutive losses
-        maxConcurrentPositions: isScalpingStrategy ? 3 : undefined, // Max 3 open — balance between opportunity and exposure
+        maxDailyLossingTrades: isScalpingStrategy ? 3 : undefined, // Hard cap: 3 total losses per day (doesn't reset on wins)
+        maxConcurrentPositions: isScalpingStrategy ? 3 : undefined, // Max 3 open
       });
 
       // Initialize ExecutionFilterState for v3

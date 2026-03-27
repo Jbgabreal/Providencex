@@ -21,6 +21,7 @@ export interface SimulatedRiskConfig {
   maxDailyLossUsd?: number;        // Hard USD cap on daily loss (e.g., $200)
   maxDailyLossPct?: number;        // Percentage of balance cap on daily loss (e.g., 10%)
   maxConsecutiveLosses?: number;    // Stop trading after N consecutive losses in a day
+  maxDailyLossingTrades?: number;  // Stop after N TOTAL losing trades in a day (regardless of wins between)
   maxConcurrentPositions?: number;  // Max open positions at same time (e.g., 1 for Silver Bullet)
 }
 
@@ -34,9 +35,10 @@ export class SimulatedRiskService {
     date: string; // YYYY-MM-DD
     realizedPnL: number;
     tradesTaken: number;
-    balance: number;          // Current balance (updated on each trade)
-    dayStartBalance: number;  // Balance at start of day (never changes)
+    balance: number;
+    dayStartBalance: number;
     consecutiveLosses: number;
+    totalLossingTrades: number; // Total losing trades today (never resets on win)
     dailyStopped: boolean;
   }> = new Map();
 
@@ -49,6 +51,11 @@ export class SimulatedRiskService {
       highRiskMaxTrades: config.highRiskMaxTrades ?? 4,
       defaultLowRiskPerTrade: config.defaultLowRiskPerTrade ?? 0.5,
       defaultHighRiskPerTrade: config.defaultHighRiskPerTrade ?? 1.5,
+      maxDailyLossUsd: config.maxDailyLossUsd,
+      maxDailyLossPct: config.maxDailyLossPct,
+      maxConsecutiveLosses: config.maxConsecutiveLosses,
+      maxDailyLossingTrades: config.maxDailyLossingTrades,
+      maxConcurrentPositions: config.maxConcurrentPositions,
     };
     logger.info('[SimRisk] Initialized with risk limits', this.config);
   }
@@ -146,6 +153,15 @@ export class SimulatedRiskService {
       };
     }
 
+    // Check total losing trades per day (hard cap — doesn't reset on wins)
+    if (this.config.maxDailyLossingTrades && stats.totalLossingTrades >= this.config.maxDailyLossingTrades) {
+      stats.dailyStopped = true;
+      return {
+        allowed: false,
+        reason: `Max daily losing trades reached: ${stats.totalLossingTrades} >= ${this.config.maxDailyLossingTrades} — stopped for the day`,
+      };
+    }
+
     // Check daily trade count
     if (stats.tradesTaken >= strategyConfig.maxTrades) {
       return {
@@ -194,11 +210,12 @@ export class SimulatedRiskService {
     stats.tradesTaken += 1;
     stats.balance = currentBalance;
 
-    // Track consecutive losses
+    // Track consecutive losses AND total losing trades
     if (pnl < 0) {
       stats.consecutiveLosses += 1;
+      stats.totalLossingTrades += 1;
     } else {
-      stats.consecutiveLosses = 0; // Reset on win
+      stats.consecutiveLosses = 0; // Reset consecutive on win (but total never resets)
     }
   }
 
@@ -212,6 +229,7 @@ export class SimulatedRiskService {
     balance: number;
     dayStartBalance: number;
     consecutiveLosses: number;
+    totalLossingTrades: number;
     dailyStopped: boolean;
   } {
     if (!this.dailyStats.has(date)) {
@@ -220,8 +238,9 @@ export class SimulatedRiskService {
         realizedPnL: 0,
         tradesTaken: 0,
         balance: currentBalance,
-        dayStartBalance: currentBalance, // Locked at day start
+        dayStartBalance: currentBalance,
         consecutiveLosses: 0,
+        totalLossingTrades: 0,
         dailyStopped: false,
       });
     }
