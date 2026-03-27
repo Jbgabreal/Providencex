@@ -67,7 +67,27 @@
       "maxSLPoints": 8.0,
       "minSLPoints": 2.0,
       "sessions": ["London", "NY AM", "NY PM"],
-      "note": "FVG Scalp — high-frequency M5 Fair Value Gap fill entries with M1 confirmation"
+      "note": "FVG Scalp Conservative — M5 FVG bounce with strict displacement + confirmation filters"
+    }
+  },
+  {
+    "id": "fvg_scalp_aggressive_v1",
+    "key": "fvg_scalp_aggressive_v1",
+    "displayName": "FVG Scalp Aggressive",
+    "description": "Aggressive FVG scalping: 5-15 trades/day. Looser FVG detection (no displacement required), wider sessions (01-21 UTC), lower M1 confirmation bar. Same risk management as conservative.",
+    "implementationKey": "FVG_SCALP_AGG_V1",
+    "version": 1,
+    "createdAt": "2026-03-27T00:00:00.000Z",
+    "updatedAt": "2026-03-27T00:00:00.000Z",
+    "isDefault": false,
+    "isArchived": false,
+    "config": {
+      "riskRewardTarget": 2.0,
+      "minFVGSizeMultiplier": 0.3,
+      "maxSLPoints": 8.0,
+      "minSLPoints": 2.0,
+      "sessions": ["Asian", "London+NY"],
+      "note": "FVG Scalp Aggressive — more trades, looser filters, near-24h sessions"
     }
   }
 ]

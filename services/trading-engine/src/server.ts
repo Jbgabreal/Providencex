@@ -302,7 +302,7 @@ if (activeStrategyKeys.length > 0) {
             strategyKey: strategy.key,
             profileKey: key,
             strategyVersion: strategy.key,
-            skipV3Filter: strategy.key === 'GOD_SMC_V1' || strategy.key === 'FVG_SCALP_V1', // GOD + FVG Scalp use own entry logic, skip v3 filter
+            skipV3Filter: strategy.key === 'GOD_SMC_V1' || strategy.key === 'FVG_SCALP_V1' || strategy.key === 'FVG_SCALP_AGG_V1',
             signalSource: adapter,
           },
         });
