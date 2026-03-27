@@ -107,6 +107,7 @@ export class SilverBulletStrategy implements IStrategy {
         debug: { reason: `Outside Silver Bullet window`, symbol },
       };
     }
+    console.log(`[SB-DEBUG] IN WINDOW: ${symbol} at ${candleTime.toISOString()} → ${windowCheck.window.label}`);
     logger.info(`[SilverBullet] ${symbol}: In ${windowCheck.window.label} window at ${candleTime}`);
 
     // Step 3: Run Silver Bullet analysis
@@ -128,7 +129,7 @@ export class SilverBulletStrategy implements IStrategy {
       entry: setup.entryPrice,
       stopLoss: setup.stopLoss,
       takeProfit: setup.takeProfit,
-      orderKind: 'limit',
+      orderKind: 'market',
       reason: `Silver Bullet: ${setup.reasons.join('; ')}`,
       meta: {
         strategyKey: this.key,
