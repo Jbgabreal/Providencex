@@ -884,8 +884,12 @@ async function processTradingDecision(
   const potentialLoss = -riskUsd;
   const rrActual = slDistance > 0 ? tpDistance / slDistance : 0;
 
+  // Dedup: round SL to 1 decimal (XAUUSD) or 4 decimals (forex) to prevent duplicates from same OB zone
+  const isGold = symbol === 'XAUUSD' || symbol === 'GOLD';
+  const slRounded = isGold ? signal.stopLoss.toFixed(1) : signal.stopLoss.toFixed(4);
+  const tpRounded = isGold ? signal.takeProfit.toFixed(1) : signal.takeProfit.toFixed(4);
   const legacyDedupeKey = `legacy:${symbol}:${strategyDisplayName}:${signal.direction}`;
-  const legacyDedupeValue = `${signal.stopLoss.toFixed(3)}:${signal.takeProfit.toFixed(3)}`;
+  const legacyDedupeValue = `${slRounded}:${tpRounded}`;
   let legacyJournalId = '';
   if (lastSignalKey.get(legacyDedupeKey) !== legacyDedupeValue) {
     lastSignalKey.set(legacyDedupeKey, legacyDedupeValue);
@@ -1055,17 +1059,41 @@ async function processTradingDecision(
           logger.info(
             `[MultiTenant] Processing user strategy assignments for symbol=${symbol}, strategy=${strategy}`
           );
-          await userAssignmentOrchestrator.processAssignmentsForSignal(
+          const tenantResult = await userAssignmentOrchestrator.processAssignmentsForSignal(
             rawSignal,
             executionContext,
             guardrailDecision.mode,
             strategy
           );
 
-          // In multi-tenant mode, trades are executed per-assignment as side effects.
-          // We treat the core decision as "trade" once filters pass.
-          decisionLog.decision = 'trade';
-          decisionLog.execution_result = { success: true };
+          // Use actual results from execution, not hardcoded success
+          if (tenantResult.traded > 0) {
+            decisionLog.decision = 'trade';
+            decisionLog.execution_result = {
+              success: true,
+              traded: tenantResult.traded,
+              skipped: tenantResult.skipped,
+              errors: tenantResult.errors,
+            };
+            decisionLog.trade_request = {
+              symbol: rawSignal.symbol,
+              direction: rawSignal.direction,
+              entry: rawSignal.entry,
+              lotSize: rawSignal.lotSize,
+              stopLoss: rawSignal.stopLoss,
+              takeProfit: rawSignal.takeProfit,
+            };
+          } else {
+            decisionLog.decision = 'skip';
+            decisionLog.skip_reason = `Multi-tenant: 0 accounts traded (${tenantResult.skipped} skipped, ${tenantResult.errors} errors)`;
+            decisionLog.execution_result = {
+              success: false,
+              traded: 0,
+              skipped: tenantResult.skipped,
+              errors: tenantResult.errors,
+              results: tenantResult.results,
+            };
+          }
           await decisionLogger.logDecision(decisionLog);
           return decisionLog;
         }

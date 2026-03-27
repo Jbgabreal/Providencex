@@ -160,10 +160,11 @@ export class UserAssignmentOrchestrator {
     baseContext: ExecutionFilterContext,
     guardrailMode: string,
     strategyKey: string
-  ): Promise<void> {
+  ): Promise<{ traded: number; skipped: number; errors: number; results: any[] }> {
     const assignments = await this.loadActiveAssignments();
     if (assignments.length === 0) {
-      return;
+      this.logger.warn(`[UserAssignmentOrchestrator] No active assignments found`);
+      return { traded: 0, skipped: 0, errors: 0, results: [] };
     }
 
     // Build all execution engines first, then execute IN PARALLEL
@@ -229,13 +230,20 @@ export class UserAssignmentOrchestrator {
             `[UserAssignmentOrchestrator] Error executing assignment for account ${ctx.mt5Account.id}`,
             error
           );
+          return { success: false, error: error?.message || 'Unknown error', accountId: ctx.mt5Account.id };
         })
       );
     }
 
     // Execute ALL accounts in parallel — each BrokerAdapter handles its own connection
-    await Promise.all(executions);
-    this.logger.info(`[UserAssignmentOrchestrator] All ${executions.length} assignment(s) executed in parallel`);
+    const results = await Promise.all(executions);
+    const traded = results.filter((r: any) => r?.decision === 'TRADE' || r?.traded).length;
+    const errors = results.filter((r: any) => r?.error).length;
+    const skipped = results.length - traded - errors;
+    this.logger.info(
+      `[UserAssignmentOrchestrator] ${executions.length} assignment(s) executed: traded=${traded} skipped=${skipped} errors=${errors}`
+    );
+    return { traded, skipped, errors, results };
   }
 
   private async buildAccountInfoFromAssignment(ctx: ActiveAssignmentContext): Promise<AccountInfo> {
