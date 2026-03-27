@@ -97,12 +97,15 @@ export class FVGScalpStrategy implements IStrategy {
       return { orders: [], debug: { reason: `Insufficient candles: M5=${m5Candles?.length || 0}, M1=${m1Candles?.length || 0}` } };
     }
 
-    // Step 1: Check session window
+    // Step 1: Check session window (skip for synthetic/volatility indices — they run 24/7)
     const lastCandle = m1Candles[m1Candles.length - 1];
     const candleTime = (lastCandle as any).startTime instanceof Date
       ? (lastCandle as any).startTime
       : new Date((lastCandle as any).timestamp || Date.now());
-    const session = this.getActiveSession(candleTime);
+    const isSynthetic = symbol.toUpperCase().startsWith('V') && /^V\d+$/.test(symbol.toUpperCase());
+    const session = isSynthetic
+      ? { label: '24/7', startHourUTC: 0, startMinUTC: 0, endHourUTC: 23, endMinUTC: 59 }
+      : this.getActiveSession(candleTime);
     if (!session) {
       return { orders: [], debug: { reason: 'Outside FVG Scalp session windows' } };
     }
@@ -336,15 +339,19 @@ export class FVGScalpStrategy implements IStrategy {
   ): { direction: 'buy' | 'sell'; entryPrice: number; stopLoss: number; takeProfit: number; fvg: FVG } | null {
 
     const isGold = symbol.toUpperCase() === 'XAUUSD' || symbol.toUpperCase() === 'GOLD';
-    const minSL = isGold ? this.minSLPoints : 0.0005;
-    const maxSL = isGold ? this.maxSLPoints : 0.0030;
+    const isSynth = symbol.toUpperCase().startsWith('V') && /^V\d+$/.test(symbol.toUpperCase());
+    // Dynamic SL limits based on instrument type
+    const avgRange = m1Candles.slice(-20).reduce((s, c) => s + (c.high - c.low), 0) / Math.min(20, m1Candles.length);
+    const minSL = isSynth ? avgRange * 0.5 : isGold ? this.minSLPoints : 0.0005;
+    const maxSL = isSynth ? avgRange * 3.0 : isGold ? this.maxSLPoints : 0.0030;
 
     // KEY INSIGHT: 60%+ of FVGs remain unfilled. Use them as SUPPORT/RESISTANCE (bounce off),
     // NOT as fill targets. Enter when price touches the FVG zone and bounces away.
     for (const fvg of fvgs.reverse()) { // Most recent first
       // Dedup: skip FVGs we've already traded
       const fvgDir = fvg.direction === 'bullish' ? 'bull' : 'bear';
-      const fvgKey = `${fvgDir}:${isGold ? fvg.low.toFixed(1) : fvg.low.toFixed(4)}:${isGold ? fvg.high.toFixed(1) : fvg.high.toFixed(4)}`;
+      const precision = isSynth ? 0 : isGold ? 1 : 4;
+      const fvgKey = `${fvgDir}:${fvg.low.toFixed(precision)}:${fvg.high.toFixed(precision)}`;
       if (this.usedFVGs.has(fvgKey)) continue;
 
       if (m1Candles.length < 5) continue;

@@ -36,6 +36,12 @@ const SYMBOL_MAP: Record<string, string> = {
   US30: 'OTC_DJI',
   US100: 'OTC_NDX',
   US500: 'OTC_SPC',
+  // Volatility Indices (24/7)
+  V25: '1HZ25V',
+  V50: '1HZ50V',
+  V75: '1HZ75V',
+  V100: '1HZ100V',
+  V10: '1HZ10V',
 };
 
 // Reverse map: frxXAUUSD → XAUUSD
