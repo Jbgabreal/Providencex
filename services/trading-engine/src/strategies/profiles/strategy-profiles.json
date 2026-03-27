@@ -109,6 +109,31 @@
       "minSLPoints": 2.0,
       "note": "Momentum Scalp — displacement continuation for volatile markets"
     }
+  },
+  {
+    "id": "v25_inducement_v1",
+    "key": "v25_inducement_v1",
+    "displayName": "V25 Inducement Fade",
+    "description": "Fades fake breakouts on Volatility 25 synthetic index. Detects consolidation ranges, waits for inducement sweep beyond range, enters fade when price rejects back inside. 24/7, no session filters.",
+    "implementationKey": "V25_INDUCEMENT_V1",
+    "version": 1,
+    "createdAt": "2026-03-27T00:00:00.000Z",
+    "updatedAt": "2026-03-27T00:00:00.000Z",
+    "isDefault": false,
+    "isArchived": false,
+    "config": {
+      "rangeLookback": 20,
+      "atrPeriod": 14,
+      "minInducementATR": 0.5,
+      "maxRangeATR": 999,
+      "minRangeCandles": 10,
+      "rsiOversold": 40,
+      "rsiOverbought": 60,
+      "adxTrendMax": 35,
+      "slBuffer": 500,
+      "cooldownMinutes": 5,
+      "note": "V25 Inducement Fade — synthetic index fake breakout strategy (24/7)"
+    }
   }
 ]
 
