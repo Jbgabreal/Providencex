@@ -874,6 +874,16 @@ async function processTradingDecision(
   }
 
   // Journal the signal for outcome tracking (all strategies)
+  // Pre-calculate lot size and risk info for the journal
+  const slDistance = Math.abs(signal.entry - signal.stopLoss);
+  const tpDistance = Math.abs(signal.takeProfit - signal.entry);
+  const slPips = convertPriceDistanceToPips(symbol, slDistance);
+  const estimatedLotSize = riskService.getPositionSize(riskContext, slPips, signal.entry);
+  const riskUsd = estimatedLotSize > 0 ? slDistance * estimatedLotSize * (symbol.includes('JPY') ? 1000 : symbol === 'XAUUSD' ? 100 : 100000) : 0;
+  const potentialWin = estimatedLotSize > 0 ? tpDistance * estimatedLotSize * (symbol.includes('JPY') ? 1000 : symbol === 'XAUUSD' ? 100 : 100000) : 0;
+  const potentialLoss = -riskUsd;
+  const rrActual = slDistance > 0 ? tpDistance / slDistance : 0;
+
   const legacyDedupeKey = `legacy:${symbol}:${strategyDisplayName}:${signal.direction}`;
   const legacyDedupeValue = `${signal.stopLoss.toFixed(3)}:${signal.takeProfit.toFixed(3)}`;
   let legacyJournalId = '';
@@ -889,7 +899,18 @@ async function processTradingDecision(
         stopLoss: signal.stopLoss,
         takeProfit: signal.takeProfit,
         rrTarget: signal.meta?.riskRewardRatio,
-        setupContext: { source: 'legacy_tick_loop', strategy: strategyDisplayName },
+        lotSize: estimatedLotSize > 0 ? estimatedLotSize : undefined,
+        riskPercent: riskContext.strategy === 'low' ? 0.5 : 1.5,
+        setupContext: {
+          source: 'legacy_tick_loop',
+          strategy: strategyDisplayName,
+          lotSize: estimatedLotSize,
+          riskUsd: Math.round(riskUsd * 100) / 100,
+          potentialWin: Math.round(potentialWin * 100) / 100,
+          potentialLoss: Math.round(potentialLoss * 100) / 100,
+          rrActual: Math.round(rrActual * 100) / 100,
+          accountEquity: accountEquity,
+        },
         entryContext: { reason: signal.reason, orderKind: signal.orderKind },
       });
       if (legacyJournalId) {

@@ -14,6 +14,8 @@ interface JournalEntry {
   stopLoss?: number;
   takeProfit?: number;
   rrTarget?: number;
+  lotSize?: number;
+  riskPercent?: number;
   status: string;
   result?: string;
   profit?: number;
@@ -188,18 +190,20 @@ export default function TradeJournalPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="text-left py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Time</th>
-                <th className="text-center py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Type</th>
-                <th className="text-left py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Strategy</th>
-                <th className="text-left py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Symbol</th>
-                <th className="text-left py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Dir</th>
-                <th className="text-right py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Entry</th>
-                <th className="text-right py-3 px-3 text-xs font-semibold text-gray-400 uppercase">SL</th>
-                <th className="text-right py-3 px-3 text-xs font-semibold text-gray-400 uppercase">TP</th>
-                <th className="text-right py-3 px-3 text-xs font-semibold text-gray-400 uppercase">R:R</th>
-                <th className="text-center py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Status</th>
-                <th className="text-center py-3 px-3 text-xs font-semibold text-gray-400 uppercase">Result</th>
-                <th className="text-right py-3 px-3 text-xs font-semibold text-gray-400 uppercase">P&L</th>
+                <th className="text-left py-3 px-2 text-xs font-semibold text-gray-400 uppercase">Time</th>
+                <th className="text-center py-3 px-2 text-xs font-semibold text-gray-400 uppercase">Type</th>
+                <th className="text-left py-3 px-2 text-xs font-semibold text-gray-400 uppercase">Strategy</th>
+                <th className="text-left py-3 px-2 text-xs font-semibold text-gray-400 uppercase">Symbol</th>
+                <th className="text-left py-3 px-2 text-xs font-semibold text-gray-400 uppercase">Dir</th>
+                <th className="text-right py-3 px-2 text-xs font-semibold text-gray-400 uppercase">Entry</th>
+                <th className="text-right py-3 px-2 text-xs font-semibold text-gray-400 uppercase">SL</th>
+                <th className="text-right py-3 px-2 text-xs font-semibold text-gray-400 uppercase">TP</th>
+                <th className="text-right py-3 px-2 text-xs font-semibold text-gray-400 uppercase">Lot</th>
+                <th className="text-right py-3 px-2 text-xs font-semibold text-gray-400 uppercase">Risk $</th>
+                <th className="text-right py-3 px-2 text-xs font-semibold text-gray-400 uppercase">R:R</th>
+                <th className="text-center py-3 px-2 text-xs font-semibold text-gray-400 uppercase">Status</th>
+                <th className="text-center py-3 px-2 text-xs font-semibold text-gray-400 uppercase">Result</th>
+                <th className="text-right py-3 px-2 text-xs font-semibold text-gray-400 uppercase">P&L</th>
               </tr>
             </thead>
             <tbody>
@@ -217,25 +221,27 @@ export default function TradeJournalPage() {
                     e.result === 'win' ? 'bg-emerald-50/30' :
                     e.result === 'loss' ? 'bg-red-50/20' : ''
                   }`}>
-                  <td className="py-2 px-3 text-xs text-gray-400 whitespace-nowrap">{new Date(e.createdAt).toLocaleString()}</td>
-                  <td className="py-2 px-3 text-center">
+                  <td className="py-2 px-2 text-xs text-gray-400 whitespace-nowrap">{new Date(e.createdAt).toLocaleString()}</td>
+                  <td className="py-2 px-2 text-center">
                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                       tradeType === 'live' ? 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300' :
                       tradeType === 'simulated' ? 'bg-amber-100 text-amber-700' :
                       'bg-gray-100 text-gray-400'
                     }`}>{tradeType === 'live' ? 'LIVE' : tradeType === 'simulated' ? 'SIM' : 'SKIP'}</span>
                   </td>
-                  <td className="py-2 px-3 text-xs font-medium">{e.strategyKey}</td>
-                  <td className="py-2 px-3 font-medium">{e.symbol}</td>
-                  <td className="py-2 px-3">
+                  <td className="py-2 px-2 text-xs font-medium">{e.strategyKey}</td>
+                  <td className="py-2 px-2 font-medium">{e.symbol}</td>
+                  <td className="py-2 px-2">
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                       e.direction === 'buy' ? 'bg-blue-100 text-blue-800' : 'bg-orange-100 text-orange-800'
                     }`}>{e.direction.toUpperCase()}</span>
                   </td>
-                  <td className="py-2 px-3 text-right font-mono text-xs">{e.entryPrice?.toFixed(5)}</td>
-                  <td className="py-2 px-3 text-right font-mono text-xs text-red-500">{e.stopLoss?.toFixed(5)}</td>
-                  <td className="py-2 px-3 text-right font-mono text-xs text-emerald-600">{e.takeProfit?.toFixed(5)}</td>
-                  <td className="py-2 px-3 text-right">{e.rrTarget ? `1:${e.rrTarget}` : '-'}</td>
+                  <td className="py-2 px-2 text-right font-mono text-xs">{e.entryPrice?.toFixed(5)}</td>
+                  <td className="py-2 px-2 text-right font-mono text-xs text-red-500">{e.stopLoss?.toFixed(5)}</td>
+                  <td className="py-2 px-2 text-right font-mono text-xs text-emerald-600">{e.takeProfit?.toFixed(5)}</td>
+                  <td className="py-2 px-2 text-right font-mono text-xs">{e.lotSize?.toFixed(2) || e.setupContext?.lotSize?.toFixed(2) || '-'}</td>
+                  <td className="py-2 px-2 text-right text-xs text-red-500 font-semibold">{e.setupContext?.riskUsd ? `$${e.setupContext.riskUsd.toFixed(0)}` : '-'}</td>
+                  <td className="py-2 px-2 text-right">{e.setupContext?.rrActual ? `1:${e.setupContext.rrActual}` : e.rrTarget ? `1:${e.rrTarget}` : '-'}</td>
                   <td className="py-2 px-3 text-center">
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                       e.status === 'open' ? 'bg-blue-100 text-blue-800' :
@@ -262,7 +268,7 @@ export default function TradeJournalPage() {
                 );
               })}
               {entries.length === 0 && (
-                <tr><td colSpan={12} className="py-8 text-center text-gray-400">No journal entries yet</td></tr>
+                <tr><td colSpan={14} className="py-8 text-center text-gray-400">No journal entries yet</td></tr>
               )}
             </tbody>
           </table>
@@ -307,7 +313,12 @@ export default function TradeJournalPage() {
                 ['Entry', selectedEntry.entryPrice?.toFixed(5)],
                 ['Stop Loss', selectedEntry.stopLoss?.toFixed(5)],
                 ['Take Profit', selectedEntry.takeProfit?.toFixed(5)],
-                ['R:R Target', selectedEntry.rrTarget ? `1:${selectedEntry.rrTarget}` : '-'],
+                ['Lot Size', selectedEntry.lotSize?.toFixed(2) || selectedEntry.setupContext?.lotSize?.toFixed(2) || '-'],
+                ['Risk $', selectedEntry.setupContext?.riskUsd != null ? `$${selectedEntry.setupContext.riskUsd.toFixed(2)}` : '-'],
+                ['Potential Win', selectedEntry.setupContext?.potentialWin != null ? `$${selectedEntry.setupContext.potentialWin.toFixed(2)}` : '-'],
+                ['Potential Loss', selectedEntry.setupContext?.potentialLoss != null ? `$${selectedEntry.setupContext.potentialLoss.toFixed(2)}` : '-'],
+                ['R:R Actual', selectedEntry.setupContext?.rrActual ? `1:${selectedEntry.setupContext.rrActual}` : selectedEntry.rrTarget ? `1:${selectedEntry.rrTarget}` : '-'],
+                ['Acct Equity', selectedEntry.setupContext?.accountEquity != null ? `$${selectedEntry.setupContext.accountEquity.toFixed(2)}` : '-'],
                 ['R Achieved', selectedEntry.rMultiple?.toFixed(2) || '-'],
                 ['P&L', selectedEntry.profit != null ? `$${selectedEntry.profit.toFixed(2)}` : '-'],
                 ['Close Reason', selectedEntry.closeReason || '-'],

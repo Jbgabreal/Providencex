@@ -31,6 +31,7 @@ export class TradeJournalService {
     entryPrice: number;
     stopLoss: number;
     takeProfit: number;
+    lotSize?: number;
     riskPercent?: number;
     rrTarget?: number;
     setupContext: Record<string, any>;
@@ -46,6 +47,7 @@ export class TradeJournalService {
         entryPrice: params.entryPrice,
         stopLoss: params.stopLoss,
         takeProfit: params.takeProfit,
+        lotSize: params.lotSize,
         riskPercent: params.riskPercent,
         rrTarget: params.rrTarget,
         status: 'signal',
