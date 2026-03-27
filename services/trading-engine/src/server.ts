@@ -302,11 +302,11 @@ if (activeStrategyKeys.length > 0) {
             strategyKey: strategy.key,
             profileKey: key,
             strategyVersion: strategy.key,
-            skipV3Filter: strategy.key === 'GOD_SMC_V1', // GOD ran without v3 filters when profitable
+            skipV3Filter: true, // Use relaxed backtest filter config for all strategies (matching backtest results)
             signalSource: adapter,
           },
         });
-        logger.info(`[Server] Loaded IStrategy: ${strategy.key} (${strategy.displayName}), skipV3Filter=${strategy.key === 'GOD_SMC_V1'}`);
+        logger.info(`[Server] Loaded IStrategy: ${strategy.key} (${strategy.displayName}), skipV3Filter=true (backtest config)`);
       } catch (err) {
         logger.error(`[Server] Failed to load strategy ${key}:`, err);
       }
