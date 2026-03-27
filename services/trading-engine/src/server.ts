@@ -921,6 +921,7 @@ async function processTradingDecision(
           stopLoss: signal.stopLoss,
           takeProfit: signal.takeProfit,
           strategyKey: strategyDisplayName,
+          lotSize: estimatedLotSize > 0 ? estimatedLotSize : undefined,
         });
       }
     } catch {}

@@ -27,6 +27,7 @@ export class SignalOutcomeTracker {
     stopLoss: number;
     takeProfit: number;
     strategyKey: string;
+    lotSize?: number;
     createdAt: Date;
   }> = new Map();
 
@@ -64,6 +65,7 @@ export class SignalOutcomeTracker {
     stopLoss: number;
     takeProfit: number;
     strategyKey: string;
+    lotSize?: number;
   }): void {
     this.activeSignals.set(journalId, {
       id: journalId,
@@ -90,6 +92,7 @@ export class SignalOutcomeTracker {
             stopLoss: entry.stopLoss,
             takeProfit: entry.takeProfit,
             strategyKey: entry.strategyKey,
+            lotSize: entry.lotSize || entry.setupContext?.lotSize,
             createdAt: entry.createdAt || new Date(),
           });
           loaded++;
@@ -134,9 +137,10 @@ export class SignalOutcomeTracker {
             ? exitPrice - signal.entryPrice
             : signal.entryPrice - exitPrice;
 
-          // Simulate P&L using $1 per pip for gold, proportional for others
-          const pipValue = this.getPipMultiplier(signal.symbol);
-          const simulatedProfit = priceDiff * pipValue;
+          // Simulate P&L using actual lot size (or default 0.01 if unknown)
+          const lotSize = signal.lotSize || 0.01;
+          const contractSize = this.getContractSize(signal.symbol);
+          const simulatedProfit = priceDiff * lotSize * contractSize;
           const rMultiple = risk > 0 ? priceDiff / risk : 0;
           const result: 'win' | 'loss' | 'breakeven' = hit === 'tp' ? 'win' : 'loss';
 
@@ -185,13 +189,16 @@ export class SignalOutcomeTracker {
   }
 
   /**
-   * Get pip multiplier for simulated P&L calculation
-   * Using standard lot sizes: XAUUSD = 100, Forex = 100000, US30 = 1
+   * Get contract size for P&L calculation
+   * XAUUSD: 1 lot = 100 oz → $1 move = $100
+   * Forex: 1 lot = 100,000 units → 0.0001 move = $10
+   * US30: 1 lot = 1 contract → $1 move = $1
    */
-  private getPipMultiplier(symbol: string): number {
+  private getContractSize(symbol: string): number {
     const s = symbol.toUpperCase();
-    if (s === 'XAUUSD' || s === 'GOLD') return 100;  // $1 move on 1 lot = $100
-    if (s === 'US30') return 1; // $1 move on 1 lot = $1
-    return 100000; // Forex: 1 pip move on 1 lot = $10
+    if (s === 'XAUUSD' || s === 'GOLD') return 100;
+    if (s === 'XAGUSD' || s === 'SILVER') return 5000;
+    if (s === 'US30' || s === 'US100' || s === 'US500') return 1;
+    return 100000; // Standard forex lot
   }
 }
