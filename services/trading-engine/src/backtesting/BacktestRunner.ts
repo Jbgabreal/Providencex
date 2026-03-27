@@ -213,12 +213,14 @@ export class BacktestRunner {
         slippagePips: this.config.slippagePips || 0,
       });
 
+      // Risk limits per strategy profile — scalping strategies need higher limits
+      const isScalpingStrategy = this.config.strategyProfileKey === 'fvg_scalp_v1';
       const simulatedRisk = new SimulatedRiskService({
         initialBalance: this.config.initialBalance,
-        lowRiskMaxDailyLoss: 1.0,
-        lowRiskMaxTrades: 2,
-        highRiskMaxDailyLoss: 3.0,
-        highRiskMaxTrades: 4,
+        lowRiskMaxDailyLoss: isScalpingStrategy ? 10.0 : 1.0,   // 10% for scalping, 1% for swing
+        lowRiskMaxTrades: isScalpingStrategy ? 30 : 2,            // 30 trades/day for scalping
+        highRiskMaxDailyLoss: isScalpingStrategy ? 15.0 : 3.0,
+        highRiskMaxTrades: isScalpingStrategy ? 50 : 4,
         defaultLowRiskPerTrade: this.config.riskPerTradePercent || 0.5,
         defaultHighRiskPerTrade: (this.config.riskPerTradePercent || 0.5) * 3,
       });

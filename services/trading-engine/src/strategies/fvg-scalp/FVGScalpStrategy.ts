@@ -62,13 +62,15 @@ export class FVGScalpStrategy implements IStrategy {
   private minFVGSizeMultiplier: number;
   private maxSLPoints: number;
   private minSLPoints: number;
+  // Dedup: track FVGs we've already entered to prevent re-entry on same gap
+  private usedFVGs: Set<string> = new Set();
 
   constructor(profile: StrategyProfile) {
     this.profile = profile;
     this.marketDataService = new MarketDataService();
 
     const cfg = profile.config || {};
-    this.riskRewardTarget = cfg.riskRewardTarget || 4.0;
+    this.riskRewardTarget = cfg.riskRewardTarget || 2.5;
     this.minFVGSizeMultiplier = cfg.minFVGSizeMultiplier || 0.5; // Min FVG size as multiplier of avg candle body
     this.maxSLPoints = cfg.maxSLPoints || 8.0;   // Max SL distance for XAUUSD (points)
     this.minSLPoints = cfg.minSLPoints || 2.0;   // Min SL distance for XAUUSD (points)
@@ -289,21 +291,64 @@ export class FVGScalpStrategy implements IStrategy {
       const inZone = currentPrice >= fvg.low && currentPrice <= fvg.high;
       if (!inZone) continue;
 
-      // M1 confirmation: need a rejection candle (wick into FVG, close moving away)
-      const lastM1 = m1Candles[m1Candles.length - 1];
-      const prevM1 = m1Candles.length > 1 ? m1Candles[m1Candles.length - 2] : null;
+      // Dedup: skip FVGs we've already traded
+      const isGoldSymbol = symbol.toUpperCase() === 'XAUUSD' || symbol.toUpperCase() === 'GOLD';
+      const fvgKey = `${symbol}:${fvg.direction}:${isGoldSymbol ? fvg.low.toFixed(1) : fvg.low.toFixed(4)}:${isGoldSymbol ? fvg.high.toFixed(1) : fvg.high.toFixed(4)}`;
+      if (this.usedFVGs.has(fvgKey)) continue;
+
+      // M1 confirmation: look for reversal pattern in last 5 M1 candles at the FVG
+      if (m1Candles.length < 5) continue;
+      const recent5 = m1Candles.slice(-5);
 
       let confirmed = false;
       if (bias === 'bullish') {
-        // Bullish: price dipped into FVG and M1 closes bullish with wick below
-        const isBullishCandle = lastM1.close > lastM1.open;
-        const hasLowerWick = (Math.min(lastM1.open, lastM1.close) - lastM1.low) > Math.abs(lastM1.close - lastM1.open) * 0.3;
-        confirmed = isBullishCandle && (hasLowerWick || (prevM1 != null && lastM1.close > prevM1.high));
+        // Bullish: find a candle that dipped into FVG AND a subsequent bullish candle that closed strong
+        let touchedFVG = false;
+        let reversalCandle: Candle | null = null;
+        for (let k = 0; k < recent5.length; k++) {
+          const c = recent5[k];
+          if (c.low <= fvg.high) touchedFVG = true; // Price touched FVG
+          if (touchedFVG && c.close > c.open) {
+            const bodyRatio = Math.abs(c.close - c.open) / Math.max(c.high - c.low, 0.001);
+            // Accept if: body > 50% of range AND close is above FVG midpoint
+            if (bodyRatio > 0.5 && c.close >= fvg.mid) {
+              reversalCandle = c;
+              break;
+            }
+            // Also accept engulfing: current body > previous body
+            if (k > 0) {
+              const prev = recent5[k - 1];
+              if (Math.abs(c.close - c.open) > Math.abs(prev.close - prev.open) && c.close > prev.high) {
+                reversalCandle = c;
+                break;
+              }
+            }
+          }
+        }
+        confirmed = reversalCandle !== null;
       } else {
-        // Bearish: price spiked into FVG and M1 closes bearish with wick above
-        const isBearishCandle = lastM1.close < lastM1.open;
-        const hasUpperWick = (lastM1.high - Math.max(lastM1.open, lastM1.close)) > Math.abs(lastM1.close - lastM1.open) * 0.3;
-        confirmed = isBearishCandle && (hasUpperWick || (prevM1 != null && lastM1.close < prevM1.low));
+        // Bearish: find a candle that spiked into FVG AND a subsequent bearish candle
+        let touchedFVG = false;
+        let reversalCandle: Candle | null = null;
+        for (let k = 0; k < recent5.length; k++) {
+          const c = recent5[k];
+          if (c.high >= fvg.low) touchedFVG = true;
+          if (touchedFVG && c.close < c.open) {
+            const bodyRatio = Math.abs(c.close - c.open) / Math.max(c.high - c.low, 0.001);
+            if (bodyRatio > 0.5 && c.close <= fvg.mid) {
+              reversalCandle = c;
+              break;
+            }
+            if (k > 0) {
+              const prev = recent5[k - 1];
+              if (Math.abs(c.close - c.open) > Math.abs(prev.close - prev.open) && c.close < prev.low) {
+                reversalCandle = c;
+                break;
+              }
+            }
+          }
+        }
+        confirmed = reversalCandle !== null;
       }
 
       if (!confirmed) continue;
@@ -332,6 +377,15 @@ export class FVGScalpStrategy implements IStrategy {
       stopLoss = direction === 'buy' ? entryPrice - slDistance : entryPrice + slDistance;
       const tpDistance = slDistance * this.riskRewardTarget;
       const takeProfit = direction === 'buy' ? entryPrice + tpDistance : entryPrice - tpDistance;
+
+      // Mark this FVG as used so we don't re-enter
+      this.usedFVGs.add(fvgKey);
+
+      // Cleanup old entries (keep last 100)
+      if (this.usedFVGs.size > 100) {
+        const entries = Array.from(this.usedFVGs);
+        for (let i = 0; i < entries.length - 100; i++) this.usedFVGs.delete(entries[i]);
+      }
 
       return { direction, entryPrice, stopLoss, takeProfit, fvg };
     }

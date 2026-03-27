@@ -62,7 +62,7 @@
     "isDefault": false,
     "isArchived": false,
     "config": {
-      "riskRewardTarget": 4.0,
+      "riskRewardTarget": 2.0,
       "minFVGSizeMultiplier": 1.0,
       "maxSLPoints": 8.0,
       "minSLPoints": 2.0,
