@@ -11,6 +11,7 @@ import { StrategyProfile } from './profiles/types';
 import { loadStrategyProfiles, getProfileByKey } from './profiles/StrategyProfileStore';
 import { GodSmcStrategy } from './god/GodSmcStrategy';
 import { SilverBulletStrategy } from './silver-bullet/SilverBulletStrategy';
+import { FVGScalpStrategy } from './fvg-scalp/FVGScalpStrategy';
 
 const logger = new Logger('StrategyRegistry');
 
@@ -27,6 +28,9 @@ const implementationMap: Record<string, new (profile: StrategyProfile) => IStrat
 
   // ICT Silver Bullet — liquidity sweep + displacement + FVG entry
   SILVER_BULLET_V1: SilverBulletStrategy,
+
+  // FVG Scalp — high-frequency M5 FVG fill scalping (4:1 R:R, $5 risk / $20 target)
+  FVG_SCALP_V1: FVGScalpStrategy,
 };
 
 /**

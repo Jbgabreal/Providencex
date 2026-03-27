@@ -69,6 +69,13 @@ export class TradeJournalRepository {
     } else {
       logger.warn('v33_silver_bullet_profile.sql not found — tried: ' + migrationDirs.join(', '));
     }
+
+    // Seed FVG Scalp profile
+    const v35Path = findMigration('v35_fvg_scalp_profile.sql');
+    if (v35Path) {
+      await this.pool.query(fs.readFileSync(v35Path, 'utf-8'));
+      logger.info('FVG Scalp profile ensured');
+    }
   }
 
   async createEntry(entry: TradeJournalEntry): Promise<string> {
