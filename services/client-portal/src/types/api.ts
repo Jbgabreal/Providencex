@@ -73,6 +73,8 @@ export interface UserTradingConfig {
   risk_per_trade_usd?: number;
   max_consecutive_losses?: number;
   max_daily_loss_usd?: number;
+  max_daily_loss_pct?: number;
+  daily_loss_mode?: 'usd' | 'percentage';
   sessions?: Array<'asian' | 'london' | 'newyork'>;
   symbols?: string[];
 }

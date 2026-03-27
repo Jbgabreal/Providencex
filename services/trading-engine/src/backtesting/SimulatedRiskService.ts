@@ -19,6 +19,7 @@ export interface SimulatedRiskConfig {
   defaultLowRiskPerTrade?: number; // Percent
   defaultHighRiskPerTrade?: number; // Percent
   maxDailyLossUsd?: number;        // Hard USD cap on daily loss (e.g., $200)
+  maxDailyLossPct?: number;        // Percentage of balance cap on daily loss (e.g., 10%)
   maxConsecutiveLosses?: number;    // Stop trading after N consecutive losses in a day
 }
 
@@ -94,6 +95,18 @@ export class SimulatedRiskService {
         allowed: false,
         reason: `Daily USD loss cap reached: ${stats.realizedPnL.toFixed(2)} <= -$${this.config.maxDailyLossUsd}`,
       };
+    }
+
+    // Check percentage-of-balance daily loss cap (scales with account growth)
+    if (this.config.maxDailyLossPct) {
+      const maxLossAmount = (currentBalance * this.config.maxDailyLossPct) / 100;
+      if (stats.realizedPnL <= -maxLossAmount) {
+        stats.dailyStopped = true;
+        return {
+          allowed: false,
+          reason: `Daily ${this.config.maxDailyLossPct}% loss cap reached: ${stats.realizedPnL.toFixed(2)} <= -$${maxLossAmount.toFixed(2)} (${this.config.maxDailyLossPct}% of $${currentBalance.toFixed(2)})`,
+        };
+      }
     }
 
     // Check consecutive losses

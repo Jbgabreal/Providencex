@@ -223,8 +223,8 @@ export class BacktestRunner {
         highRiskMaxTrades: isScalpingStrategy ? 50 : 4,
         defaultLowRiskPerTrade: this.config.riskPerTradePercent || 0.5,
         defaultHighRiskPerTrade: (this.config.riskPerTradePercent || 0.5) * 3,
-        // FVG Scalp specific: hard daily limits
-        maxDailyLossUsd: isScalpingStrategy ? 200 : undefined,     // Stop at $200 loss per day
+        // Scalping daily limits: percentage scales with balance, 3 consec loss cool-off
+        maxDailyLossPct: isScalpingStrategy ? 10 : undefined,      // Stop at 10% of balance loss per day
         maxConsecutiveLosses: isScalpingStrategy ? 3 : undefined,  // Stop after 3 consecutive losses
       });
 

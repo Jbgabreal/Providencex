@@ -43,7 +43,11 @@ export function TradingSettings({ assignment }: Props) {
   const [riskPct, setRiskPct] = useState(existingConfig.risk_per_trade_pct ?? 0.5);
   const [riskUsd, setRiskUsd] = useState(existingConfig.risk_per_trade_usd ?? 50);
   const [maxLosses, setMaxLosses] = useState(existingConfig.max_consecutive_losses ?? 3);
+  const [dailyLossMode, setDailyLossMode] = useState<'usd' | 'percentage'>(
+    existingConfig.daily_loss_mode || 'percentage'
+  );
   const [maxDailyLossUsd, setMaxDailyLossUsd] = useState(existingConfig.max_daily_loss_usd ?? 200);
+  const [maxDailyLossPct, setMaxDailyLossPct] = useState(existingConfig.max_daily_loss_pct ?? 10);
   const [sessions, setSessions] = useState<Set<string>>(
     new Set(existingConfig.sessions || ['london', 'newyork'])
   );
@@ -85,7 +89,9 @@ export function TradingSettings({ assignment }: Props) {
       risk_per_trade_pct: riskPct,
       risk_per_trade_usd: riskUsd,
       max_consecutive_losses: maxLosses,
+      daily_loss_mode: dailyLossMode,
       max_daily_loss_usd: maxDailyLossUsd,
+      max_daily_loss_pct: maxDailyLossPct,
       sessions: Array.from(sessions) as UserTradingConfig['sessions'],
       symbols: Array.from(symbols),
     };
@@ -219,26 +225,71 @@ export function TradingSettings({ assignment }: Props) {
         </p>
       </div>
 
-      {/* Max Daily Loss USD */}
+      {/* Max Daily Loss */}
       <div className="mb-4">
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Max Daily Loss (Daily Cool-Off)
         </label>
-        <div className="relative">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
-          <input
-            type="number"
-            min="10"
-            max="10000"
-            step="10"
-            value={maxDailyLossUsd}
-            onChange={(e) => setMaxDailyLossUsd(Math.max(10, Math.min(10000, Number(e.target.value))))}
-            className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded-md text-sm"
-          />
+        <div className="flex gap-2 mb-2">
+          <button
+            onClick={() => setDailyLossMode('percentage')}
+            className={`px-3 py-1.5 text-sm rounded-md ${
+              dailyLossMode === 'percentage'
+                ? 'bg-red-600 text-white'
+                : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            % of Balance
+          </button>
+          <button
+            onClick={() => setDailyLossMode('usd')}
+            className={`px-3 py-1.5 text-sm rounded-md ${
+              dailyLossMode === 'usd'
+                ? 'bg-red-600 text-white'
+                : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            Fixed USD
+          </button>
         </div>
-        <p className="text-xs text-gray-500 mt-1">
-          Trading pauses for the day if total losses reach ${maxDailyLossUsd}
-        </p>
+
+        {dailyLossMode === 'percentage' ? (
+          <div>
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min="1"
+                max="30"
+                step="1"
+                value={maxDailyLossPct}
+                onChange={(e) => setMaxDailyLossPct(parseFloat(e.target.value))}
+                className="flex-1"
+              />
+              <span className="text-sm font-medium w-12 text-right">{maxDailyLossPct}%</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Trading pauses when daily losses reach {maxDailyLossPct}% of your account balance. Scales as your account grows.
+            </p>
+          </div>
+        ) : (
+          <div>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+              <input
+                type="number"
+                min="10"
+                max="100000"
+                step="10"
+                value={maxDailyLossUsd}
+                onChange={(e) => setMaxDailyLossUsd(Math.max(10, Math.min(100000, Number(e.target.value))))}
+                className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded-md text-sm"
+              />
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Trading pauses when daily losses reach ${maxDailyLossUsd}. Fixed amount regardless of balance.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Trading Sessions */}
