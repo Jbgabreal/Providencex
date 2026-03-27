@@ -47,9 +47,9 @@ interface SessionWindow {
 }
 
 const SESSIONS: SessionWindow[] = [
-  { label: 'London', startHourUTC: 7, startMinUTC: 0, endHourUTC: 10, endMinUTC: 0 },
-  { label: 'NY AM', startHourUTC: 13, startMinUTC: 30, endHourUTC: 15, endMinUTC: 30 },
-  { label: 'NY PM', startHourUTC: 18, startMinUTC: 0, endHourUTC: 19, endMinUTC: 30 },
+  { label: 'London', startHourUTC: 7, startMinUTC: 0, endHourUTC: 12, endMinUTC: 0 },
+  { label: 'NY AM', startHourUTC: 13, startMinUTC: 0, endHourUTC: 16, endMinUTC: 0 },
+  { label: 'NY PM', startHourUTC: 18, startMinUTC: 0, endHourUTC: 20, endMinUTC: 0 },
 ];
 
 export class FVGScalpStrategy implements IStrategy {
@@ -69,7 +69,7 @@ export class FVGScalpStrategy implements IStrategy {
 
     const cfg = profile.config || {};
     this.riskRewardTarget = cfg.riskRewardTarget || 4.0;
-    this.minFVGSizeMultiplier = cfg.minFVGSizeMultiplier || 1.0; // Min FVG size as multiplier of avg candle body
+    this.minFVGSizeMultiplier = cfg.minFVGSizeMultiplier || 0.5; // Min FVG size as multiplier of avg candle body
     this.maxSLPoints = cfg.maxSLPoints || 8.0;   // Max SL distance for XAUUSD (points)
     this.minSLPoints = cfg.minSLPoints || 2.0;   // Min SL distance for XAUUSD (points)
 
@@ -176,24 +176,32 @@ export class FVGScalpStrategy implements IStrategy {
   private getH1Bias(candles: Candle[]): 'bullish' | 'bearish' | 'neutral' {
     if (candles.length < 3) return 'neutral';
 
-    // Use last 6 candles: count bullish vs bearish, check structure
+    // Simple momentum bias: compare last close vs close from 3-6 candles ago
     const recent = candles.slice(-6);
+    const lastClose = recent[recent.length - 1].close;
+    const refClose = recent[0].close;
+    const diff = lastClose - refClose;
+    const avgRange = recent.reduce((sum, c) => sum + (c.high - c.low), 0) / recent.length;
+
+    // If net move > 0.5x average candle range, we have a directional bias
+    if (diff > avgRange * 0.3) return 'bullish';
+    if (diff < -avgRange * 0.3) return 'bearish';
+
+    // Fallback: count candle directions
     let bullish = 0, bearish = 0;
     for (const c of recent) {
       if (c.close > c.open) bullish++;
-      else if (c.close < c.open) bearish++;
+      else bearish++;
     }
+    if (bullish >= 4) return 'bullish';
+    if (bearish >= 4) return 'bearish';
 
-    // Also check: is the last candle's close above or below the 6-candle midpoint?
-    const highestHigh = Math.max(...recent.map(c => c.high));
-    const lowestLow = Math.min(...recent.map(c => c.low));
-    const mid = (highestHigh + lowestLow) / 2;
-    const lastClose = recent[recent.length - 1].close;
+    // Last resort: use last 3 candles direction
+    const last3 = recent.slice(-3);
+    const l3Bull = last3.filter(c => c.close > c.open).length;
+    if (l3Bull >= 2) return 'bullish';
+    if (l3Bull <= 1) return 'bearish';
 
-    if (bullish >= 4 && lastClose > mid) return 'bullish';
-    if (bearish >= 4 && lastClose < mid) return 'bearish';
-    if (lastClose > mid && bullish > bearish) return 'bullish';
-    if (lastClose < mid && bearish > bullish) return 'bearish';
     return 'neutral';
   }
 

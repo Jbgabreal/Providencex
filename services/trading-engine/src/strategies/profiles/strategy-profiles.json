@@ -49,6 +49,26 @@
       "windows": ["LDN_OPEN", "NY_AM", "NY_PM"],
       "note": "ICT Silver Bullet — mechanical strategy with strict time window entries"
     }
+  },
+  {
+    "id": "fvg_scalp_v1",
+    "key": "fvg_scalp_v1",
+    "displayName": "FVG Scalp V1",
+    "description": "High-frequency scalping on M5 Fair Value Gap fills. Targets 4:1 R:R ($20 win / $5 risk) with 5-15 trades per day across London, NY AM, and NY PM sessions.",
+    "implementationKey": "FVG_SCALP_V1",
+    "version": 1,
+    "createdAt": "2026-03-27T00:00:00.000Z",
+    "updatedAt": "2026-03-27T00:00:00.000Z",
+    "isDefault": false,
+    "isArchived": false,
+    "config": {
+      "riskRewardTarget": 4.0,
+      "minFVGSizeMultiplier": 1.0,
+      "maxSLPoints": 8.0,
+      "minSLPoints": 2.0,
+      "sessions": ["London", "NY AM", "NY PM"],
+      "note": "FVG Scalp — high-frequency M5 Fair Value Gap fill entries with M1 confirmation"
+    }
   }
 ]
 
