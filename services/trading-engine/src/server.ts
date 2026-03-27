@@ -1069,30 +1069,18 @@ async function processTradingDecision(
           // Use actual results from execution, not hardcoded success
           if (tenantResult.traded > 0) {
             decisionLog.decision = 'trade';
-            decisionLog.execution_result = {
-              success: true,
-              traded: tenantResult.traded,
-              skipped: tenantResult.skipped,
-              errors: tenantResult.errors,
-            };
+            decisionLog.execution_result = { success: true };
             decisionLog.trade_request = {
-              symbol: rawSignal.symbol,
-              direction: rawSignal.direction,
-              entry: rawSignal.entry,
-              lotSize: rawSignal.lotSize,
-              stopLoss: rawSignal.stopLoss,
-              takeProfit: rawSignal.takeProfit,
+              direction: rawSignal.direction as 'buy' | 'sell',
+              entry: rawSignal.entryPrice,
+              lotSize: rawSignal.riskReward || 0.01,
+              stopLoss: rawSignal.sl,
+              takeProfit: rawSignal.tp,
             };
           } else {
             decisionLog.decision = 'skip';
-            decisionLog.skip_reason = `Multi-tenant: 0 accounts traded (${tenantResult.skipped} skipped, ${tenantResult.errors} errors)`;
-            decisionLog.execution_result = {
-              success: false,
-              traded: 0,
-              skipped: tenantResult.skipped,
-              errors: tenantResult.errors,
-              results: tenantResult.results,
-            };
+            decisionLog.risk_reason = `Multi-tenant: 0 accounts traded (${tenantResult.skipped} skipped, ${tenantResult.errors} errors)`;
+            decisionLog.execution_result = { success: false, error: `${tenantResult.skipped} skipped, ${tenantResult.errors} errors` };
           }
           await decisionLogger.logDecision(decisionLog);
           return decisionLog;
