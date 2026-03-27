@@ -21,6 +21,7 @@ export interface SimulatedRiskConfig {
   maxDailyLossUsd?: number;        // Hard USD cap on daily loss (e.g., $200)
   maxDailyLossPct?: number;        // Percentage of balance cap on daily loss (e.g., 10%)
   maxConsecutiveLosses?: number;    // Stop trading after N consecutive losses in a day
+  maxConcurrentPositions?: number;  // Max open positions at same time (e.g., 1 for Silver Bullet)
 }
 
 /**
@@ -28,6 +29,7 @@ export interface SimulatedRiskConfig {
  */
 export class SimulatedRiskService {
   private config: SimulatedRiskConfig;
+  private openPositionCount: number = 0;
   private dailyStats: Map<string, {
     date: string; // YYYY-MM-DD
     realizedPnL: number;
@@ -56,9 +58,10 @@ export class SimulatedRiskService {
    */
   canTakeNewTrade(
     riskContext: RiskContext,
-    currentBalance: number
+    currentBalance: number,
+    candleDate?: string // YYYY-MM-DD from backtest candle (not system clock)
   ): RiskCheckResult {
-    const today = this.getTodayString();
+    const today = candleDate || this.getTodayString();
     const stats = this.getDailyStats(today, currentBalance);
 
     const strategyConfig = riskContext.strategy === 'low'
@@ -76,6 +79,14 @@ export class SimulatedRiskService {
       return {
         allowed: false,
         reason: `Trading stopped for ${today} (daily limit reached)`,
+      };
+    }
+
+    // Check concurrent position limit
+    if (this.config.maxConcurrentPositions && this.openPositionCount >= this.config.maxConcurrentPositions) {
+      return {
+        allowed: false,
+        reason: `Max concurrent positions reached: ${this.openPositionCount} >= ${this.config.maxConcurrentPositions}`,
       };
     }
 
@@ -151,11 +162,18 @@ export class SimulatedRiskService {
   /**
    * Record a trade completion
    */
+  /** Called when a trade opens — track concurrent positions */
+  recordTradeOpen(): void {
+    this.openPositionCount++;
+  }
+
+  /** Called when a trade closes — update position count + daily stats */
   recordTradeCompletion(
     date: string,
     pnl: number,
     currentBalance: number
   ): void {
+    this.openPositionCount = Math.max(0, this.openPositionCount - 1);
     const stats = this.getDailyStats(date, currentBalance);
     stats.realizedPnL += pnl;
     stats.tradesTaken += 1;

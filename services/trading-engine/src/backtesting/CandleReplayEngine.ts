@@ -225,7 +225,7 @@ export class CandleReplayEngine {
         // After a loss, check if daily limits are hit — if so, force-close all open positions
         if (exitResult.profit < 0) {
           const riskContext = { strategy: this.config.strategy as any, account_equity: this.currentBalance, today_realized_pnl: 0, trades_taken_today: 0, guardrail_mode: 'normal' as any, symbol: '' };
-          const check = this.config.simulatedRisk.canTakeNewTrade(riskContext, this.currentBalance);
+          const check = this.config.simulatedRisk.canTakeNewTrade(riskContext, this.currentBalance, dateStr);
           if (!check.allowed) {
             // Force-close all remaining open positions at current price
             const openPositions = this.config.simulatedMT5.getOpenPositions();
@@ -300,7 +300,8 @@ export class CandleReplayEngine {
       guardrail_mode: guardrailDecision.mode as any,
     };
 
-    const riskCheck = this.config.simulatedRisk.canTakeNewTrade(riskContext, this.currentBalance);
+    const candleDateStr = new Date(historicalCandle.timestamp).toISOString().split('T')[0];
+    const riskCheck = this.config.simulatedRisk.canTakeNewTrade(riskContext, this.currentBalance, candleDateStr);
     if (!riskCheck.allowed) {
       // SENIOR DEV: Always log risk check blocks in backtesting
       this.signalStats.signalsBlockedByRisk++;
@@ -390,7 +391,8 @@ export class CandleReplayEngine {
 
     // SENIOR DEV: Track successful trade execution
     this.signalStats.signalsExecuted++;
-    
+    this.config.simulatedRisk.recordTradeOpen();
+
     // Open simulated trade
     const position = this.config.simulatedMT5.openTrade({
       symbol,
