@@ -43,6 +43,7 @@ export function TradingSettings({ assignment }: Props) {
   const [riskPct, setRiskPct] = useState(existingConfig.risk_per_trade_pct ?? 0.5);
   const [riskUsd, setRiskUsd] = useState(existingConfig.risk_per_trade_usd ?? 50);
   const [maxLosses, setMaxLosses] = useState(existingConfig.max_consecutive_losses ?? 3);
+  const [maxDailyLossUsd, setMaxDailyLossUsd] = useState(existingConfig.max_daily_loss_usd ?? 200);
   const [sessions, setSessions] = useState<Set<string>>(
     new Set(existingConfig.sessions || ['london', 'newyork'])
   );
@@ -84,6 +85,7 @@ export function TradingSettings({ assignment }: Props) {
       risk_per_trade_pct: riskPct,
       risk_per_trade_usd: riskUsd,
       max_consecutive_losses: maxLosses,
+      max_daily_loss_usd: maxDailyLossUsd,
       sessions: Array.from(sessions) as UserTradingConfig['sessions'],
       symbols: Array.from(symbols),
     };
@@ -214,6 +216,28 @@ export function TradingSettings({ assignment }: Props) {
         </div>
         <p className="text-xs text-gray-500 mt-1">
           Trading pauses for the day after {maxLosses} consecutive losing trade{maxLosses > 1 ? 's' : ''}
+        </p>
+      </div>
+
+      {/* Max Daily Loss USD */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Max Daily Loss (Daily Cool-Off)
+        </label>
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+          <input
+            type="number"
+            min="10"
+            max="10000"
+            step="10"
+            value={maxDailyLossUsd}
+            onChange={(e) => setMaxDailyLossUsd(Math.max(10, Math.min(10000, Number(e.target.value))))}
+            className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded-md text-sm"
+          />
+        </div>
+        <p className="text-xs text-gray-500 mt-1">
+          Trading pauses for the day if total losses reach ${maxDailyLossUsd}
         </p>
       </div>
 
