@@ -88,78 +88,56 @@ export class SilverBulletEntryService {
     symbol: string,
     window: SilverBulletWindow,
   ): SilverBulletSetup | null {
-    console.log(`[SB-DEBUG] analyzeSilverBullet: M15=${m15Candles.length}, M1=${m1Candles.length}, symbol=${symbol}, window=${window.name}`);
-
-    if (m15Candles.length < 20 || m1Candles.length < 20) {
-      logger.info(`[SB] FAIL: Not enough candles: M15=${m15Candles.length}, M1=${m1Candles.length}`);
+    if (m15Candles.length < 10 || m1Candles.length < 20) {
       return null;
     }
 
     const reasons: string[] = [];
 
-    // Step 1: Identify liquidity levels from M15 swings
+    // Step 1: Build BROAD liquidity levels — PDH/PDL, session H/L, M15 swings, equal H/L
     const { bsl, ssl } = this.identifyLiquidityLevels(m15Candles);
     if (bsl.length === 0 && ssl.length === 0) {
-      console.log('[SB-DEBUG] FAIL: No liquidity levels');
       return null;
     }
-    console.log(`[SB-DEBUG] Levels: BSL=[${bsl.slice(0,3).map((l: number) => l.toFixed(2)).join(', ')}] SSL=[${ssl.slice(0,3).map((l: number) => l.toFixed(2)).join(', ')}]`);
 
     // Step 2: Check for liquidity sweep on M1 (recent candles within the window)
     const sweep = this.detectLiquiditySweep(m1Candles, bsl, ssl, symbol);
     if (!sweep) {
-      console.log('[SB-DEBUG] FAIL: No liquidity sweep detected');
       return null;
     }
     reasons.push(`${sweep.type} swept at ${sweep.level.toFixed(2)}`);
 
-    // Step 3: Confirm displacement in opposite direction
-    const displacementDir = sweep.type === 'BSL' ? 'sell' : 'buy';
-    const displacement = this.displacementService.checkDisplacement(symbol, m1Candles, displacementDir);
-    if (!displacement.isValid) {
-      console.log(`[SB-DEBUG] FAIL: No displacement after sweep (dir=${displacementDir})`);
+    // Step 3: Find the FIRST FVG on M1 after the sweep
+    // NO separate displacement check — FVG formation IS displacement proof
+    const fvgDirection: 'buy' | 'sell' = sweep.type === 'BSL' ? 'sell' : 'buy';
+    const recentM1 = m1Candles.slice(-60);
+    const fvg = this.findFirstFVGAfterSweep(recentM1, fvgDirection, sweep);
+    if (!fvg) {
       return null;
     }
-    reasons.push(`Displacement confirmed: ${displacement.metrics.trMultiple.toFixed(1)}x ATR`);
+    reasons.push(`FVG: ${fvg.low.toFixed(2)}-${fvg.high.toFixed(2)}`);
 
-    // Step 4: Find FVG from displacement move
-    const fvgDirection = sweep.type === 'BSL' ? 'sell' : 'buy';
-    const recentM1 = m1Candles.slice(-30); // Look at recent candles for FVG
-    const fvgs = this.fvgService.detectFVGs(recentM1, 'LTF', 'neutral');
-    const validFvg = this.findDisplacementFVG(fvgs, fvgDirection, sweep);
-    if (!validFvg) {
-      console.log('[SB-DEBUG] FAIL: No FVG from displacement');
-      return null;
-    }
-    reasons.push(`FVG: ${validFvg.low.toFixed(2)} - ${validFvg.high.toFixed(2)}`);
-
-    // Step 5: Calculate entry, SL, TP
+    // Step 4: Calculate entry, SL, TP
     const direction = fvgDirection;
     const lastPrice = m1Candles[m1Candles.length - 1].close;
 
     let entryPrice: number;
     let stopLoss: number;
     let takeProfit: number;
+    const slBuffer = this.getSlBuffer(symbol);
 
     if (direction === 'buy') {
-      // Bullish: enter at top of FVG (retrace into it), SL below sweep low
-      entryPrice = validFvg.high;
-      const sweepExtreme = sweep.extreme;
-      const slBuffer = this.getSlBuffer(symbol);
-      stopLoss = Math.min(sweepExtreme, validFvg.low) - slBuffer;
-      // TP: target BSL (nearest high above)
+      // Bullish: enter at current price (market) or FVG boundary
+      entryPrice = lastPrice;
+      stopLoss = Math.min(sweep.extreme, fvg.low) - slBuffer;
       takeProfit = this.findOppositeTarget(m15Candles, 'buy', entryPrice);
     } else {
-      // Bearish: enter at bottom of FVG (retrace into it), SL above sweep high
-      entryPrice = validFvg.low;
-      const sweepExtreme = sweep.extreme;
-      const slBuffer = this.getSlBuffer(symbol);
-      stopLoss = Math.max(sweepExtreme, validFvg.high) + slBuffer;
-      // TP: target SSL (nearest low below)
+      entryPrice = lastPrice;
+      stopLoss = Math.max(sweep.extreme, fvg.high) + slBuffer;
       takeProfit = this.findOppositeTarget(m15Candles, 'sell', entryPrice);
     }
 
-    // Step 6: Validate R:R
+    // Step 5: Validate R:R
     const risk = Math.abs(entryPrice - stopLoss);
     const reward = Math.abs(takeProfit - entryPrice);
     const rr = risk > 0 ? reward / risk : 0;
@@ -179,25 +157,15 @@ export class SilverBulletEntryService {
     const finalRR = risk > 0 ? Math.abs(takeProfit - entryPrice) / risk : 0;
     reasons.push(`R:R ${finalRR.toFixed(1)}:1 | ${window.label}`);
 
-    // Check if price is near the FVG for entry
-    const priceNearFVG = direction === 'buy'
-      ? lastPrice <= validFvg.high && lastPrice >= validFvg.low - (validFvg.high - validFvg.low)
-      : lastPrice >= validFvg.low && lastPrice <= validFvg.high + (validFvg.high - validFvg.low);
-
-    if (!priceNearFVG) {
-      logger.debug(`[SB] Price ${lastPrice.toFixed(2)} not near FVG ${validFvg.low.toFixed(2)}-${validFvg.high.toFixed(2)}`);
-      return null;
-    }
-
     const setup: SilverBulletSetup = {
       isValid: true,
       direction,
       sweptLevel: sweep.level,
       sweepType: sweep.type,
-      displacementHigh: displacement.metrics.candleTrueRange,
-      displacementLow: displacement.metrics.atr,
-      fvgHigh: validFvg.high,
-      fvgLow: validFvg.low,
+      displacementHigh: fvg.high,
+      displacementLow: fvg.low,
+      fvgHigh: fvg.high,
+      fvgLow: fvg.low,
       entryPrice,
       stopLoss,
       takeProfit,
@@ -210,11 +178,7 @@ export class SilverBulletEntryService {
         sweepType: sweep.type,
         sweptLevel: sweep.level,
         sweepExtreme: sweep.extreme,
-        displacementATRMultiple: displacement.metrics.trMultiple,
-        displacementBodyPct: displacement.metrics.bodyPct,
-        fvgBounds: { high: validFvg.high, low: validFvg.low },
-        fvgType: validFvg.type,
-        fvgGrade: validFvg.grade,
+        fvgBounds: { high: fvg.high, low: fvg.low },
         windowName: window.name,
         windowLabel: window.label,
         lastPrice,
@@ -233,31 +197,63 @@ export class SilverBulletEntryService {
     const bsl: number[] = [];
     const ssl: number[] = [];
 
-    // Use only RECENT M15 candles (last 24 = ~6 hours) for relevant liquidity levels
-    const recent = candles.slice(-24);
-
-    // Simple swing detection: a high is a swing high if it's higher than +-2 candles
-    for (let i = 2; i < recent.length - 2; i++) {
-      const c = recent[i];
-      if (c.high > recent[i - 1].high && c.high > recent[i - 2].high &&
-          c.high > recent[i + 1].high && c.high > recent[i + 2].high) {
-        bsl.push(c.high);
+    // Source 1: M15 swing highs/lows (last 40 candles = ~10 hours)
+    const swingCandles = candles.slice(-40);
+    for (let i = 2; i < swingCandles.length - 2; i++) {
+      const c = swingCandles[i];
+      if (c.high > swingCandles[i - 1].high && c.high > swingCandles[i + 1].high) {
+        bsl.push(c.high); // Swing high = buyside liquidity
       }
-      if (c.low < recent[i - 1].low && c.low < recent[i - 2].low &&
-          c.low < recent[i + 1].low && c.low < recent[i + 2].low) {
-        ssl.push(c.low);
+      if (c.low < swingCandles[i - 1].low && c.low < swingCandles[i + 1].low) {
+        ssl.push(c.low); // Swing low = sellside liquidity
       }
     }
 
-    // Also add the session high/low as key liquidity
-    if (recent.length > 0) {
-      const sessionHigh = Math.max(...recent.map(c => c.high));
-      const sessionLow = Math.min(...recent.map(c => c.low));
-      if (!bsl.includes(sessionHigh)) bsl.push(sessionHigh);
-      if (!ssl.includes(sessionLow)) ssl.push(sessionLow);
+    // Source 2: Previous day high/low (PDH/PDL) — most important Silver Bullet levels
+    // Group candles by day and get previous day's H/L
+    if (candles.length >= 8) {
+      const lastCandle = candles[candles.length - 1];
+      const lastTime = new Date((lastCandle as any).timestamp || (lastCandle as any).startTime || Date.now());
+      const todayStart = new Date(lastTime);
+      todayStart.setUTCHours(0, 0, 0, 0);
+
+      const prevDayCandles = candles.filter(c => {
+        const t = new Date((c as any).timestamp || (c as any).startTime || 0).getTime();
+        return t < todayStart.getTime() && t > todayStart.getTime() - 86400000;
+      });
+      if (prevDayCandles.length > 0) {
+        const pdh = Math.max(...prevDayCandles.map(c => c.high));
+        const pdl = Math.min(...prevDayCandles.map(c => c.low));
+        bsl.push(pdh); // Previous day high
+        ssl.push(pdl); // Previous day low
+      }
     }
 
-    return { bsl: bsl.slice(-10), ssl: ssl.slice(-10) };
+    // Source 3: Recent session high/low (last 6 hours)
+    const recentSession = candles.slice(-24);
+    if (recentSession.length > 0) {
+      bsl.push(Math.max(...recentSession.map(c => c.high)));
+      ssl.push(Math.min(...recentSession.map(c => c.low)));
+    }
+
+    // Source 4: Equal highs/equal lows (liquidity pools) — look for 2+ candles with same H/L
+    const tolerance = candles.length > 0 ? Math.max(...candles.slice(-20).map(c => c.high - c.low)) * 0.1 : 0;
+    const recent20 = candles.slice(-20);
+    for (let i = 0; i < recent20.length; i++) {
+      for (let j = i + 1; j < recent20.length; j++) {
+        if (Math.abs(recent20[i].high - recent20[j].high) < tolerance) {
+          bsl.push((recent20[i].high + recent20[j].high) / 2); // Equal highs
+        }
+        if (Math.abs(recent20[i].low - recent20[j].low) < tolerance) {
+          ssl.push((recent20[i].low + recent20[j].low) / 2); // Equal lows
+        }
+      }
+    }
+
+    // Deduplicate and sort (most recent/nearest first)
+    const uniqueBSL = [...new Set(bsl.map(l => Math.round(l * 100) / 100))];
+    const uniqueSSL = [...new Set(ssl.map(l => Math.round(l * 100) / 100))];
+    return { bsl: uniqueBSL.slice(-15), ssl: uniqueSSL.slice(-15) };
   }
 
   /**
@@ -303,25 +299,32 @@ export class SilverBulletEntryService {
   }
 
   /**
-   * Find the FVG created by the displacement move
+   * Find the FIRST FVG on M1 after the sweep candle — the core Silver Bullet entry.
+   * FVG formation IS the displacement proof. No separate displacement check needed.
    */
-  private findDisplacementFVG(
-    fvgs: any[],
+  private findFirstFVGAfterSweep(
+    m1Candles: Candle[],
     direction: 'buy' | 'sell',
-    sweep: { type: 'BSL' | 'SSL'; level: number },
-  ): any | null {
-    // For a buy (after SSL sweep), look for bullish FVG below sweep level
-    // For a sell (after BSL sweep), look for bearish FVG above sweep level
-    const candidates = fvgs.filter(fvg => {
-      if (direction === 'buy') {
-        return fvg.type === 'continuation' && fvg.low < sweep.level;
-      } else {
-        return fvg.type === 'continuation' && fvg.high > sweep.level;
-      }
-    });
+    sweep: { type: 'BSL' | 'SSL'; level: number; extreme: number },
+  ): { high: number; low: number } | null {
+    if (m1Candles.length < 5) return null;
 
-    // Return the most recent (last) FVG
-    return candidates.length > 0 ? candidates[candidates.length - 1] : null;
+    // Scan for FVGs in the correct direction (opposite of sweep)
+    for (let i = 1; i < m1Candles.length - 1; i++) {
+      const c1 = m1Candles[i - 1];
+      const c2 = m1Candles[i];
+      const c3 = m1Candles[i + 1];
+
+      if (direction === 'buy' && c1.high < c3.low && c2.close > c2.open) {
+        // Bullish FVG (after SSL sweep): gap up
+        return { high: c3.low, low: c1.high };
+      }
+      if (direction === 'sell' && c1.low > c3.high && c2.close < c2.open) {
+        // Bearish FVG (after BSL sweep): gap down
+        return { high: c1.low, low: c3.high };
+      }
+    }
+    return null;
   }
 
   /**
@@ -357,7 +360,7 @@ export class SilverBulletEntryService {
 
   private getSymbolTolerance(symbol: string): number {
     const s = symbol.toUpperCase();
-    if (s === 'XAUUSD' || s === 'GOLD') return 2.0; // $2 tolerance for gold sweep detection
+    if (s === 'XAUUSD' || s === 'GOLD') return 0.5; // $0.50 tolerance — just needs to wick beyond level
     if (s === 'US30') return 15.0;
     return 0.0005; // Forex default
   }
