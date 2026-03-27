@@ -90,6 +90,21 @@ export class SimulatedRiskService {
       };
     }
 
+    // Check total potential exposure: open positions * risk% + already lost must not exceed daily cap
+    if (this.config.maxDailyLossPct) {
+      const dayStartBal = stats.dayStartBalance;
+      const maxLoss = (dayStartBal * this.config.maxDailyLossPct) / 100;
+      const riskPerTrade = this.config.defaultLowRiskPerTrade || 10;
+      const openExposure = this.openPositionCount * (dayStartBal * riskPerTrade) / 100;
+      const totalPotentialLoss = Math.abs(stats.realizedPnL < 0 ? stats.realizedPnL : 0) + openExposure;
+      if (totalPotentialLoss >= maxLoss) {
+        return {
+          allowed: false,
+          reason: `Exposure cap: realized=$${Math.abs(stats.realizedPnL).toFixed(0)} + open=${this.openPositionCount}x${riskPerTrade}%=$${openExposure.toFixed(0)} = $${totalPotentialLoss.toFixed(0)} >= $${maxLoss.toFixed(0)} (${this.config.maxDailyLossPct}%)`,
+        };
+      }
+    }
+
     // Check daily loss limit (percentage)
     const maxDailyLossAmount = (currentBalance * strategyConfig.maxDailyLoss) / 100;
     if (stats.realizedPnL <= -maxDailyLossAmount) {

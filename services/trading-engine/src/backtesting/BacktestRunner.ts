@@ -226,7 +226,7 @@ export class BacktestRunner {
         // Scalping daily limits: percentage scales with balance, 3 consec loss cool-off
         maxDailyLossPct: isScalpingStrategy ? 20 : undefined,      // Stop at 20% of day start balance
         maxConsecutiveLosses: isScalpingStrategy ? 3 : undefined,  // Stop after 3 consecutive losses
-        maxConcurrentPositions: isScalpingStrategy ? 2 : undefined, // Max 2 open at same time
+        maxConcurrentPositions: isScalpingStrategy ? 3 : undefined, // Max 3 open — balance between opportunity and exposure
       });
 
       // Initialize ExecutionFilterState for v3
