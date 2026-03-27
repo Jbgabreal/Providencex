@@ -221,6 +221,27 @@ export class CandleReplayEngine {
         }
 
         this.currentBalance = this.config.simulatedMT5.getBalance();
+
+        // After a loss, check if daily limits are hit — if so, force-close all open positions
+        if (exitResult.profit < 0) {
+          const riskContext = { strategy: this.config.strategy as any, account_equity: this.currentBalance, today_realized_pnl: 0, trades_taken_today: 0, guardrail_mode: 'normal' as any, symbol: '' };
+          const check = this.config.simulatedRisk.canTakeNewTrade(riskContext, this.currentBalance);
+          if (!check.allowed) {
+            // Force-close all remaining open positions at current price
+            const openPositions = this.config.simulatedMT5.getOpenPositions();
+            for (const pos of openPositions) {
+              const forceClose = this.config.simulatedMT5.closeTrade(pos.ticket, historicalCandle.close, historicalCandle.timestamp);
+              if (forceClose.success && forceClose.profit !== undefined) {
+                this.config.simulatedRisk.recordTradeCompletion(dateStr, forceClose.profit, this.config.simulatedMT5.getBalance());
+                const fc = this.config.simulatedMT5.getClosedTrades();
+                const lastClosed = fc[fc.length - 1];
+                if (lastClosed) this.trades.push(this.createBacktestTrade(lastClosed, this.config.strategy));
+              }
+            }
+            this.currentBalance = this.config.simulatedMT5.getBalance();
+            logger.info(`[Replay] Daily limit hit — force-closed ${openPositions.length} open positions. Reason: ${check.reason}`);
+          }
+        }
       }
     }
 
