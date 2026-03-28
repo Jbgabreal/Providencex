@@ -5,32 +5,122 @@ import { useEffect, useState, useCallback, Suspense } from 'react';
 import { Loader2, CheckCircle, XCircle, Check } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
-interface DerivAccount {
+interface SelectableAccount {
   loginid: string;
-  token: string;
+  token: string;       // The OAuth token for the parent CR account
   currency: string;
   isDemo: boolean;
-  accountType: string;    // e.g. "trading", "wallet"
-  accountCategory: string; // e.g. "trading", "wallet"
-  landingCompany: string;  // e.g. "svg", "maltainvest"
-  platform: string;        // e.g. "dtrade", "mt5", "dxtrade"
-  server: string;          // from linked_to or landing company
+  accountType: string;  // "Standard", "Zero Spread", "Deriv Options", etc.
+  platform: string;     // "MT5", "Deriv Trader", "Deriv X", "cTrader"
+  server: string;
   balance: string;
+  group: string;        // Raw group string from Deriv
+  parentLoginid: string; // The CR account this belongs to
 }
 
 const DERIV_APP_ID = '131586';
 
 /**
- * Fetch full account details from Deriv WebSocket API using authorize call.
- * Returns enriched account list with types, platforms, and servers.
+ * Parse MT5 account type from the group string.
+ * e.g. "real\\p01_ts03\\financial\\svg_standard-hr_usd" → "Standard"
+ *      "real\\p02_ts01\\financial\\svg_zero-spread-hr_usd" → "Zero Spread"
  */
-function fetchDerivAccountDetails(
+function parseMt5Type(group: string): string {
+  const lower = group.toLowerCase();
+  if (lower.includes('zero-spread') || lower.includes('zero_spread')) return 'Zero Spread';
+  if (lower.includes('standard')) return 'Standard';
+  if (lower.includes('swap-free') || lower.includes('swap_free')) return 'Swap Free';
+  if (lower.includes('micro')) return 'Micro';
+  if (lower.includes('gold')) return 'Gold';
+  if (lower.includes('financial')) return 'Financial';
+  if (lower.includes('synthetic')) return 'Synthetic';
+  if (lower.includes('demo')) return 'Demo';
+  return 'Standard';
+}
+
+/**
+ * Fetch all accounts from Deriv: authorize → get account_list + mt5_login_list.
+ * Returns both top-level Deriv accounts and MT5 sub-accounts.
+ */
+function fetchAllDerivAccounts(
   token: string,
   tokenMap: Map<string, string>
-): Promise<DerivAccount[]> {
+): Promise<SelectableAccount[]> {
   return new Promise((resolve) => {
     const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
-    const timeout = setTimeout(() => { ws.close(); resolve([]); }, 10000);
+    const timeout = setTimeout(() => { ws.close(); resolve([]); }, 15000);
+
+    let authData: any = null;
+    let mt5List: any[] | null = null;
+    let platformAccounts: any[] | null = null;
+
+    const buildResult = () => {
+      if (!authData || mt5List === null) return; // Wait for both responses
+      clearTimeout(timeout);
+      ws.close();
+
+      const auth = authData;
+      const accountList: any[] = auth.account_list || [];
+      const results: SelectableAccount[] = [];
+
+      // 1) Add MT5 sub-accounts (these are what the user wants to select)
+      for (const mt5 of mt5List) {
+        const login = String(mt5.login || mt5.account_id || '');
+        const isDemo = mt5.account_type === 'demo';
+        const group = mt5.group || '';
+        const mt5Type = parseMt5Type(group);
+        const server = mt5.server_info?.environment || mt5.server || '';
+
+        // Find parent CR account to get the OAuth token
+        // MT5 accounts are linked to CR accounts; use the first real token
+        let parentToken = '';
+        let parentLoginid = '';
+        for (const [cr, tok] of tokenMap) {
+          if (!cr.startsWith('VRTC') || isDemo) {
+            parentToken = tok;
+            parentLoginid = cr;
+            if (!isDemo && !cr.startsWith('VRTC')) break;
+          }
+        }
+
+        results.push({
+          loginid: login,
+          token: parentToken,
+          currency: mt5.currency || 'USD',
+          isDemo,
+          accountType: mt5Type,
+          platform: 'MT5',
+          server,
+          balance: String(mt5.balance || '0'),
+          group,
+          parentLoginid,
+        });
+      }
+
+      // 2) Add top-level Deriv accounts (Options/Multipliers)
+      for (const acct of accountList) {
+        const loginid = acct.loginid || '';
+        const tok = tokenMap.get(loginid);
+        if (!tok) continue; // Only show accounts we have tokens for
+
+        const isDemo = acct.is_virtual === 1 || loginid.startsWith('VRTC');
+
+        results.push({
+          loginid,
+          token: tok,
+          currency: acct.currency || 'USD',
+          isDemo,
+          accountType: 'Options/Multipliers',
+          platform: 'Deriv Trader',
+          server: acct.landing_company_name || 'deriv',
+          balance: loginid === auth.loginid ? String(auth.balance || '0') : '',
+          group: '',
+          parentLoginid: loginid,
+        });
+      }
+
+      resolve(results);
+    };
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ authorize: token }));
@@ -38,60 +128,22 @@ function fetchDerivAccountDetails(
 
     ws.onmessage = (msg) => {
       const data = JSON.parse(msg.data);
+
       if (data.msg_type === 'authorize' && data.authorize) {
-        clearTimeout(timeout);
-        ws.close();
-
-        const auth = data.authorize;
-        const accountList: any[] = auth.account_list || [];
-
-        const accounts: DerivAccount[] = accountList.map((acct: any) => {
-          const loginid = acct.loginid || '';
-          const isDemo = acct.is_virtual === 1 || loginid.startsWith('VRTC');
-
-          // Determine platform from linked_to or account_type
-          let platform = 'Deriv Trader';
-          let server = acct.landing_company_name || 'deriv';
-          const linkedTo = acct.linked_to || [];
-          for (const link of linkedTo) {
-            if (link.platform === 'mt5') {
-              platform = 'MT5';
-              server = link.server || server;
-            } else if (link.platform === 'dxtrade') {
-              platform = 'Deriv X';
-            } else if (link.platform === 'ctrader') {
-              platform = 'cTrader';
-            }
-          }
-
-          // Label based on what actually differs: currency + real/demo
-          let accountType = acct.account_type || 'trading';
-          if (accountType === 'wallet') accountType = 'Wallet';
-          else accountType = 'Trading';
-
-          const category = acct.account_category || '';
-
-          return {
-            loginid,
-            token: tokenMap.get(loginid) || '',
-            currency: acct.currency || 'USD',
-            isDemo,
-            accountType,
-            accountCategory: category,
-            landingCompany: acct.landing_company_name || '',
-            platform,
-            server,
-            balance: loginid === auth.loginid ? String(auth.balance || '0') : '',
-          };
-        });
-
-        // Only return accounts that have tokens (from OAuth)
-        const withTokens = accounts.filter(a => a.token);
-        resolve(withTokens);
-      } else if (data.error) {
+        authData = data.authorize;
+        // Now fetch MT5 accounts
+        ws.send(JSON.stringify({ mt5_login_list: 1 }));
+      } else if (data.msg_type === 'mt5_login_list') {
+        mt5List = data.mt5_login_list || [];
+        buildResult();
+      } else if (data.msg_type === 'authorize' && data.error) {
         clearTimeout(timeout);
         ws.close();
         resolve([]);
+      } else if (data.error && data.msg_type === 'mt5_login_list') {
+        // mt5_login_list might fail if user has no MT5 accounts
+        mt5List = [];
+        buildResult();
       }
     };
 
@@ -104,10 +156,9 @@ function DerivCallbackContent() {
   const router = useRouter();
   const [status, setStatus] = useState<'loading' | 'selecting' | 'saving' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState('');
-  const [derivAccounts, setDerivAccounts] = useState<DerivAccount[]>([]);
+  const [accounts, setAccounts] = useState<SelectableAccount[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Parse tokens from URL and fetch full account details
   useEffect(() => {
     const tokenMap = new Map<string, string>();
     let firstToken = '';
@@ -127,32 +178,33 @@ function DerivCallbackContent() {
       return;
     }
 
-    // Fetch full account details from Deriv API
-    fetchDerivAccountDetails(firstToken, tokenMap).then((accounts) => {
-      if (accounts.length === 0) {
-        // Fallback: use basic info from URL params
-        const basic: DerivAccount[] = [];
+    fetchAllDerivAccounts(firstToken, tokenMap).then((allAccounts) => {
+      if (allAccounts.length === 0) {
+        // Fallback: basic accounts from URL params
+        const basic: SelectableAccount[] = [];
+        let idx = 1;
         for (const [loginid, token] of tokenMap) {
-          const idx = Array.from(tokenMap.keys()).indexOf(loginid) + 1;
           const cur = params.get(`cur${idx}`) || 'USD';
           basic.push({
             loginid, token, currency: cur,
             isDemo: loginid.startsWith('VRTC') || loginid.startsWith('VR'),
-            accountType: 'Standard', accountCategory: 'trading',
-            landingCompany: '', platform: 'Deriv', server: 'deriv', balance: '',
+            accountType: 'Trading', platform: 'Deriv', server: 'deriv',
+            balance: '', group: '', parentLoginid: loginid,
           });
+          idx++;
         }
-        setDerivAccounts(basic);
+        setAccounts(basic);
       } else {
-        setDerivAccounts(accounts);
+        setAccounts(allAccounts);
       }
 
-      // Pre-select first real USD standard account
-      const accts = accounts.length > 0 ? accounts : [];
+      // Pre-select: first real MT5 Standard USD, or first real account
+      const accts = allAccounts.length > 0 ? allAccounts : [];
       const defaultSelected = new Set<string>();
-      const realUsd = accts.find(a => !a.isDemo && a.currency === 'USD');
-      if (realUsd) defaultSelected.add(realUsd.loginid);
-      else {
+      const mt5Standard = accts.find(a => !a.isDemo && a.platform === 'MT5' && a.accountType === 'Standard' && a.currency === 'USD');
+      if (mt5Standard) {
+        defaultSelected.add(mt5Standard.loginid);
+      } else {
         const firstReal = accts.find(a => !a.isDemo);
         if (firstReal) defaultSelected.add(firstReal.loginid);
       }
@@ -174,16 +226,19 @@ function DerivCallbackContent() {
     if (selected.size === 0) return;
     setStatus('saving');
 
-    const toSave = derivAccounts.filter(a => selected.has(a.loginid));
+    const toSave = accounts.filter(a => selected.has(a.loginid));
     let savedCount = 0;
     const errors: string[] = [];
 
     for (const account of toSave) {
       try {
+        const isMt5 = account.platform === 'MT5';
         await apiClient.post('/api/user/mt5-accounts', {
-          label: `Deriv ${account.currency} ${account.isDemo ? '(Demo)' : '(Real)'}`,
+          label: isMt5
+            ? `Deriv MT5 ${account.accountType} ${account.currency} ${account.isDemo ? '(Demo)' : '(Real)'}`
+            : `Deriv ${account.currency} ${account.isDemo ? '(Demo)' : '(Real)'}`,
           account_number: account.loginid,
-          server: account.server,
+          server: account.server || 'deriv',
           broker_type: 'deriv',
           is_demo: account.isDemo,
           broker_credentials: {
@@ -193,7 +248,9 @@ function DerivCallbackContent() {
             currency: account.currency,
             isDemo: account.isDemo,
             platform: account.platform,
-            landingCompany: account.landingCompany,
+            accountType: account.accountType,
+            group: account.group,
+            parentLoginid: account.parentLoginid,
           },
         });
         savedCount++;
@@ -206,19 +263,23 @@ function DerivCallbackContent() {
 
     if (savedCount > 0) {
       setStatus('success');
-      setMessage(`Connected ${savedCount} Deriv account(s)!`);
+      setMessage(`Connected ${savedCount} account(s)!`);
       setTimeout(() => router.push('/accounts'), 2000);
     } else {
       setStatus('error');
       setMessage(`Failed to save accounts: ${errors.join(', ')}`);
     }
-  }, [selected, derivAccounts, router]);
+  }, [selected, accounts, router]);
+
+  // Group accounts by platform for display
+  const mt5Accounts = accounts.filter(a => a.platform === 'MT5');
+  const derivAccounts = accounts.filter(a => a.platform !== 'MT5');
 
   return (
     <div className="flex items-center justify-center min-h-[60vh]">
       <div className="bg-white rounded-2xl shadow-lg p-8 max-w-lg w-full">
 
-        {/* Loading account details */}
+        {/* Loading */}
         {status === 'loading' && (
           <div className="text-center">
             <Loader2 className="w-12 h-12 text-blue-500 animate-spin mx-auto mb-4" />
@@ -228,73 +289,52 @@ function DerivCallbackContent() {
         )}
 
         {/* Account Selection */}
-        {status === 'selecting' && derivAccounts.length > 0 && (
+        {status === 'selecting' && accounts.length > 0 && (
           <>
-            <h2 className="text-lg font-semibold text-gray-900 text-center mb-1">Select Deriv Account</h2>
+            <h2 className="text-lg font-semibold text-gray-900 text-center mb-1">Select Account to Connect</h2>
             <p className="text-sm text-gray-500 text-center mb-5">
-              Choose which account(s) to connect for trading
+              Choose which account(s) to use for trading
             </p>
 
-            <div className="space-y-3 mb-6">
-              {derivAccounts.map((account) => {
-                const isSelected = selected.has(account.loginid);
-                return (
-                  <button
-                    key={account.loginid}
-                    onClick={() => toggleAccount(account.loginid)}
-                    className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${
-                      isSelected
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200 bg-white hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
-                        account.isDemo
-                          ? 'bg-gray-100 text-gray-600'
-                          : account.currency === 'USD' ? 'bg-green-100 text-green-700'
-                          : account.currency === 'USDC' ? 'bg-blue-100 text-blue-700'
-                          : 'bg-purple-100 text-purple-700'
-                      }`}>
-                        {account.currency.slice(0, 3)}
-                      </div>
-                      <div className="text-left">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-gray-900">
-                            {account.currency} Account
-                          </span>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                            account.isDemo
-                              ? 'bg-gray-100 text-gray-600'
-                              : 'bg-green-50 text-green-700'
-                          }`}>
-                            {account.isDemo ? 'Demo' : 'Real'}
-                          </span>
-                        </div>
-                        <div className="text-xs text-gray-500 mt-0.5">
-                          {account.loginid}
-                          {account.landingCompany && ` • ${account.landingCompany.toUpperCase()}`}
-                        </div>
-                        {account.balance && (
-                          <div className="text-xs font-medium text-gray-700 mt-0.5">
-                            Balance: {account.balance} {account.currency}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                      isSelected
-                        ? 'border-blue-500 bg-blue-500'
-                        : 'border-gray-300'
-                    }`}>
-                      {isSelected && <Check className="w-4 h-4 text-white" />}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            {/* MT5 Accounts */}
+            {mt5Accounts.length > 0 && (
+              <div className="mb-4">
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-1">
+                  MT5 Accounts
+                </div>
+                <div className="space-y-2">
+                  {mt5Accounts.map((account) => (
+                    <AccountCard
+                      key={account.loginid}
+                      account={account}
+                      isSelected={selected.has(account.loginid)}
+                      onToggle={() => toggleAccount(account.loginid)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
 
-            <div className="flex gap-3">
+            {/* Deriv Accounts */}
+            {derivAccounts.length > 0 && (
+              <div className="mb-4">
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-1">
+                  Deriv Accounts
+                </div>
+                <div className="space-y-2">
+                  {derivAccounts.map((account) => (
+                    <AccountCard
+                      key={account.loginid}
+                      account={account}
+                      isSelected={selected.has(account.loginid)}
+                      onToggle={() => toggleAccount(account.loginid)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 mt-6">
               <button
                 onClick={handleConnect}
                 disabled={selected.size === 0}
@@ -346,6 +386,74 @@ function DerivCallbackContent() {
         )}
       </div>
     </div>
+  );
+}
+
+function AccountCard({ account, isSelected, onToggle }: {
+  account: SelectableAccount;
+  isSelected: boolean;
+  onToggle: () => void;
+}) {
+  const isMt5 = account.platform === 'MT5';
+
+  const typeColor = account.accountType === 'Zero Spread'
+    ? 'bg-orange-50 text-orange-700'
+    : account.accountType === 'Standard'
+    ? 'bg-blue-50 text-blue-700'
+    : account.accountType === 'Swap Free'
+    ? 'bg-teal-50 text-teal-700'
+    : 'bg-gray-50 text-gray-700';
+
+  return (
+    <button
+      onClick={onToggle}
+      className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${
+        isSelected
+          ? 'border-blue-500 bg-blue-50'
+          : 'border-gray-200 bg-white hover:border-gray-300'
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-xs font-bold ${
+          account.isDemo ? 'bg-gray-100 text-gray-500'
+          : isMt5 ? 'bg-indigo-100 text-indigo-700'
+          : 'bg-green-100 text-green-700'
+        }`}>
+          {isMt5 ? 'MT5' : account.currency.slice(0, 3)}
+        </div>
+        <div className="text-left">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-gray-900">
+              {isMt5 ? `MT5 ${account.accountType}` : `${account.currency} Account`}
+            </span>
+            {isMt5 && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${typeColor}`}>
+                {account.accountType}
+              </span>
+            )}
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+              account.isDemo ? 'bg-gray-100 text-gray-600' : 'bg-green-50 text-green-700'
+            }`}>
+              {account.isDemo ? 'Demo' : 'Real'}
+            </span>
+          </div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            {account.loginid} • {account.currency}
+            {account.server && account.server !== 'deriv' && ` • ${account.server}`}
+          </div>
+          {account.balance && account.balance !== '0' && (
+            <div className="text-xs font-medium text-gray-700 mt-0.5">
+              Balance: {account.balance} {account.currency}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+        isSelected ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
+      }`}>
+        {isSelected && <Check className="w-4 h-4 text-white" />}
+      </div>
+    </button>
   );
 }
 
