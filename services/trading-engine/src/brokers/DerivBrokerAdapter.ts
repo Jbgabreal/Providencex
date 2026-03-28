@@ -43,7 +43,10 @@ const SYMBOL_MAP: Record<string, string> = {
 };
 
 // ProvidenceX Deriv App ID — shared across all users
-export const DERIV_APP_ID = process.env.DERIV_APP_ID || '32Irfb5O7IuciwD02q5J1';
+export const DERIV_APP_ID = process.env.DERIV_APP_ID || '131586';
+
+// Synthetic indices that support multiplier contracts (CFD-like)
+const SYNTHETIC_SYMBOLS = new Set(['R_10', 'R_25', 'R_50', 'R_75', 'R_100', '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V']);
 
 export interface DerivAdapterConfig {
   appId?: string;   // Defaults to DERIV_APP_ID
@@ -179,68 +182,140 @@ export class DerivBrokerAdapter implements BrokerAdapter {
     }
 
     const derivSymbol = this.mapSymbol(request.symbol);
-    const contractType = request.direction === 'BUY' ? 'CALL' : 'PUT';
+    const isSynthetic = SYNTHETIC_SYMBOLS.has(derivSymbol);
 
     try {
-      // Step 1: Get price proposal
-      // Use stake-based approach — the risk amount (lotSize * pip value) is the stake
-      // For simplicity, use lotSize * 100 as the stake amount in account currency
-      const stakeAmount = Math.max(1, request.lotSize * 100);
-
-      const proposalResult = await this.sendRequest({
-        proposal: 1,
-        amount: stakeAmount,
-        basis: 'stake',
-        contract_type: contractType,
-        currency: this.accountCurrency,
-        duration: 60,          // 60 minutes (adjustable)
-        duration_unit: 'm',
-        symbol: derivSymbol,
-      });
-
-      if (proposalResult.error) {
-        return {
-          success: false,
-          error: `Deriv proposal failed: ${proposalResult.error.message}`,
-          brokerType: 'deriv',
-        };
+      if (isSynthetic) {
+        return await this.openMultiplierTrade(request, derivSymbol);
+      } else {
+        return await this.openOptionsTrade(request, derivSymbol);
       }
-
-      const proposalId = proposalResult.proposal?.id;
-      if (!proposalId) {
-        return { success: false, error: 'No proposal ID returned', brokerType: 'deriv' };
-      }
-
-      logger.info(`[Deriv] Proposal received: id=${proposalId}, ask=${proposalResult.proposal.display_value}, payout=${proposalResult.proposal.payout}`);
-
-      // Step 2: Buy the contract
-      const buyResult = await this.sendRequest({
-        buy: proposalId,
-        price: stakeAmount * 2, // Max price willing to pay (generous to avoid rejection)
-      });
-
-      if (buyResult.error) {
-        return {
-          success: false,
-          error: `Deriv buy failed: ${buyResult.error.message}`,
-          brokerType: 'deriv',
-        };
-      }
-
-      const contractId = buyResult.buy?.contract_id;
-      const buyPrice = buyResult.buy?.buy_price;
-      logger.info(`[Deriv] Trade opened: contract_id=${contractId}, buy_price=${buyPrice}`);
-
-      return {
-        success: true,
-        ticket: contractId,
-        brokerType: 'deriv',
-        rawResponse: buyResult.buy,
-      };
     } catch (error: any) {
       logger.error(`[Deriv] openTrade error: ${error.message}`);
       return { success: false, error: error.message, brokerType: 'deriv' };
     }
+  }
+
+  /**
+   * Open a multiplier contract (CFD-like) for synthetic indices.
+   * MULTUP = BUY, MULTDOWN = SELL. Supports SL/TP, no expiry.
+   */
+  private async openMultiplierTrade(request: NormalizedTradeRequest, derivSymbol: string): Promise<NormalizedTradeResult> {
+    const contractType = request.direction === 'BUY' ? 'MULTUP' : 'MULTDOWN';
+    // Stake = risk amount. lotSize from risk service represents the risk in USD.
+    const stakeAmount = Math.max(1, Math.round(request.lotSize * 100 * 100) / 100);
+    // Default multiplier for V25: 160 (lowest available = lowest risk)
+    const multiplier = 160;
+
+    // Build proposal with SL/TP
+    const proposalPayload: any = {
+      proposal: 1,
+      amount: stakeAmount,
+      basis: 'stake',
+      contract_type: contractType,
+      currency: this.accountCurrency,
+      symbol: derivSymbol,
+      multiplier,
+    };
+
+    // Add stop_loss and take_profit as absolute amounts (distance from entry in USD)
+    if (request.stopLossPrice && request.entryPrice) {
+      const slDistance = Math.abs(request.entryPrice - request.stopLossPrice);
+      const slAmount = Math.round(stakeAmount * multiplier * (slDistance / request.entryPrice) * 100) / 100;
+      if (slAmount > 0) {
+        proposalPayload.limit_order = { ...(proposalPayload.limit_order || {}), stop_loss: slAmount };
+      }
+    }
+    if (request.takeProfitPrice && request.entryPrice) {
+      const tpDistance = Math.abs(request.takeProfitPrice - request.entryPrice);
+      const tpAmount = Math.round(stakeAmount * multiplier * (tpDistance / request.entryPrice) * 100) / 100;
+      if (tpAmount > 0) {
+        proposalPayload.limit_order = { ...(proposalPayload.limit_order || {}), take_profit: tpAmount };
+      }
+    }
+
+    logger.info(`[Deriv] Multiplier proposal: ${contractType} ${derivSymbol}, stake=${stakeAmount}, mult=${multiplier}, SL/TP=${JSON.stringify(proposalPayload.limit_order || {})}`);
+
+    const proposalResult = await this.sendRequest(proposalPayload);
+    if (proposalResult.error) {
+      return { success: false, error: `Deriv proposal failed: ${proposalResult.error.message}`, brokerType: 'deriv' };
+    }
+
+    const proposalId = proposalResult.proposal?.id;
+    if (!proposalId) {
+      return { success: false, error: 'No proposal ID returned', brokerType: 'deriv' };
+    }
+
+    logger.info(`[Deriv] Multiplier proposal received: id=${proposalId}, ask=${proposalResult.proposal.display_value}`);
+
+    // Buy the contract
+    const buyPayload: any = { buy: proposalId, price: stakeAmount * 2 };
+    const buyResult = await this.sendRequest(buyPayload);
+
+    if (buyResult.error) {
+      return { success: false, error: `Deriv buy failed: ${buyResult.error.message}`, brokerType: 'deriv' };
+    }
+
+    const contractId = buyResult.buy?.contract_id;
+    const buyPrice = buyResult.buy?.buy_price;
+    logger.info(`[Deriv] Multiplier trade opened: contract_id=${contractId}, buy_price=${buyPrice}, type=${contractType}`);
+
+    return {
+      success: true,
+      ticket: contractId,
+      brokerType: 'deriv',
+      rawResponse: buyResult.buy,
+    };
+  }
+
+  /**
+   * Open a basic options contract (CALL/PUT) for non-synthetic symbols.
+   */
+  private async openOptionsTrade(request: NormalizedTradeRequest, derivSymbol: string): Promise<NormalizedTradeResult> {
+    const contractType = request.direction === 'BUY' ? 'CALL' : 'PUT';
+    const stakeAmount = Math.max(1, request.lotSize * 100);
+
+    const proposalResult = await this.sendRequest({
+      proposal: 1,
+      amount: stakeAmount,
+      basis: 'stake',
+      contract_type: contractType,
+      currency: this.accountCurrency,
+      duration: 60,
+      duration_unit: 'm',
+      symbol: derivSymbol,
+    });
+
+    if (proposalResult.error) {
+      return { success: false, error: `Deriv proposal failed: ${proposalResult.error.message}`, brokerType: 'deriv' };
+    }
+
+    const proposalId = proposalResult.proposal?.id;
+    if (!proposalId) {
+      return { success: false, error: 'No proposal ID returned', brokerType: 'deriv' };
+    }
+
+    logger.info(`[Deriv] Options proposal: id=${proposalId}, ask=${proposalResult.proposal.display_value}, payout=${proposalResult.proposal.payout}`);
+
+    const buyResult = await this.sendRequest({
+      buy: proposalId,
+      price: stakeAmount * 2,
+    });
+
+    if (buyResult.error) {
+      return { success: false, error: `Deriv buy failed: ${buyResult.error.message}`, brokerType: 'deriv' };
+    }
+
+    const contractId = buyResult.buy?.contract_id;
+    const buyPrice = buyResult.buy?.buy_price;
+    logger.info(`[Deriv] Options trade opened: contract_id=${contractId}, buy_price=${buyPrice}`);
+
+    return {
+      success: true,
+      ticket: contractId,
+      brokerType: 'deriv',
+      rawResponse: buyResult.buy,
+    };
   }
 
   async closeTrade(ticket: string | number, reason?: string): Promise<NormalizedTradeResult> {
