@@ -264,6 +264,9 @@ export class SimulatedMT5Adapter {
     if (upperSymbol === 'US30') {
       return 1; // Index: 1 lot = 1 contract
     }
+    if (upperSymbol.startsWith('V') && /^V\d+$/.test(upperSymbol)) {
+      return 1; // Volatility indices: 1 lot = $1 per point
+    }
     return 100; // Default
   }
 

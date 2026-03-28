@@ -199,6 +199,7 @@ export class SignalOutcomeTracker {
     if (s === 'XAUUSD' || s === 'GOLD') return 100;
     if (s === 'XAGUSD' || s === 'SILVER') return 5000;
     if (s === 'US30' || s === 'US100' || s === 'US500') return 1;
+    if (s.startsWith('V') && /^V\d+$/.test(s)) return 1; // Volatility indices
     return 100000; // Standard forex lot
   }
 }

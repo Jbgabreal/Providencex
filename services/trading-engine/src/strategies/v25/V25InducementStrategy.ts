@@ -89,75 +89,74 @@ export class V25InducementStrategy implements IStrategy {
       return { orders: [], debug: { reason: 'Cooldown' } };
     }
 
-    // Step 1: Calculate EMAs
-    const emaFastValues = this.calcEMA(m5Candles.map(c => c.close), this.emaFast);
-    const emaSlowValues = this.calcEMA(m5Candles.map(c => c.close), this.emaSlow);
+    // Step 1: Calculate Bollinger Bands (20, 2.0) — sniper entry at extremes
+    const closes = m5Candles.map(c => c.close);
+    const bbPeriod = 20;
+    const bbStdDev = 2.0;
 
-    if (emaFastValues.length < 3 || emaSlowValues.length < 3) {
-      return { orders: [], debug: { reason: 'Not enough EMA data' } };
+    if (closes.length < bbPeriod + 5) {
+      return { orders: [], debug: { reason: 'Not enough data for Bollinger Bands' } };
     }
 
-    const emaFastCurrent = emaFastValues[emaFastValues.length - 1];
-    const emaSlowCurrent = emaSlowValues[emaSlowValues.length - 1];
-    const emaFastPrev = emaFastValues[emaFastValues.length - 2];
-    const emaSlowPrev = emaSlowValues[emaSlowValues.length - 2];
+    // SMA(20)
+    const recentCloses = closes.slice(-bbPeriod);
+    const sma = recentCloses.reduce((s, v) => s + v, 0) / bbPeriod;
 
-    // Step 2: Detect EMA crossover
-    const bullishCross = emaFastPrev <= emaSlowPrev && emaFastCurrent > emaSlowCurrent;
-    const bearishCross = emaFastPrev >= emaSlowPrev && emaFastCurrent < emaSlowCurrent;
-    const bullishTrend = emaFastCurrent > emaSlowCurrent;
-    const bearishTrend = emaFastCurrent < emaSlowCurrent;
+    // Standard deviation
+    const variance = recentCloses.reduce((s, v) => s + (v - sma) ** 2, 0) / bbPeriod;
+    const stdDev = Math.sqrt(variance);
 
-    // Step 3: Breakout confirmation — price closes beyond last N candles
-    const recentCandles = m5Candles.slice(-(this.breakoutLookback + 1), -1);
+    const upperBand = sma + bbStdDev * stdDev;
+    const lowerBand = sma - bbStdDev * stdDev;
+
     const lastCandle = m5Candles[m5Candles.length - 1];
-    const highestHigh = Math.max(...recentCandles.map(c => c.high));
-    const lowestLow = Math.min(...recentCandles.map(c => c.low));
-    const breakoutUp = lastCandle.close > highestHigh;
-    const breakoutDown = lastCandle.close < lowestLow;
+    const prevCandle = m5Candles[m5Candles.length - 2];
 
-    // Step 4: RSI momentum filter
+    // Step 2: RSI(3) for extreme momentum
     const rsi = this.calcRSI(m5Candles, this.rsiPeriod);
 
-    // Step 5: Entry decision
+    // Step 3: Entry at Bollinger Band extremes ONLY (sniper entry at top/bottom)
     let direction: 'buy' | 'sell' | null = null;
     let reason = '';
 
-    // BUY: bullish trend + breakout up + RSI confirms
-    if (bullishTrend && breakoutUp && rsi > this.rsiBullish) {
+    // BUY: price touches/dips below lower band AND RSI oversold AND bullish candle close
+    const touchedLower = lastCandle.low <= lowerBand || prevCandle.low <= lowerBand;
+    const bullishClose = lastCandle.close > lastCandle.open;
+    if (touchedLower && bullishClose && rsi < this.rsiBearish) {
       direction = 'buy';
-      reason = `EMA ${this.emaFast}>${this.emaSlow}, breakout above ${highestHigh.toFixed(0)}, RSI=${rsi.toFixed(0)}`;
+      reason = `Lower BB touch at ${lowerBand.toFixed(0)}, RSI=${rsi.toFixed(0)}, bullish close`;
     }
 
-    // SELL: bearish trend + breakout down + RSI confirms
-    if (!direction && bearishTrend && breakoutDown && rsi < this.rsiBearish) {
+    // SELL: price touches/exceeds upper band AND RSI overbought AND bearish candle close
+    const touchedUpper = lastCandle.high >= upperBand || prevCandle.high >= upperBand;
+    const bearishClose = lastCandle.close < lastCandle.open;
+    if (!direction && touchedUpper && bearishClose && rsi > this.rsiBullish) {
       direction = 'sell';
-      reason = `EMA ${this.emaFast}<${this.emaSlow}, breakout below ${lowestLow.toFixed(0)}, RSI=${rsi.toFixed(0)}`;
-    }
-
-    // Bonus: fresh crossover is stronger signal (don't require breakout)
-    if (!direction && bullishCross && rsi > 50) {
-      direction = 'buy';
-      reason = `EMA crossover bullish, RSI=${rsi.toFixed(0)}`;
-    }
-    if (!direction && bearishCross && rsi < 50) {
-      direction = 'sell';
-      reason = `EMA crossover bearish, RSI=${rsi.toFixed(0)}`;
+      reason = `Upper BB touch at ${upperBand.toFixed(0)}, RSI=${rsi.toFixed(0)}, bearish close`;
     }
 
     if (!direction) {
-      return { orders: [], debug: { reason: 'No signal', emaFast: emaFastCurrent.toFixed(0), emaSlow: emaSlowCurrent.toFixed(0), rsi: rsi.toFixed(0) } };
+      return { orders: [], debug: { reason: 'Price not at BB extreme', upper: Math.round(upperBand), lower: Math.round(lowerBand), price: Math.round(lastCandle.close), rsi: Math.round(rsi) } };
     }
 
-    // Don't take same direction twice in a row (wait for opposite signal)
+    // Don't take same direction twice in a row
     if (direction === this.lastDirection) {
-      return { orders: [], debug: { reason: `Same direction as last trade (${direction}), waiting for reversal` } };
+      return { orders: [], debug: { reason: `Same direction (${direction}), waiting for reversal` } };
     }
 
-    // Step 6: Calculate entry, SL, TP
+    // Step 6: SL beyond the opposite band, TP at middle band (SMA)
+    // This gives the trade room to breathe while targeting the mean
     const entryPrice = lastCandle.close;
-    const stopLoss = direction === 'buy' ? entryPrice - this.slPoints : entryPrice + this.slPoints;
-    const takeProfit = direction === 'buy' ? entryPrice + this.tpPoints : entryPrice - this.tpPoints;
+    const bandWidth = upperBand - lowerBand;
+    let stopLoss: number, takeProfit: number;
+
+    if (direction === 'buy') {
+      stopLoss = lowerBand - bandWidth * 0.1; // Just beyond lower band
+      takeProfit = sma; // Target middle
+    } else {
+      stopLoss = upperBand + bandWidth * 0.1; // Just beyond upper band
+      takeProfit = sma; // Target middle
+    }
 
     this.lastTradeTime = lastCandleTime;
     this.lastDirection = direction;
@@ -173,8 +172,9 @@ export class V25InducementStrategy implements IStrategy {
       meta: {
         strategyKey: this.key,
         profileKey: this.profile.key,
-        emaFast: emaFastCurrent,
-        emaSlow: emaSlowCurrent,
+        upperBand: upperBand,
+        lowerBand: lowerBand,
+        sma: sma,
         rsi,
         riskRewardRatio: this.tpPoints / this.slPoints,
       },
@@ -187,7 +187,7 @@ export class V25InducementStrategy implements IStrategy {
 
     return {
       orders: [{ signal, metadata: { strategyKey: this.key } }],
-      debug: { direction, emaFast: emaFastCurrent, emaSlow: emaSlowCurrent, rsi },
+      debug: { direction, upperBand, lowerBand, sma, rsi },
     };
   }
 
