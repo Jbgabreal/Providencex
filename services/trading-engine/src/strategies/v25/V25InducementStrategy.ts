@@ -92,7 +92,7 @@ export class V25InducementStrategy implements IStrategy {
 
     // Time filter: only trade during V25 high-WR hours (data-driven)
     const candleHour = new Date(lastCandleTime).getUTCHours();
-    const goodHours = [0, 1, 2, 5, 6, 7, 10, 15, 17, 18, 19, 20];
+    const goodHours = [0, 1, 2, 5, 6, 7, 10, 17]; // Data-driven: only hours with 50%+ WR
     if (!goodHours.includes(candleHour)) {
       return { orders: [], debug: { reason: `Filtered hour (${candleHour} UTC)` } };
     }
@@ -132,8 +132,17 @@ export class V25InducementStrategy implements IStrategy {
     // Determine trend: price relative to SMA over last 10 candles
     const trendCandles = m5Candles.slice(-10);
     const aboveSMA = trendCandles.filter(c => c.close > sma).length;
-    const bullishTrend = aboveSMA >= 9; // 9/10 candles above SMA = very strong uptrend
-    const bearishTrend = aboveSMA <= 1; // 1/10 candles below SMA = very strong downtrend
+
+    // SMA slope: compare current SMA to SMA from 5 candles ago
+    const prevCloses = closes.slice(-(bbPeriod + 5), -5);
+    const prevSMA = prevCloses.length >= bbPeriod ? prevCloses.slice(-bbPeriod).reduce((s, v) => s + v, 0) / bbPeriod : sma;
+    const smaRising = sma > prevSMA;
+    const smaFalling = sma < prevSMA;
+
+    // Only BUY in uptrend (9/10 above SMA + SMA rising)
+    // Only SELL in downtrend (1/10 above SMA + SMA falling)
+    const bullishTrend = aboveSMA >= 9 && smaRising;
+    const bearishTrend = aboveSMA <= 1 && smaFalling;
 
     // Average candle range for quiet pullback detection
     const avgRange = m5Candles.slice(-20).reduce((s, c) => s + (c.high - c.low), 0) / 20;
