@@ -35,6 +35,11 @@ interface Props {
   assignment: StrategyAssignment;
 }
 
+// Strategy profiles that are locked to specific symbols
+const STRATEGY_SYMBOL_DEFAULTS: Record<string, string[]> = {
+  'v25_inducement_v1': ['V25'],
+};
+
 export function TradingSettings({ assignment }: Props) {
   const updateConfig = useUpdateAssignmentConfig();
   const [isOpen, setIsOpen] = useState(false);
@@ -56,8 +61,11 @@ export function TradingSettings({ assignment }: Props) {
   const [sessions, setSessions] = useState<Set<string>>(
     new Set(existingConfig.sessions || ['london', 'newyork'])
   );
+  const strategyKey = assignment.strategy_key || '';
+  const lockedSymbols = STRATEGY_SYMBOL_DEFAULTS[strategyKey];
+  const defaultSymbols = lockedSymbols || ['XAUUSD'];
   const [symbols, setSymbols] = useState<Set<string>>(
-    new Set(existingConfig.symbols || ['XAUUSD'])
+    new Set(existingConfig.symbols || defaultSymbols)
   );
 
   // Reset saved indicator
@@ -335,6 +343,23 @@ export function TradingSettings({ assignment }: Props) {
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Trading Pairs
         </label>
+        {lockedSymbols ? (
+          <div>
+            <div className="flex flex-wrap gap-2">
+              {lockedSymbols.map((sym) => {
+                const opt = SYMBOL_OPTIONS.find(o => o.value === sym);
+                return (
+                  <span key={sym} className="inline-flex items-center px-3 py-1.5 rounded-md border border-green-500 bg-green-50 text-sm text-green-800 font-medium">
+                    {opt?.label || sym}
+                  </span>
+                );
+              })}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              This strategy is designed specifically for {lockedSymbols.join(', ')} and cannot be changed.
+            </p>
+          </div>
+        ) : (
         <div className="grid grid-cols-2 gap-2">
           {SYMBOL_OPTIONS.map((opt) => (
             <label
@@ -355,9 +380,12 @@ export function TradingSettings({ assignment }: Props) {
             </label>
           ))}
         </div>
+        )}
+        {!lockedSymbols && (
         <p className="text-xs text-gray-500 mt-1">
           Strategy will only trade selected pairs. At least one required.
         </p>
+        )}
       </div>
 
       {/* Save Button */}

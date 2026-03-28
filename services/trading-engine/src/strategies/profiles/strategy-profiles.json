@@ -121,6 +121,8 @@
     "updatedAt": "2026-03-27T00:00:00.000Z",
     "isDefault": false,
     "isArchived": false,
+    "symbols": ["V25"],
+    "allowedSymbols": ["V25"],
     "config": {
       "emaFast": 8,
       "emaSlow": 21,
