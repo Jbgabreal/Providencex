@@ -157,7 +157,7 @@ export default function AccountsPage() {
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <h3 className="text-sm font-semibold text-blue-900 mb-2">Recommended: One-Click Connect</h3>
               <p className="text-xs text-blue-700 mb-3">
-                Log in with your Deriv account — no API tokens needed. We'll automatically connect all your accounts.
+                Log in with your Deriv account — no API tokens needed. We&apos;ll automatically connect all your accounts.
               </p>
               <button
                 type="button"
@@ -191,7 +191,7 @@ export default function AccountsPage() {
                 Connect with Deriv
               </button>
               <p className="text-[10px] text-blue-500 mt-2 text-center">
-                You'll be redirected to Deriv to log in securely
+                You&apos;ll be redirected to Deriv to log in securely
               </p>
 
               <div className="mt-4 pt-3 border-t border-blue-200">
