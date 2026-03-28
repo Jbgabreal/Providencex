@@ -33,6 +33,15 @@ function DerivCallbackContent() {
       return;
     }
 
+    // Validate state to prevent CSRF
+    const returnedState = params.get('state');
+    const savedState = sessionStorage.getItem('deriv_state');
+    if (savedState && returnedState !== savedState) {
+      setStatus('error');
+      setMessage('Security check failed (state mismatch). Please try again.');
+      return;
+    }
+
     // Exchange the auth code for access token via our backend
     const codeVerifier = sessionStorage.getItem('deriv_code_verifier');
     if (!codeVerifier) {
@@ -41,10 +50,13 @@ function DerivCallbackContent() {
       return;
     }
 
+    // Pass the same redirect_uri that was used in the authorization request
+    const redirectUri = window.location.origin + '/callback/deriv';
+
     fetch('/api/auth/deriv/callback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, codeVerifier }),
+      body: JSON.stringify({ code, codeVerifier, redirectUri }),
     })
       .then(res => res.json())
       .then(data => {

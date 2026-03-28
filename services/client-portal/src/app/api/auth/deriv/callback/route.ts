@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 const DERIV_CLIENT_ID = process.env.DERIV_APP_ID || '32PRdXKUp42mermjUjv6j';
-const DERIV_REDIRECT_URI = process.env.DERIV_REDIRECT_URI || 'https://client-portal-production-e444.up.railway.app/callback/deriv';
 const TRADING_ENGINE_URL = process.env.NEXT_PUBLIC_TRADING_ENGINE_BASE_URL || 'http://localhost:3020';
 
 /**
@@ -10,11 +9,16 @@ const TRADING_ENGINE_URL = process.env.NEXT_PUBLIC_TRADING_ENGINE_BASE_URL || 'h
  */
 export async function POST(request: NextRequest) {
   try {
-    const { code, codeVerifier } = await request.json();
+    const { code, codeVerifier, redirectUri } = await request.json();
 
     if (!code || !codeVerifier) {
       return NextResponse.json({ success: false, error: 'Missing code or codeVerifier' }, { status: 400 });
     }
+
+    // Use the same redirect_uri that was used in the authorization request
+    const resolvedRedirectUri = redirectUri
+      || process.env.DERIV_REDIRECT_URI
+      || new URL('/callback/deriv', request.nextUrl.origin).toString();
 
     // Step 1: Exchange authorization code for access token
     const tokenResponse = await fetch('https://auth.deriv.com/oauth2/token', {
@@ -25,14 +29,19 @@ export async function POST(request: NextRequest) {
         client_id: DERIV_CLIENT_ID,
         code,
         code_verifier: codeVerifier,
-        redirect_uri: DERIV_REDIRECT_URI,
+        redirect_uri: resolvedRedirectUri,
       }),
     });
 
     if (!tokenResponse.ok) {
       const err = await tokenResponse.text();
-      console.error('[Deriv OAuth] Token exchange failed:', err);
-      return NextResponse.json({ success: false, error: 'Token exchange failed' }, { status: 400 });
+      console.error('[Deriv OAuth] Token exchange failed:', tokenResponse.status, err);
+      console.error('[Deriv OAuth] Used redirect_uri:', resolvedRedirectUri);
+      console.error('[Deriv OAuth] Used client_id:', DERIV_CLIENT_ID);
+      return NextResponse.json({
+        success: false,
+        error: `Token exchange failed (${tokenResponse.status}): ${err}`,
+      }, { status: 400 });
     }
 
     const tokenData = await tokenResponse.json();
