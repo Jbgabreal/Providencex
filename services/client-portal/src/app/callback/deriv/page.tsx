@@ -3,12 +3,16 @@
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useEffect, useState, Suspense } from 'react';
 import { Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { apiClient } from '@/lib/apiClient';
 
 /**
  * Deriv OAuth Callback Page
  *
  * After user logs in at Deriv, they're redirected here with account tokens
  * directly in the URL: ?acct1=CR123&token1=abc&cur1=USD&acct2=...
+ *
+ * We save each account directly to the trading engine via apiClient
+ * (which automatically includes the Privy auth token).
  */
 function DerivCallbackContent() {
   const params = useSearchParams();
@@ -17,44 +21,66 @@ function DerivCallbackContent() {
   const [message, setMessage] = useState('Connecting your Deriv account...');
 
   useEffect(() => {
+    const appId = process.env.NEXT_PUBLIC_DERIV_APP_ID || '131586';
+
     // Parse Deriv legacy OAuth response: acct1, token1, cur1, acct2, token2, cur2, ...
-    const accounts: { loginid: string; token: string; currency: string }[] = [];
+    const derivAccounts: { loginid: string; token: string; currency: string }[] = [];
     for (let i = 1; i <= 10; i++) {
       const acct = params.get(`acct${i}`);
       const token = params.get(`token${i}`);
       const cur = params.get(`cur${i}`);
       if (acct && token) {
-        accounts.push({ loginid: acct, token, currency: cur || 'USD' });
+        derivAccounts.push({ loginid: acct, token, currency: cur || 'USD' });
       }
     }
 
-    if (accounts.length === 0) {
+    if (derivAccounts.length === 0) {
       setStatus('error');
       setMessage('No accounts received from Deriv. Please try again.');
       return;
     }
 
-    // Send accounts to our backend to save
-    fetch('/api/auth/deriv/callback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accounts }),
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          setStatus('success');
-          setMessage(`Connected ${data.accountCount || accounts.length} Deriv account(s)!`);
-          setTimeout(() => router.push('/accounts'), 2000);
-        } else {
-          setStatus('error');
-          setMessage(data.error || 'Failed to connect Deriv account');
+    // Save each account directly via apiClient (has Privy auth token)
+    const saveAccounts = async () => {
+      let savedCount = 0;
+      const errors: string[] = [];
+
+      for (const account of derivAccounts) {
+        const isDemo = account.loginid.startsWith('VRTC') || account.loginid.startsWith('VR');
+        try {
+          await apiClient.post('/api/user/mt5-accounts', {
+            label: `Deriv ${account.currency} ${isDemo ? '(Demo)' : '(Real)'}`,
+            account_number: account.loginid,
+            server: 'deriv',
+            broker_type: 'deriv',
+            is_demo: isDemo,
+            broker_credentials: {
+              apiToken: account.token,
+              accountId: account.loginid,
+              appId,
+              currency: account.currency,
+              isDemo,
+            },
+          });
+          savedCount++;
+        } catch (err: any) {
+          const msg = err?.response?.data?.error || err.message;
+          console.error(`[Deriv OAuth] Failed to save ${account.loginid}:`, msg);
+          errors.push(`${account.loginid}: ${msg}`);
         }
-      })
-      .catch(err => {
+      }
+
+      if (savedCount > 0) {
+        setStatus('success');
+        setMessage(`Connected ${savedCount} Deriv account(s)!`);
+        setTimeout(() => router.push('/accounts'), 2000);
+      } else {
         setStatus('error');
-        setMessage('Connection error: ' + err.message);
-      });
+        setMessage(`Failed to save accounts: ${errors.join(', ')}`);
+      }
+    };
+
+    saveAccounts();
   }, [params, router]);
 
   return (
