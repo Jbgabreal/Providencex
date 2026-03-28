@@ -152,6 +152,54 @@ export default function AccountsPage() {
             </div>
           </div>
 
+          {/* Deriv One-Click OAuth Connect */}
+          {brokerType === 'deriv' && (
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <h3 className="text-sm font-semibold text-blue-900 mb-2">Recommended: One-Click Connect</h3>
+              <p className="text-xs text-blue-700 mb-3">
+                Log in with your Deriv account — no API tokens needed. We'll automatically connect all your accounts.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  const crypto = window.crypto;
+                  const array = new Uint8Array(32);
+                  crypto.getRandomValues(array);
+                  const codeVerifier = Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
+                  const state = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+
+                  // Store for callback verification
+                  sessionStorage.setItem('deriv_code_verifier', codeVerifier);
+                  sessionStorage.setItem('deriv_state', state);
+
+                  // Generate code challenge (SHA-256 of verifier)
+                  const encoder = new TextEncoder();
+                  crypto.subtle.digest('SHA-256', encoder.encode(codeVerifier)).then(hash => {
+                    const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(hash)))
+                      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+                    const clientId = '32PRdXKUp42mermjUjv6j';
+                    const redirectUri = encodeURIComponent(window.location.origin + '/callback/deriv');
+                    const url = `https://auth.deriv.com/oauth2/auth?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=trade&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+
+                    window.location.href = url;
+                  });
+                }}
+                className="w-full flex items-center justify-center px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
+              >
+                <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                Connect with Deriv
+              </button>
+              <p className="text-[10px] text-blue-500 mt-2 text-center">
+                You'll be redirected to Deriv to log in securely
+              </p>
+
+              <div className="mt-4 pt-3 border-t border-blue-200">
+                <p className="text-xs text-blue-600 text-center">Or connect manually with API token below</p>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
