@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { Loader2, CheckCircle, XCircle } from 'lucide-react';
 
 /**
@@ -10,7 +10,7 @@ import { Loader2, CheckCircle, XCircle } from 'lucide-react';
  * After user logs in at Deriv, they're redirected here with an auth code.
  * We exchange the code for an access token and save their accounts.
  */
-export default function DerivCallbackPage() {
+function DerivCallbackContent() {
   const params = useSearchParams();
   const router = useRouter();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
@@ -97,5 +97,21 @@ export default function DerivCallbackPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function DerivCallbackPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
+          <Loader2 className="w-12 h-12 text-blue-500 animate-spin mx-auto mb-4" />
+          <h2 className="text-lg font-semibold text-gray-900">Connecting your Deriv account...</h2>
+          <p className="text-sm text-gray-500 mt-2">Please wait while we connect your account...</p>
+        </div>
+      </div>
+    }>
+      <DerivCallbackContent />
+    </Suspense>
   );
 }
