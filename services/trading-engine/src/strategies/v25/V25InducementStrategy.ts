@@ -86,11 +86,18 @@ export class V25InducementStrategy implements IStrategy {
 
     // Cooldown: minimum N candles between trades
     const lastCandleTime = new Date((m5Candles[m5Candles.length - 1] as any).timestamp || Date.now()).getTime();
-    if (lastCandleTime - this.lastTradeTime < this.cooldownBars * 5 * 60 * 1000) {
+    if (lastCandleTime - this.lastTradeTime < this.cooldownBars * 60 * 1000) {
       return { orders: [], debug: { reason: 'Cooldown' } };
     }
 
-    // Step 1: Calculate Bollinger Bands (20, 2.0) — sniper entry at extremes
+    // Time filter: only trade during V25 high-WR hours (data-driven)
+    const candleHour = new Date(lastCandleTime).getUTCHours();
+    const goodHours = [0, 1, 2, 5, 6, 7, 10, 15, 17, 18, 19, 20];
+    if (!goodHours.includes(candleHour)) {
+      return { orders: [], debug: { reason: `Filtered hour (${candleHour} UTC)` } };
+    }
+
+    // Step 1: Calculate Bollinger Bands (20, 2.0)
     const closes = m5Candles.map(c => c.close);
     const bbPeriod = 20;
     const bbStdDev = 2.0;
@@ -128,27 +135,30 @@ export class V25InducementStrategy implements IStrategy {
     const bullishTrend = aboveSMA >= 9; // 9/10 candles above SMA = very strong uptrend
     const bearishTrend = aboveSMA <= 1; // 1/10 candles below SMA = very strong downtrend
 
-    // BUY in uptrend: price pulls back to lower half of BB then bounces
+    // Average candle range for quiet pullback detection
+    const avgRange = m5Candles.slice(-20).reduce((s, c) => s + (c.high - c.low), 0) / 20;
+
+    // Check 3 candles back for pullback context
+    const c3 = m5Candles.length > 2 ? m5Candles[m5Candles.length - 3] : null;
+
+    // BUY in uptrend: price pulls back to SMA then bounces with strong body
     if (bullishTrend) {
-      const pulledBack = prevCandle.low <= sma || prevCandle.close < sma; // Touched middle band
+      const pulledBack = prevCandle.low <= sma || prevCandle.close < sma;
       const bounced = lastCandle.close > lastCandle.open && lastCandle.close > sma;
       const bodyStrong = (lastCandle.close - lastCandle.open) > (lastCandle.high - lastCandle.low) * 0.4;
-      // Wick rejection: lower wick shows buyers stepped in
-      const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
-      const hasRejection = lowerWick > (lastCandle.high - lastCandle.low) * 0.2;
+
       if (pulledBack && bounced && bodyStrong && rsi > 45 && rsi < 70) {
         direction = 'buy';
         reason = `Uptrend pullback to SMA ${sma.toFixed(0)}, bounced bullish, RSI=${rsi.toFixed(0)}`;
       }
     }
 
-    // SELL in downtrend: price pulls back to upper half of BB then drops
+    // SELL in downtrend: price pulls back to SMA then drops with strong body
     if (!direction && bearishTrend) {
       const pulledBack = prevCandle.high >= sma || prevCandle.close > sma;
       const dropped = lastCandle.close < lastCandle.open && lastCandle.close < sma;
       const bodyStrong = (lastCandle.open - lastCandle.close) > (lastCandle.high - lastCandle.low) * 0.4;
-      const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
-      const hasRejection = upperWick > (lastCandle.high - lastCandle.low) * 0.2;
+
       if (pulledBack && dropped && bodyStrong && rsi < 55 && rsi > 30) {
         direction = 'sell';
         reason = `Downtrend pullback to SMA ${sma.toFixed(0)}, dropped bearish, RSI=${rsi.toFixed(0)}`;
