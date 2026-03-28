@@ -122,17 +122,16 @@
     "isDefault": false,
     "isArchived": false,
     "config": {
-      "rangeLookback": 20,
-      "atrPeriod": 14,
-      "minInducementATR": 0.5,
-      "maxRangeATR": 999,
-      "minRangeCandles": 10,
-      "rsiOversold": 40,
-      "rsiOverbought": 60,
-      "adxTrendMax": 35,
-      "slBuffer": 500,
-      "cooldownMinutes": 5,
-      "note": "V25 Inducement Fade — synthetic index fake breakout strategy (24/7)"
+      "emaFast": 8,
+      "emaSlow": 21,
+      "rsiPeriod": 3,
+      "rsiBullish": 55,
+      "rsiBearish": 45,
+      "breakoutLookback": 3,
+      "slPoints": 2000,
+      "tpPoints": 4000,
+      "cooldownBars": 3,
+      "note": "V25 EMA Scalp — EMA 8/21 crossover + breakout on M5 (24/7)"
     }
   }
 ]
