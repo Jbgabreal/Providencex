@@ -63,7 +63,7 @@ export class V25InducementStrategy implements IStrategy {
     this.breakoutLookback = cfg.breakoutLookback || 3;
     this.slPoints = cfg.slPoints || 2000;
     this.tpPoints = cfg.tpPoints || 4000;
-    this.cooldownBars = cfg.cooldownBars || 3;
+    this.cooldownBars = cfg.cooldownBars || 5;
 
     logger.info(`[V25EMA] Init: EMA ${this.emaFast}/${this.emaSlow}, RSI(${this.rsiPeriod}), SL=${this.slPoints} TP=${this.tpPoints}`);
   }
@@ -72,14 +72,15 @@ export class V25InducementStrategy implements IStrategy {
     const { symbol } = context;
     const marketData = context.marketDataService || this.marketDataService;
 
+    // M1 — best frequency for V25 scalping
     let m5Candles: Candle[];
     try {
-      m5Candles = await marketData.getRecentCandles(symbol, 'M5', 60);
+      m5Candles = await marketData.getRecentCandles(symbol, 'M1', 60);
     } catch {
       return { orders: [], debug: { reason: 'Candle data unavailable' } };
     }
 
-    if (!m5Candles?.length || m5Candles.length < this.emaSlow + 5) {
+    if (!m5Candles?.length || m5Candles.length < 25) {
       return { orders: [], debug: { reason: `Insufficient candles: ${m5Candles?.length || 0}` } };
     }
 
@@ -115,24 +116,43 @@ export class V25InducementStrategy implements IStrategy {
     // Step 2: RSI(3) for extreme momentum
     const rsi = this.calcRSI(m5Candles, this.rsiPeriod);
 
-    // Step 3: Entry at Bollinger Band extremes ONLY (sniper entry at top/bottom)
+    // Step 3: TREND PULLBACK ENTRY at Bollinger Band
+    // V25 trends well — enter WITH the trend on pullback to the middle band
+    // NOT mean reversion (which fails on V25)
     let direction: 'buy' | 'sell' | null = null;
     let reason = '';
 
-    // BUY: price touches/dips below lower band AND RSI oversold AND bullish candle close
-    const touchedLower = lastCandle.low <= lowerBand || prevCandle.low <= lowerBand;
-    const bullishClose = lastCandle.close > lastCandle.open;
-    if (touchedLower && bullishClose && rsi < this.rsiBearish) {
-      direction = 'buy';
-      reason = `Lower BB touch at ${lowerBand.toFixed(0)}, RSI=${rsi.toFixed(0)}, bullish close`;
+    // Determine trend: price relative to SMA over last 10 candles
+    const trendCandles = m5Candles.slice(-10);
+    const aboveSMA = trendCandles.filter(c => c.close > sma).length;
+    const bullishTrend = aboveSMA >= 9; // 9/10 candles above SMA = very strong uptrend
+    const bearishTrend = aboveSMA <= 1; // 1/10 candles below SMA = very strong downtrend
+
+    // BUY in uptrend: price pulls back to lower half of BB then bounces
+    if (bullishTrend) {
+      const pulledBack = prevCandle.low <= sma || prevCandle.close < sma; // Touched middle band
+      const bounced = lastCandle.close > lastCandle.open && lastCandle.close > sma;
+      const bodyStrong = (lastCandle.close - lastCandle.open) > (lastCandle.high - lastCandle.low) * 0.4;
+      // Wick rejection: lower wick shows buyers stepped in
+      const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
+      const hasRejection = lowerWick > (lastCandle.high - lastCandle.low) * 0.2;
+      if (pulledBack && bounced && bodyStrong && rsi > 45 && rsi < 70) {
+        direction = 'buy';
+        reason = `Uptrend pullback to SMA ${sma.toFixed(0)}, bounced bullish, RSI=${rsi.toFixed(0)}`;
+      }
     }
 
-    // SELL: price touches/exceeds upper band AND RSI overbought AND bearish candle close
-    const touchedUpper = lastCandle.high >= upperBand || prevCandle.high >= upperBand;
-    const bearishClose = lastCandle.close < lastCandle.open;
-    if (!direction && touchedUpper && bearishClose && rsi > this.rsiBullish) {
-      direction = 'sell';
-      reason = `Upper BB touch at ${upperBand.toFixed(0)}, RSI=${rsi.toFixed(0)}, bearish close`;
+    // SELL in downtrend: price pulls back to upper half of BB then drops
+    if (!direction && bearishTrend) {
+      const pulledBack = prevCandle.high >= sma || prevCandle.close > sma;
+      const dropped = lastCandle.close < lastCandle.open && lastCandle.close < sma;
+      const bodyStrong = (lastCandle.open - lastCandle.close) > (lastCandle.high - lastCandle.low) * 0.4;
+      const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
+      const hasRejection = upperWick > (lastCandle.high - lastCandle.low) * 0.2;
+      if (pulledBack && dropped && bodyStrong && rsi < 55 && rsi > 30) {
+        direction = 'sell';
+        reason = `Downtrend pullback to SMA ${sma.toFixed(0)}, dropped bearish, RSI=${rsi.toFixed(0)}`;
+      }
     }
 
     if (!direction) {
@@ -144,18 +164,28 @@ export class V25InducementStrategy implements IStrategy {
       return { orders: [], debug: { reason: `Same direction (${direction}), waiting for reversal` } };
     }
 
-    // Step 6: SL beyond the opposite band, TP at middle band (SMA)
-    // This gives the trade room to breathe while targeting the mean
+    // Step 6: Trend pullback SL/TP
+    // SL = below the pullback low (for buy), TP = opposite band (trend target)
     const entryPrice = lastCandle.close;
-    const bandWidth = upperBand - lowerBand;
     let stopLoss: number, takeProfit: number;
 
     if (direction === 'buy') {
-      stopLoss = lowerBand - bandWidth * 0.1; // Just beyond lower band
-      takeProfit = sma; // Target middle
+      const pullbackLow = Math.min(prevCandle.low, lastCandle.low);
+      stopLoss = pullbackLow - stdDev * 0.2;
+      const slDist = entryPrice - stopLoss;
+      takeProfit = entryPrice + slDist * 1.5; // Fixed 1.5:1 R:R
     } else {
-      stopLoss = upperBand + bandWidth * 0.1; // Just beyond upper band
-      takeProfit = sma; // Target middle
+      const pullbackHigh = Math.max(prevCandle.high, lastCandle.high);
+      stopLoss = pullbackHigh + stdDev * 0.2;
+      const slDist = stopLoss - entryPrice;
+      takeProfit = entryPrice - slDist * 1.5; // Fixed 1.5:1 R:R
+    }
+
+    // Ensure minimum 1.5:1 R:R
+    const risk = Math.abs(entryPrice - stopLoss);
+    const reward = Math.abs(takeProfit - entryPrice);
+    if (risk <= 0 || reward / risk < 1.5) {
+      return { orders: [], debug: { reason: `R:R too low: ${(reward/risk).toFixed(1)}` } };
     }
 
     this.lastTradeTime = lastCandleTime;

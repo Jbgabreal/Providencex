@@ -130,7 +130,7 @@
       "breakoutLookback": 3,
       "slPoints": 2000,
       "tpPoints": 4000,
-      "cooldownBars": 3,
+      "cooldownBars": 5,
       "note": "V25 EMA Scalp — EMA 8/21 crossover + breakout on M5 (24/7)"
     }
   }
