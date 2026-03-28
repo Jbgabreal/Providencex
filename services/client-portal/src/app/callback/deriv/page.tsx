@@ -7,8 +7,8 @@ import { Loader2, CheckCircle, XCircle } from 'lucide-react';
 /**
  * Deriv OAuth Callback Page
  *
- * After user logs in at Deriv, they're redirected here with an auth code.
- * We exchange the code for an access token and save their accounts.
+ * After user logs in at Deriv, they're redirected here with account tokens
+ * directly in the URL: ?acct1=CR123&token1=abc&cur1=USD&acct2=...
  */
 function DerivCallbackContent() {
   const params = useSearchParams();
@@ -17,54 +17,34 @@ function DerivCallbackContent() {
   const [message, setMessage] = useState('Connecting your Deriv account...');
 
   useEffect(() => {
-    const code = params.get('code');
-    const error = params.get('error');
-    const errorDesc = params.get('error_description');
+    // Parse Deriv legacy OAuth response: acct1, token1, cur1, acct2, token2, cur2, ...
+    const accounts: { loginid: string; token: string; currency: string }[] = [];
+    for (let i = 1; i <= 10; i++) {
+      const acct = params.get(`acct${i}`);
+      const token = params.get(`token${i}`);
+      const cur = params.get(`cur${i}`);
+      if (acct && token) {
+        accounts.push({ loginid: acct, token, currency: cur || 'USD' });
+      }
+    }
 
-    if (error) {
+    if (accounts.length === 0) {
       setStatus('error');
-      setMessage(errorDesc || `Deriv login failed: ${error}`);
+      setMessage('No accounts received from Deriv. Please try again.');
       return;
     }
 
-    if (!code) {
-      setStatus('error');
-      setMessage('No authorization code received from Deriv');
-      return;
-    }
-
-    // Validate state to prevent CSRF
-    const returnedState = params.get('state');
-    const savedState = sessionStorage.getItem('deriv_state');
-    if (savedState && returnedState !== savedState) {
-      setStatus('error');
-      setMessage('Security check failed (state mismatch). Please try again.');
-      return;
-    }
-
-    // Exchange the auth code for access token via our backend
-    const codeVerifier = sessionStorage.getItem('deriv_code_verifier');
-    if (!codeVerifier) {
-      setStatus('error');
-      setMessage('Session expired. Please try connecting again.');
-      return;
-    }
-
-    // Pass the same redirect_uri that was used in the authorization request
-    const redirectUri = window.location.origin + '/callback/deriv';
-
+    // Send accounts to our backend to save
     fetch('/api/auth/deriv/callback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, codeVerifier, redirectUri }),
+      body: JSON.stringify({ accounts }),
     })
       .then(res => res.json())
       .then(data => {
         if (data.success) {
           setStatus('success');
-          setMessage(`Connected ${data.accounts?.length || 1} Deriv account(s)!`);
-          sessionStorage.removeItem('deriv_code_verifier');
-          sessionStorage.removeItem('deriv_state');
+          setMessage(`Connected ${data.accountCount || accounts.length} Deriv account(s)!`);
           setTimeout(() => router.push('/accounts'), 2000);
         } else {
           setStatus('error');

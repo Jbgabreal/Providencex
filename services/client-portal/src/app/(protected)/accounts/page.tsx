@@ -162,28 +162,8 @@ export default function AccountsPage() {
               <button
                 type="button"
                 onClick={() => {
-                  const crypto = window.crypto;
-                  const array = new Uint8Array(32);
-                  crypto.getRandomValues(array);
-                  const codeVerifier = Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
-                  const state = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
-
-                  // Store for callback verification
-                  sessionStorage.setItem('deriv_code_verifier', codeVerifier);
-                  sessionStorage.setItem('deriv_state', state);
-
-                  // Generate code challenge (SHA-256 of verifier)
-                  const encoder = new TextEncoder();
-                  crypto.subtle.digest('SHA-256', encoder.encode(codeVerifier)).then(hash => {
-                    const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(hash)))
-                      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-
-                    const clientId = process.env.NEXT_PUBLIC_DERIV_CLIENT_ID || '32PRdXKUp42mermjUjv6j';
-                    const redirectUri = encodeURIComponent(window.location.origin + '/callback/deriv');
-                    const url = `https://auth.deriv.com/oauth2/auth?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=trade&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
-
-                    window.location.href = url;
-                  });
+                  const appId = process.env.NEXT_PUBLIC_DERIV_APP_ID || '131586';
+                  window.location.href = `https://oauth.deriv.com/oauth2/authorize?app_id=${appId}`;
                 }}
                 className="w-full flex items-center justify-center px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
               >
