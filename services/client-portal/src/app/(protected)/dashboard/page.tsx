@@ -68,14 +68,16 @@ export default function DashboardPage() {
       {hasActiveStrategy && (
         <div className="mb-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {activeAssignments.map((assignment) => {
-            const strategy = strategies?.find((s) => s.key === assignment.strategy_profile_id);
+            const strategyName = assignment.strategy_name
+              || strategies?.find((s) => s.key === (assignment.strategy_key || assignment.strategy_profile_id))?.name
+              || 'Strategy';
             const account = accounts?.find((a) => a.id === assignment.mt5_account_id);
             const lastTrade = recentTrades?.trades?.[0];
 
             return (
               <div key={assignment.id} className="bg-white rounded-lg shadow p-5 border-l-4 border-green-500">
                 <div className="flex justify-between items-start mb-3">
-                  <h3 className="font-semibold text-gray-900">{strategy?.name || 'Strategy'}</h3>
+                  <h3 className="font-semibold text-gray-900">{strategyName}</h3>
                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                     assignment.status === 'active'
                       ? 'bg-green-100 text-green-800'

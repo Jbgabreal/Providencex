@@ -85,6 +85,8 @@ export interface StrategyAssignment {
   user_id: string;
   mt5_account_id: string;
   strategy_profile_id: string;
+  strategy_key?: string;
+  strategy_name?: string;
   status: 'active' | 'paused' | 'stopped';
   user_config: UserTradingConfig;
   started_at: string | null;
