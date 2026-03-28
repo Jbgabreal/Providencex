@@ -31,11 +31,15 @@ const SYMBOL_MAP: Record<string, string> = {
   NZDUSD: 'frxNZDUSD',
   EURJPY: 'frxEURJPY',
   GBPJPY: 'frxGBPJPY',
-  // Synthetics (no mapping needed)
+  // Synthetics — map both V-style and R-style names to Deriv symbols
   R_100: 'R_100',
   R_50: 'R_50',
   R_25: 'R_25',
   R_10: 'R_10',
+  V100: 'R_100',
+  V50: 'R_50',
+  V25: 'R_25',
+  V10: 'R_10',
 };
 
 // ProvidenceX Deriv App ID — shared across all users

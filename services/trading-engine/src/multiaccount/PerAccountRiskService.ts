@@ -219,6 +219,17 @@ export class PerAccountRiskService {
       'GOLD': 0.01,
       'EURUSD': 0.01,    // Forex typically allows 0.01
       'GBPUSD': 0.01,
+      // Deriv synthetic indices
+      'V25': 0.50,        // Volatility 25: min 0.50 on Deriv
+      'R_25': 0.50,
+      'V10': 0.30,
+      'R_10': 0.30,
+      'V50': 0.50,
+      'R_50': 0.50,
+      'V75': 0.001,
+      'R_75': 0.001,
+      'V100': 0.50,
+      'R_100': 0.50,
     };
 
     return minLotSizes[symbol] || 0.01; // Default to 0.01 if unknown
@@ -242,6 +253,17 @@ export class PerAccountRiskService {
       'GOLD': 100,
       'EURUSD': 100000,   // Forex: 100,000 units per standard lot
       'GBPUSD': 100000,
+      // Deriv synthetic indices: 1 lot = 1 contract, profit = lot * point_change
+      'V25': 1.0,
+      'R_25': 1.0,
+      'V10': 1.0,
+      'R_10': 1.0,
+      'V50': 1.0,
+      'R_50': 1.0,
+      'V75': 1.0,
+      'R_75': 1.0,
+      'V100': 1.0,
+      'R_100': 1.0,
     };
 
     return contractSizes[symbol] || 100000; // Default to forex standard
@@ -265,6 +287,11 @@ export class PerAccountRiskService {
 
     // US30: 1 point = 1.0
     if (symbol === 'US30' || symbol === 'DOW' || symbol === 'US30CASH') {
+      return 1.0;
+    }
+
+    // Deriv synthetic indices: 1 pip = 1 point (no decimal offset)
+    if (symbol.startsWith('V') || symbol.startsWith('R_')) {
       return 1.0;
     }
 

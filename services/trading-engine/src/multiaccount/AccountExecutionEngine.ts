@@ -218,7 +218,9 @@ export class AccountExecutionEngine {
     const hour = now.hour;
     
     // Market hours check (configurable via env)
-    const checkMarketHours = process.env.CHECK_MARKET_HOURS !== 'false'; // Default: true
+    // Deriv synthetic indices (V25, R_25, etc.) trade 24/7 — skip market hours check
+    const isSynthetic = signal.symbol.startsWith('V') || signal.symbol.startsWith('R_');
+    const checkMarketHours = !isSynthetic && process.env.CHECK_MARKET_HOURS !== 'false'; // Default: true
     if (checkMarketHours) {
       // Weekend check: Saturday (6) or Sunday (7) - market is closed
       if (dayOfWeek === 6 || dayOfWeek === 7) {
@@ -357,6 +359,11 @@ export class AccountExecutionEngine {
     }
 
     if (symbol === 'US30' || symbol === 'DOW') {
+      return 1.0;
+    }
+
+    // Deriv synthetic indices: 1 pip = 1 point
+    if (symbol.startsWith('V') || symbol.startsWith('R_')) {
       return 1.0;
     }
 
