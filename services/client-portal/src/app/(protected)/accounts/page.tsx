@@ -178,7 +178,7 @@ export default function AccountsPage() {
                     const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(hash)))
                       .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 
-                    const clientId = '32PRdXKUp42mermjUjv6j';
+                    const clientId = process.env.NEXT_PUBLIC_DERIV_CLIENT_ID || '32PRdXKUp42mermjUjv6j';
                     const redirectUri = encodeURIComponent(window.location.origin + '/callback/deriv');
                     const url = `https://auth.deriv.com/oauth2/auth?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=trade&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
 
