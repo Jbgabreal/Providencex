@@ -43,6 +43,7 @@ import { validatePrivyConfig } from './config';
 import { IStrategy, StrategyContext, StrategyResult } from './strategies/types';
 import { StrategyAdapter } from './strategies/StrategyAdapter';
 import { getStrategyByProfileKey } from './strategies/StrategyRegistry';
+import { getProfileByKey } from './strategies/profiles/StrategyProfileStore';
 import { TradeJournalService, TradeJournalRepository, SignalOutcomeTracker } from './journal';
 import orderEventsRoutes, { initializeOrderEventService } from './routes/orderEvents';
 import strategyConfigRoutes from './routes/strategyConfig';
@@ -295,6 +296,9 @@ if (activeStrategyKeys.length > 0) {
       try {
         const strategy = await getStrategyByProfileKey(key);
         const adapter = new StrategyAdapter(strategy, marketDataService);
+        // Read allowedSymbols from the raw profile (not on IStrategy interface)
+        const rawProfile = await getProfileByKey(key);
+        const allowedSymbols = (rawProfile as any)?.allowedSymbols || (rawProfile as any)?.symbols || undefined;
         activeStrategyPipelines.push({
           strategy: 'low', // Share same risk/guardrail bucket
           config: {
@@ -303,6 +307,7 @@ if (activeStrategyKeys.length > 0) {
             profileKey: key,
             strategyVersion: strategy.key,
             skipV3Filter: strategy.key === 'GOD_SMC_V1' || strategy.key === 'FVG_SCALP_V1' || strategy.key === 'FVG_SCALP_AGG_V1' || strategy.key === 'MOMENTUM_SCALP_V1' || strategy.key === 'SILVER_BULLET_V1',
+            allowedSymbols,
             signalSource: adapter,
           },
         });
@@ -562,6 +567,7 @@ interface StrategyPipelineConfig {
   profileKey: string | null;
   strategyVersion: string;
   skipV3Filter: boolean;
+  allowedSymbols?: string[]; // If set, only run this strategy on these symbols
   signalSource: {
     generateSignal(symbol: string): Promise<import('./types').TradeSignal | null>;
     getLastSmcReason(): string | null;
@@ -1525,7 +1531,9 @@ async function tickLoop(): Promise<void> {
 
     // IStrategy path: routed through the same unified pipeline via StrategyAdapter
     for (const { strategy: riskBucket, config: pConfig } of activeStrategyPipelines) {
-      for (const symbol of config.symbols) {
+      // If strategy has allowedSymbols, only run on those; otherwise run on all
+      const symbolsForStrategy = pConfig.allowedSymbols || config.symbols;
+      for (const symbol of symbolsForStrategy) {
         try {
           await processTradingDecision(symbol, riskBucket, pConfig);
         } catch (error) {
