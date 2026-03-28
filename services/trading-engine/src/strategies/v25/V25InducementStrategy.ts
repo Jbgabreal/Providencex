@@ -90,13 +90,6 @@ export class V25InducementStrategy implements IStrategy {
       return { orders: [], debug: { reason: 'Cooldown' } };
     }
 
-    // Time filter: only trade during V25 high-WR hours (data-driven)
-    const candleHour = new Date(lastCandleTime).getUTCHours();
-    const goodHours = [0, 1, 2, 5, 6, 7, 10, 17]; // Data-driven: only hours with 50%+ WR
-    if (!goodHours.includes(candleHour)) {
-      return { orders: [], debug: { reason: `Filtered hour (${candleHour} UTC)` } };
-    }
-
     // Step 1: Calculate Bollinger Bands (20, 2.0)
     const closes = m5Candles.map(c => c.close);
     const bbPeriod = 20;
