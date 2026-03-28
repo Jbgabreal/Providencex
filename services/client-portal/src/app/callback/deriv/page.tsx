@@ -20,6 +20,26 @@ interface SelectableAccount {
 
 const DERIV_APP_ID = '131586';
 
+/** Quick authorize to get balance for a single CR account */
+function fetchAccountBalance(token: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+    const timeout = setTimeout(() => { ws.close(); resolve(null); }, 8000);
+    ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+    ws.onmessage = (msg) => {
+      const data = JSON.parse(msg.data);
+      if (data.msg_type === 'authorize' && data.authorize) {
+        clearTimeout(timeout); ws.close();
+        resolve(data.authorize.balance ?? 0);
+      } else if (data.error) {
+        clearTimeout(timeout); ws.close();
+        resolve(null);
+      }
+    };
+    ws.onerror = () => { clearTimeout(timeout); resolve(null); };
+  });
+}
+
 /**
  * Parse MT5 account type from the group string.
  * e.g. "real\\p01_ts03\\financial\\svg_standard-hr_usd" → "Standard"
@@ -119,7 +139,19 @@ function fetchAllDerivAccounts(
         });
       }
 
-      resolve(results);
+      // Fetch balances for CR accounts we don't have yet
+      const missingBalances = results.filter(r => r.platform === 'Deriv Trader' && !r.balance && r.token);
+      if (missingBalances.length > 0) {
+        const balancePromises = missingBalances.map(acct => fetchAccountBalance(acct.token));
+        Promise.all(balancePromises).then(balances => {
+          balances.forEach((bal, i) => {
+            if (bal !== null) missingBalances[i].balance = String(bal);
+          });
+          resolve(results);
+        });
+      } else {
+        resolve(results);
+      }
     };
 
     ws.onopen = () => {
