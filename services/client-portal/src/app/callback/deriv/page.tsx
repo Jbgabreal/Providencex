@@ -178,7 +178,17 @@ function DerivCallbackContent() {
       return;
     }
 
-    fetchAllDerivAccounts(firstToken, tokenMap).then((allAccounts) => {
+    // Try each token until one returns MT5 accounts (some tokens may timeout)
+    const allTokens = Array.from(tokenMap.values());
+    const tryTokens = async (): Promise<SelectableAccount[]> => {
+      for (const token of allTokens) {
+        const result = await fetchAllDerivAccounts(token, tokenMap);
+        if (result.length > 0) return result;
+      }
+      return [];
+    };
+
+    tryTokens().then((allAccounts) => {
       if (allAccounts.length === 0) {
         // Fallback: basic accounts from URL params
         const basic: SelectableAccount[] = [];
