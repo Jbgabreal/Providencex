@@ -64,13 +64,11 @@ function fetchDerivAccountDetails(
             }
           }
 
-          // Determine account type label
+          // Label based on what actually differs: currency + real/demo
           let accountType = acct.account_type || 'trading';
-          if (accountType === 'trading') accountType = 'Standard';
-          else if (accountType === 'wallet') accountType = 'Wallet';
-          else if (accountType === 'mt5') accountType = 'MT5';
+          if (accountType === 'wallet') accountType = 'Wallet';
+          else accountType = 'Trading';
 
-          // Check for zero spread / specific types from account_category
           const category = acct.account_category || '';
 
           return {
@@ -183,7 +181,7 @@ function DerivCallbackContent() {
     for (const account of toSave) {
       try {
         await apiClient.post('/api/user/mt5-accounts', {
-          label: `Deriv ${account.accountType} ${account.currency} ${account.isDemo ? '(Demo)' : '(Real)'}`,
+          label: `Deriv ${account.currency} ${account.isDemo ? '(Demo)' : '(Real)'}`,
           account_number: account.loginid,
           server: account.server,
           broker_type: 'deriv',
@@ -254,13 +252,17 @@ function DerivCallbackContent() {
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
                         account.isDemo
                           ? 'bg-gray-100 text-gray-600'
-                          : 'bg-green-100 text-green-700'
+                          : account.currency === 'USD' ? 'bg-green-100 text-green-700'
+                          : account.currency === 'USDC' ? 'bg-blue-100 text-blue-700'
+                          : 'bg-purple-100 text-purple-700'
                       }`}>
                         {account.currency.slice(0, 3)}
                       </div>
                       <div className="text-left">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium text-gray-900">{account.loginid}</span>
+                          <span className="font-medium text-gray-900">
+                            {account.currency} Account
+                          </span>
                           <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
                             account.isDemo
                               ? 'bg-gray-100 text-gray-600'
@@ -270,14 +272,9 @@ function DerivCallbackContent() {
                           </span>
                         </div>
                         <div className="text-xs text-gray-500 mt-0.5">
-                          {account.accountType} • {account.currency}
+                          {account.loginid}
                           {account.landingCompany && ` • ${account.landingCompany.toUpperCase()}`}
                         </div>
-                        {account.server && account.server !== 'deriv' && (
-                          <div className="text-[10px] text-gray-400 mt-0.5">
-                            Server: {account.server}
-                          </div>
-                        )}
                         {account.balance && (
                           <div className="text-xs font-medium text-gray-700 mt-0.5">
                             Balance: {account.balance} {account.currency}
