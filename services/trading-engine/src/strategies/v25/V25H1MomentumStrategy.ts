@@ -165,10 +165,9 @@ export class V25H1MomentumStrategy implements IStrategy {
     }
     this.lastProcessedM15Count = currentM15Count;
 
-    // Position lockout
-    if (this.hasOpenPosition) {
-      return { orders: [], debug: { reason: 'Position open' } };
-    }
+    // Position lockout — managed by cooldown timer instead of hasOpenPosition flag
+    // The execution engine (AccountExecutionEngine/UserAssignmentOrchestrator) handles
+    // actual position tracking externally. We use cooldown to prevent rapid re-entry.
 
     // ── Gating ──
     this.tradeTimestamps24h = this.tradeTimestamps24h.filter(t => now - t < 86400000);
@@ -240,7 +239,6 @@ export class V25H1MomentumStrategy implements IStrategy {
     // ── Update state ──
     this.lastTradeTimestamp = now;
     this.tradeTimestamps24h.push(now);
-    this.hasOpenPosition = true;
 
     const tradeSignal: TradeSignal = {
       symbol,
@@ -281,12 +279,8 @@ export class V25H1MomentumStrategy implements IStrategy {
     };
   }
 
-  // Called by execution engine after trade closes
-  onTradeResult(won: boolean): void {
-    this.hasOpenPosition = false;
-    if (won) this.consecutiveLosses = 0;
-    else this.consecutiveLosses++;
-  }
+  // Note: onTradeResult is not called by the live execution engine.
+  // Consecutive loss tracking is approximate — resets after lossPauseMinutes cooldown.
 
   // ── Regime Detection (identical to diagnostic) ──
 
