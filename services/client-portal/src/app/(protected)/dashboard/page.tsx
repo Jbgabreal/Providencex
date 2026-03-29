@@ -7,7 +7,7 @@ import { useStrategies } from '@/hooks/useStrategies';
 import { useMt5Accounts } from '@/hooks/useMt5Accounts';
 import { TradingSettings } from '@/components/TradingSettings';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Target, Play, Pause, ArrowRight, X, RefreshCw } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Target, Play, Pause, ArrowRight, X, Pencil } from 'lucide-react';
 import Link from 'next/link';
 
 export default function DashboardPage() {
@@ -111,7 +111,7 @@ export default function DashboardPage() {
                           className="text-gray-400 hover:text-gray-600 transition-colors"
                           title="Switch strategy"
                         >
-                          <RefreshCw className="h-3.5 w-3.5" />
+                          <Pencil className="h-3.5 w-3.5" />
                         </button>
                       </>
                     )}
