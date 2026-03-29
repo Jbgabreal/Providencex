@@ -15,6 +15,8 @@ import { FVGScalpStrategy } from './fvg-scalp/FVGScalpStrategy';
 import { FVGScalpAggressiveStrategy } from './fvg-scalp/FVGScalpAggressiveStrategy';
 import { MomentumScalpStrategy } from './fvg-scalp/MomentumScalpStrategy';
 import { V25InducementStrategy } from './v25/V25InducementStrategy';
+import { V25MeanReversionStrategy } from './v25/V25MeanReversionStrategy';
+import { V25H1MomentumStrategy } from './v25/V25H1MomentumStrategy';
 
 const logger = new Logger('StrategyRegistry');
 
@@ -43,6 +45,12 @@ const implementationMap: Record<string, new (profile: StrategyProfile) => IStrat
 
   // V25 Inducement Fade — fades fake breakouts on Volatility 25 (24/7 synthetic)
   V25_INDUCEMENT_V1: V25InducementStrategy,
+
+  // V25 Mean Reversion — M5 Bollinger sigma overextension fade (hypothesis)
+  V25_MEAN_REVERSION_V1: V25MeanReversionStrategy,
+
+  // V25 H1 Momentum — autocorrelation-gated H1 regime with M15 pullback entry
+  V25_H1_MOMENTUM_V1: V25H1MomentumStrategy,
 };
 
 /**
