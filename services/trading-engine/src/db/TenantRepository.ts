@@ -370,6 +370,18 @@ export class TenantRepository {
 
   // ---------- User Strategy Assignments ----------
 
+  async getAssignmentById(id: string, userId: string): Promise<UserStrategyAssignment | null> {
+    const pool = this.ensurePool();
+    const result = await pool.query(
+      `SELECT usa.*, sp.key AS strategy_key, sp.name AS strategy_name
+       FROM user_strategy_assignments usa
+       LEFT JOIN strategy_profiles sp ON sp.id = usa.strategy_profile_id
+       WHERE usa.id = $1 AND usa.user_id = $2`,
+      [id, userId]
+    );
+    return result.rows[0] || null;
+  }
+
   async getAssignmentsForUser(userId: string): Promise<UserStrategyAssignment[]> {
     const pool = this.ensurePool();
     const result = await pool.query(

@@ -1,12 +1,13 @@
 'use client';
 
 import { useAnalyticsSummary, useEquityCurve, useOpenPositions, useTrades } from '@/hooks/useAnalytics';
-import { useStrategyAssignments, usePauseAssignment, useResumeAssignment, useClosePosition } from '@/hooks/useStrategyAssignments';
+import { useState } from 'react';
+import { useStrategyAssignments, usePauseAssignment, useResumeAssignment, useClosePosition, useSwitchStrategy } from '@/hooks/useStrategyAssignments';
 import { useStrategies } from '@/hooks/useStrategies';
 import { useMt5Accounts } from '@/hooks/useMt5Accounts';
 import { TradingSettings } from '@/components/TradingSettings';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Target, Play, Pause, ArrowRight, X } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Target, Play, Pause, ArrowRight, X, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 
 export default function DashboardPage() {
@@ -20,6 +21,8 @@ export default function DashboardPage() {
   const pauseAssignment = usePauseAssignment();
   const resumeAssignment = useResumeAssignment();
   const closePosition = useClosePosition();
+  const switchStrategy = useSwitchStrategy();
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
 
   const activeAssignments = assignments?.filter((a) => a.status === 'active' || a.status === 'paused') || [];
   const hasAccounts = accounts && accounts.length > 0;
@@ -77,7 +80,42 @@ export default function DashboardPage() {
             return (
               <div key={assignment.id} className="bg-white rounded-lg shadow p-5 border-l-4 border-green-500">
                 <div className="flex justify-between items-start mb-3">
-                  <h3 className="font-semibold text-gray-900">{strategyName}</h3>
+                  <div className="flex items-center gap-2">
+                    {switchingId === assignment.id ? (
+                      <select
+                        className="text-sm font-semibold text-gray-900 border border-gray-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                        defaultValue={assignment.strategy_key || ''}
+                        onChange={(e) => {
+                          const newKey = e.target.value;
+                          if (newKey && newKey !== assignment.strategy_key) {
+                            switchStrategy.mutate(
+                              { assignmentId: assignment.id, strategyProfileKey: newKey },
+                              { onSettled: () => setSwitchingId(null) }
+                            );
+                          } else {
+                            setSwitchingId(null);
+                          }
+                        }}
+                        onBlur={() => setSwitchingId(null)}
+                        autoFocus
+                      >
+                        {strategies?.map((s) => (
+                          <option key={s.key} value={s.key}>{s.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <>
+                        <h3 className="font-semibold text-gray-900">{strategyName}</h3>
+                        <button
+                          onClick={() => setSwitchingId(assignment.id)}
+                          className="text-gray-400 hover:text-gray-600 transition-colors"
+                          title="Switch strategy"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                     assignment.status === 'active'
                       ? 'bg-green-100 text-green-800'

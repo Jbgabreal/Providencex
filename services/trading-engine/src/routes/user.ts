@@ -305,6 +305,49 @@ router.post('/strategy-assignments/:id/resume', (req, res) =>
     updateAssignmentStatusRoute(req, res, 'stopped')
   );
 
+  // Switch strategy on an existing assignment (stop old + create new)
+  router.post('/strategy-assignments/:id/switch', async (req: Request, res: Response) => {
+    const userId = req.auth!.userId;
+    const id = req.params.id;
+    const { strategy_profile_key } = req.body || {};
+
+    if (!strategy_profile_key) {
+      return res.status(400).json({ error: 'strategy_profile_key is required' });
+    }
+
+    try {
+      // Validate the new strategy
+      const newProfile = await tenantRepo.getStrategyProfileByKey(String(strategy_profile_key));
+      if (!newProfile || !newProfile.is_public) {
+        return res.status(400).json({ error: 'Invalid or non-public strategy profile' });
+      }
+
+      // Get the existing assignment to find the account
+      const existing = await tenantRepo.getAssignmentById(id, userId);
+      if (!existing) {
+        return res.status(404).json({ error: 'Assignment not found' });
+      }
+
+      // Stop the old assignment
+      await tenantRepo.updateAssignmentStatus(id, userId, 'stopped');
+
+      // Create new assignment with the new strategy on the same account
+      const newAssignment = await tenantRepo.createAssignment({
+        userId,
+        mt5AccountId: existing.mt5_account_id,
+        strategyProfileId: newProfile.id,
+        status: 'active',
+      });
+
+      logger.info(`[UserRoutes] Switched strategy: ${existing.strategy_profile_id} → ${newProfile.id} on account ${existing.mt5_account_id}`);
+
+      res.json({ success: true, assignment: newAssignment, stoppedAssignmentId: id });
+    } catch (error) {
+      logger.error('[UserRoutes] Failed to switch strategy', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ---------- User Trading Config ----------
 
   router.patch('/strategy-assignments/:id/config', async (req: Request, res: Response) => {

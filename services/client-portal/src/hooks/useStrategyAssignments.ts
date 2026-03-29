@@ -112,6 +112,28 @@ export function useStopAssignment() {
   });
 }
 
+export function useSwitchStrategy() {
+  const queryClient = useQueryClient();
+
+  return useMutation<StrategyAssignment, Error, { assignmentId: string; strategyProfileKey: string }>({
+    mutationFn: async ({ assignmentId, strategyProfileKey }) => {
+      const response = await apiClient.post<{
+        success: boolean;
+        assignment: StrategyAssignment;
+      }>(`/api/user/strategy-assignments/${assignmentId}/switch`, {
+        strategy_profile_key: strategyProfileKey,
+      });
+      if (!response.data.success || !response.data.assignment) {
+        throw new Error('Failed to switch strategy');
+      }
+      return response.data.assignment;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.list() });
+    },
+  });
+}
+
 export function useUpdateAssignmentConfig() {
   const queryClient = useQueryClient();
 
