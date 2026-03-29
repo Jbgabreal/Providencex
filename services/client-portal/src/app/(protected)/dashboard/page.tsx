@@ -88,15 +88,20 @@ export default function DashboardPage() {
                         onChange={(e) => {
                           const newKey = e.target.value;
                           if (newKey && newKey !== assignment.strategy_key) {
-                            switchStrategy.mutate(
-                              { assignmentId: assignment.id, strategyProfileKey: newKey },
-                              { onSettled: () => setSwitchingId(null) }
-                            );
+                            const newName = strategies?.find(s => s.key === newKey)?.name || newKey;
+                            if (confirm(`Switch strategy from "${strategyName}" to "${newName}"?\n\nThis will stop the current assignment and start a new one.`)) {
+                              switchStrategy.mutate(
+                                { assignmentId: assignment.id, strategyProfileKey: newKey },
+                                { onSettled: () => setSwitchingId(null) }
+                              );
+                            } else {
+                              setSwitchingId(null);
+                            }
                           } else {
                             setSwitchingId(null);
                           }
                         }}
-                        onBlur={() => setSwitchingId(null)}
+                        onBlur={() => setTimeout(() => setSwitchingId(null), 200)}
                         autoFocus
                       >
                         {strategies?.map((s) => (
