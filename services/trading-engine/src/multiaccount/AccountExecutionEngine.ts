@@ -222,9 +222,13 @@ export class AccountExecutionEngine {
     const isSynthetic = signal.symbol.startsWith('V') || signal.symbol.startsWith('R_');
     const checkMarketHours = !isSynthetic && process.env.CHECK_MARKET_HOURS !== 'false'; // Default: true
     if (checkMarketHours) {
-      // Weekend check: Saturday (6) or Sunday (7) - market is closed
-      if (dayOfWeek === 6 || dayOfWeek === 7) {
-        const dayName = dayOfWeek === 6 ? 'Saturday' : 'Sunday';
+      // Weekend check: Forex is closed Saturday all day + Sunday before 17:00 ET
+      // Opens: Sunday ~17:00 ET (22:00 UTC)
+      // Closes: Friday ~17:00 ET (22:00 UTC)
+      const isSaturday = dayOfWeek === 6;
+      const isSundayBeforeOpen = dayOfWeek === 7 && hour < 17; // Before 5 PM ET Sunday
+      if (isSaturday || isSundayBeforeOpen) {
+        const dayName = dayOfWeek === 6 ? 'Saturday' : 'Sunday (before 17:00 ET)';
         logger.warn(`[${this.account.id}] Market is closed: ${dayName} - skipping trade`);
         return {
           accountId: this.account.id,
@@ -233,7 +237,7 @@ export class AccountExecutionEngine {
           reasons: [`Market is closed: ${dayName}`],
         };
       }
-      
+
       // Friday after market close: FX markets typically close around 17:00 ET (5 PM)
       if (dayOfWeek === 5 && hour >= 17) {
         logger.warn(`[${this.account.id}] Market is closed: Friday after 17:00 ET - skipping trade`);
