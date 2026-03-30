@@ -29,6 +29,19 @@ export class CandleStore {
       this.candles.set(symbol, candleArray);
     }
 
+    // Dedup: if the last candle has the same startTime, update it instead of adding
+    if (candleArray.length > 0) {
+      const last = candleArray[candleArray.length - 1];
+      if (last.startTime && candle.startTime &&
+          last.startTime.getTime() === candle.startTime.getTime()) {
+        last.high = Math.max(last.high, candle.high);
+        last.low = Math.min(last.low, candle.low);
+        last.close = candle.close;
+        last.volume = candle.volume || last.volume;
+        return;
+      }
+    }
+
     // Add new candle
     candleArray.push(candle);
 
