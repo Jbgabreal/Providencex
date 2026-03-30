@@ -64,15 +64,27 @@ export class MarketDataService {
       if (timeframe === 'M15') {
         const m15 = this.derivProvider.getM15Candles(symbol, limit);
         logger.info(`[MarketDataService] ${symbol} M15: derivProvider has ${m15.length} candles`);
-        if (m15.length > 0) {
+
+        // Also check M1 aggregation — use whichever has more candles
+        // DerivProvider M15 can be stale/few after market reopen
+        if (this.candleStore) {
+          const m1All = this.candleStore.getAllCandles(symbol);
+          const aggregatedCount = Math.floor(m1All.length / 15);
+          if (aggregatedCount > m15.length) {
+            // M1 aggregation produces more — skip DerivProvider, fall through to aggregation
+            logger.info(`[MarketDataService] ${symbol}: M1 aggregation (${aggregatedCount}) > derivProvider M15 (${m15.length}), using aggregation`);
+          } else if (m15.length > 0) {
+            return m15.map(c => ({
+              timestamp: c.startTime.toISOString(),
+              startTime: c.startTime,
+              open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+            })) as any;
+          }
+        } else if (m15.length > 0) {
           return m15.map(c => ({
             timestamp: c.startTime.toISOString(),
             startTime: c.startTime,
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-            volume: c.volume,
+            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
           })) as any;
         }
       }
