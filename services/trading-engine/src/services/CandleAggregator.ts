@@ -200,16 +200,39 @@ export function aggregateM1Candles(
   const groups = groupCandlesByTimeframe(recentM1Candles, targetTimeframe);
 
   // Aggregate each group into a single candle
+  // Filter out incomplete groups caused by market gaps (weekend, holidays)
+  // A valid M15 bar needs at least 8 of 15 M1 candles (>50% completeness)
+  // A valid H1 bar needs at least 30 of 60 M1 candles
+  // A valid H4 bar needs at least 120 of 240 M1 candles
+  const minCompleteness = 0.5; // at least 50% of expected M1 candles
   const aggregatedCandles: Candle[] = [];
 
   for (const group of groups) {
     if (group.length > 0) {
+      // Check for time gaps within the group — if first and last candle span
+      // more than 2x the expected timeframe, it's a gap-spanning group
+      const firstTime = group[0].startTime.getTime();
+      const lastTime = group[group.length - 1].startTime.getTime();
+      const expectedSpanMs = candlesPerBucket * 60 * 1000; // e.g. 15 min for M15
+      const actualSpanMs = lastTime - firstTime;
+
+      // Skip groups that span more than 2x expected (gap inside)
+      if (actualSpanMs > expectedSpanMs * 2 && group.length < candlesPerBucket * minCompleteness) {
+        continue;
+      }
+
+      // Skip very incomplete groups (less than 50% of expected candles)
+      // unless it's the most recent group (still forming)
+      const isLastGroup = group === groups[groups.length - 1];
+      if (!isLastGroup && group.length < candlesPerBucket * minCompleteness) {
+        continue;
+      }
+
       try {
         const aggregated = aggregateCandles(group, targetTimeframe, symbol);
         aggregatedCandles.push(aggregated);
       } catch (error) {
         logger.warn(`Failed to aggregate candles for ${symbol} on ${targetTimeframe}: ${error}`);
-        // Continue with other groups
       }
     }
   }
