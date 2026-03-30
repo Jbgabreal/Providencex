@@ -191,37 +191,36 @@ export function aggregateM1Candles(
     (a, b) => a.startTime.getTime() - b.startTime.getTime()
   );
 
-  // Remove gaps: if two consecutive M1 candles are more than 5 minutes apart,
-  // the market was closed. Drop everything before the last gap so we only
-  // aggregate continuous market data.
-  const MAX_GAP_MS = 5 * 60 * 1000; // 5 minutes — anything longer is a market close
-  let lastGapIdx = 0;
-  for (let i = 1; i < allCandles.length; i++) {
-    const gap = allCandles[i].startTime.getTime() - allCandles[i - 1].startTime.getTime();
-    if (gap > MAX_GAP_MS) {
-      lastGapIdx = i; // start fresh from after the gap
-    }
-  }
-  const continuousCandles = allCandles.slice(lastGapIdx);
-
-  // Take the most recent candles we need
-  const startIndex = Math.max(0, continuousCandles.length - Math.min(neededM1Count, continuousCandles.length));
-  const recentM1Candles = continuousCandles.slice(startIndex);
+  // Take the most recent candles we need (from the end of sorted array)
+  const startIndex = Math.max(0, allCandles.length - Math.min(neededM1Count, availableM1Count));
+  const recentM1Candles = allCandles.slice(startIndex);
 
   // Group candles by timeframe buckets
   const groups = groupCandlesByTimeframe(recentM1Candles, targetTimeframe);
 
   // Aggregate each group into a single candle
+  // Skip groups at market open/close boundaries that have too few candles
+  // (e.g. Friday 23:45 window with only 2 of 15 expected M1 candles)
+  // Allow the most recent group to be partial (still forming)
+  const minCandles = Math.max(1, Math.floor(candlesPerBucket * 0.4)); // at least 40% full
   const aggregatedCandles: Candle[] = [];
 
-  for (const group of groups) {
-    if (group.length > 0) {
-      try {
-        const aggregated = aggregateCandles(group, targetTimeframe, symbol);
-        aggregatedCandles.push(aggregated);
-      } catch (error) {
-        logger.warn(`Failed to aggregate candles for ${symbol} on ${targetTimeframe}: ${error}`);
-      }
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi];
+    if (group.length === 0) continue;
+
+    const isLastGroup = gi === groups.length - 1;
+
+    // Skip incomplete boundary groups (except the currently forming one)
+    if (!isLastGroup && group.length < minCandles && candlesPerBucket > 1) {
+      continue;
+    }
+
+    try {
+      const aggregated = aggregateCandles(group, targetTimeframe, symbol);
+      aggregatedCandles.push(aggregated);
+    } catch (error) {
+      logger.warn(`Failed to aggregate candles for ${symbol} on ${targetTimeframe}: ${error}`);
     }
   }
 
