@@ -186,48 +186,36 @@ export function aggregateM1Candles(
   const neededM1Count = limit * candlesPerBucket + candlesPerBucket; // Add buffer for incomplete window
   const availableM1Count = m1Candles.length;
 
-  // Take enough candles for aggregation (most recent candles)
-  // Sort by time (oldest first) for proper aggregation by time windows
+  // Sort by time (oldest first) for proper aggregation
   const allCandles = [...m1Candles].sort(
     (a, b) => a.startTime.getTime() - b.startTime.getTime()
   );
-  
-  // Take the most recent candles we need (from the end of sorted array)
-  const startIndex = Math.max(0, allCandles.length - Math.min(neededM1Count, availableM1Count));
-  const recentM1Candles = allCandles.slice(startIndex);
+
+  // Remove gaps: if two consecutive M1 candles are more than 5 minutes apart,
+  // the market was closed. Drop everything before the last gap so we only
+  // aggregate continuous market data.
+  const MAX_GAP_MS = 5 * 60 * 1000; // 5 minutes — anything longer is a market close
+  let lastGapIdx = 0;
+  for (let i = 1; i < allCandles.length; i++) {
+    const gap = allCandles[i].startTime.getTime() - allCandles[i - 1].startTime.getTime();
+    if (gap > MAX_GAP_MS) {
+      lastGapIdx = i; // start fresh from after the gap
+    }
+  }
+  const continuousCandles = allCandles.slice(lastGapIdx);
+
+  // Take the most recent candles we need
+  const startIndex = Math.max(0, continuousCandles.length - Math.min(neededM1Count, continuousCandles.length));
+  const recentM1Candles = continuousCandles.slice(startIndex);
 
   // Group candles by timeframe buckets
   const groups = groupCandlesByTimeframe(recentM1Candles, targetTimeframe);
 
   // Aggregate each group into a single candle
-  // Filter out incomplete groups caused by market gaps (weekend, holidays)
-  // A valid M15 bar needs at least 8 of 15 M1 candles (>50% completeness)
-  // A valid H1 bar needs at least 30 of 60 M1 candles
-  // A valid H4 bar needs at least 120 of 240 M1 candles
-  const minCompleteness = 0.5; // at least 50% of expected M1 candles
   const aggregatedCandles: Candle[] = [];
 
   for (const group of groups) {
     if (group.length > 0) {
-      // Check for time gaps within the group — if first and last candle span
-      // more than 2x the expected timeframe, it's a gap-spanning group
-      const firstTime = group[0].startTime.getTime();
-      const lastTime = group[group.length - 1].startTime.getTime();
-      const expectedSpanMs = candlesPerBucket * 60 * 1000; // e.g. 15 min for M15
-      const actualSpanMs = lastTime - firstTime;
-
-      // Skip groups that span more than 2x expected (gap inside)
-      if (actualSpanMs > expectedSpanMs * 2 && group.length < candlesPerBucket * minCompleteness) {
-        continue;
-      }
-
-      // Skip very incomplete groups (less than 50% of expected candles)
-      // unless it's the most recent group (still forming)
-      const isLastGroup = group === groups[groups.length - 1];
-      if (!isLastGroup && group.length < candlesPerBucket * minCompleteness) {
-        continue;
-      }
-
       try {
         const aggregated = aggregateCandles(group, targetTimeframe, symbol);
         aggregatedCandles.push(aggregated);
