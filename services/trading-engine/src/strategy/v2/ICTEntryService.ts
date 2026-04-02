@@ -1026,21 +1026,22 @@ export class ICTEntryService {
     let stopLoss: number;
     // Minimum SL distance to avoid noise stop-outs
     const isGold = symbol.toUpperCase() === 'XAUUSD' || symbol.toUpperCase() === 'GOLD';
-    const minSlDistance = isGold ? 5.0 : 0.0010; // 5 points for gold, 10 pips for forex
+    const isSynthetic = symbol.toUpperCase().startsWith('V') || symbol.toUpperCase().startsWith('R_');
+    const minSlDistance = isGold ? 5.0 : isSynthetic ? 500 : 0.0010; // 5 pts gold, 500 pts synthetic, 10 pips forex
 
     if (dir === 'bullish') {
       // BUY SL: Use the most recent M1 swing low (structural invalidation)
       // Fallback to OB low if no M1 swing found
       const m1SwingLow = recentM1Lows[0];
       const structuralLevel = m1SwingLow ? m1SwingLow.price : obLow;
-      const buffer = isGold ? 1.5 : 0.0003; // Fixed buffer: 1.5 pts gold, 3 pips forex
+      const buffer = isGold ? 1.5 : isSynthetic ? 200 : 0.0003; // 1.5 pts gold, 200 pts synthetic, 3 pips forex
       stopLoss = structuralLevel - buffer;
       if (ictLog) logger.info(`[ICT] SL: M1 swing low=${m1SwingLow?.price?.toFixed(3) || 'none'}, OB low=${obLow.toFixed(3)}, using=${structuralLevel.toFixed(3)}, SL=${stopLoss.toFixed(3)}`);
     } else {
       // SELL SL: Use the most recent M1 swing high (structural invalidation)
       const m1SwingHigh = recentM1Highs[0];
       const structuralLevel = m1SwingHigh ? m1SwingHigh.price : obHigh;
-      const buffer = isGold ? 1.5 : 0.0003;
+      const buffer = isGold ? 1.5 : isSynthetic ? 200 : 0.0003;
       stopLoss = structuralLevel + buffer;
       if (ictLog) logger.info(`[ICT] SL: M1 swing high=${m1SwingHigh?.price?.toFixed(3) || 'none'}, OB high=${obHigh.toFixed(3)}, using=${structuralLevel.toFixed(3)}, SL=${stopLoss.toFixed(3)}`);
     }
