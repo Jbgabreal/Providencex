@@ -127,10 +127,11 @@ export class ICTEntryService {
     if (m1Candles.length > 0) {
       const lastCandle = m1Candles[m1Candles.length - 1];
       const hour = lastCandle.startTime.getUTCHours();
+      const disableKZ = process.env.DISABLE_KILL_ZONE === 'true';
       const isAsianKZ = hour >= 0 && hour <= 6;
       const isLondonKZ = hour >= 7 && hour <= 11;
       const isNYKZ = hour >= 12 && hour <= 16;
-      outsideKillZone = !isAsianKZ && !isLondonKZ && !isNYKZ;
+      outsideKillZone = disableKZ ? false : !isAsianKZ && !isLondonKZ && !isNYKZ;
       if (outsideKillZone && ictLog) {
         logger.info(`[ICT] Outside kill zone (hour=${hour} UTC) — will compute setup but block entries`);
       }

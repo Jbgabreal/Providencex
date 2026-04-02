@@ -1764,10 +1764,11 @@ export class SMCStrategyV2 {
       // Outside kill zone — still track POIs but show reason
       const lastM1 = m1Candles[m1Candles.length - 1];
       const hourUTC = lastM1?.startTime?.getUTCHours() ?? 0;
+      const disableKZ = process.env.DISABLE_KILL_ZONE === 'true';
       const isAsianKZ = hourUTC >= 0 && hourUTC <= 6;
       const isLondonKZ = hourUTC >= 7 && hourUTC <= 11;
       const isNYKZ = hourUTC >= 12 && hourUTC <= 16;
-      const outsideKZ = !isAsianKZ && !isLondonKZ && !isNYKZ;
+      const outsideKZ = disableKZ ? false : !isAsianKZ && !isLondonKZ && !isNYKZ;
 
       // Check M15 setup zone — and track POI even if not valid yet
       if (!ictResult.setupZone || !ictResult.setupZone.isValid) {
