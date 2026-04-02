@@ -1023,75 +1023,64 @@ export class ICTEntryService {
     const recentM1Highs = m1Swings.filter(s => s.type === 'high' && s.index <= confirmIndex).sort((a, b) => b.index - a.index);
     const recentM1Lows = m1Swings.filter(s => s.type === 'low' && s.index <= confirmIndex).sort((a, b) => b.index - a.index);
 
+    // SL = structural invalidation level (ICT method)
+    // BUY: SL below recent M1 swing low (or OB low if no swing)
+    // SELL: SL above recent M1 swing high (or OB high if no swing)
+    // Add a small buffer for spread/noise, but NEVER override the structural level.
+    // If the structural SL is too tight, skip the trade — don't force a fake SL.
     let stopLoss: number;
-    // Minimum SL distance to avoid noise stop-outs
     const isGold = symbol.toUpperCase() === 'XAUUSD' || symbol.toUpperCase() === 'GOLD';
     const isSynthetic = symbol.toUpperCase().startsWith('V') || symbol.toUpperCase().startsWith('R_');
-    const minSlDistance = isGold ? 5.0 : isSynthetic ? 500 : 0.0010; // 5 pts gold, 500 pts synthetic, 10 pips forex
+    // Buffer: small amount beyond the structural level for spread protection
+    const buffer = isGold ? 1.5 : isSynthetic ? 200 : 0.00030;
 
     if (dir === 'bullish') {
-      // BUY SL: Use the most recent M1 swing low (structural invalidation)
-      // Fallback to OB low if no M1 swing found
       const m1SwingLow = recentM1Lows[0];
+      // Priority: M1 swing low > OB low (structural invalidation)
       const structuralLevel = m1SwingLow ? m1SwingLow.price : obLow;
-      const buffer = isGold ? 1.5 : isSynthetic ? 200 : 0.0003; // 1.5 pts gold, 200 pts synthetic, 3 pips forex
       stopLoss = structuralLevel - buffer;
-      if (ictLog) logger.info(`[ICT] SL: M1 swing low=${m1SwingLow?.price?.toFixed(3) || 'none'}, OB low=${obLow.toFixed(3)}, using=${structuralLevel.toFixed(3)}, SL=${stopLoss.toFixed(3)}`);
+      if (ictLog) logger.info(`[ICT] SL: M1 swing low=${m1SwingLow?.price?.toFixed(5) || 'none'}, OB low=${obLow.toFixed(5)}, struct=${structuralLevel.toFixed(5)}, SL=${stopLoss.toFixed(5)}`);
     } else {
-      // SELL SL: Use the most recent M1 swing high (structural invalidation)
       const m1SwingHigh = recentM1Highs[0];
       const structuralLevel = m1SwingHigh ? m1SwingHigh.price : obHigh;
-      const buffer = isGold ? 1.5 : isSynthetic ? 200 : 0.0003;
       stopLoss = structuralLevel + buffer;
-      if (ictLog) logger.info(`[ICT] SL: M1 swing high=${m1SwingHigh?.price?.toFixed(3) || 'none'}, OB high=${obHigh.toFixed(3)}, using=${structuralLevel.toFixed(3)}, SL=${stopLoss.toFixed(3)}`);
+      if (ictLog) logger.info(`[ICT] SL: M1 swing high=${m1SwingHigh?.price?.toFixed(5) || 'none'}, OB high=${obHigh.toFixed(5)}, struct=${structuralLevel.toFixed(5)}, SL=${stopLoss.toFixed(5)}`);
     }
 
-    // Enforce minimum SL distance
-    const slDist = Math.abs(entryPrice - stopLoss);
-    if (slDist < minSlDistance) {
-      if (ictLog) logger.info(`[ICT] ❌ SL too tight: ${slDist.toFixed(3)} < min ${minSlDistance} — widening to minimum`);
-      stopLoss = dir === 'bullish' ? entryPrice - minSlDistance : entryPrice + minSlDistance;
+    // Validate SL is in the correct direction — if not, the structure is broken
+    const slCorrectDir = (dir === 'bullish' && stopLoss < entryPrice) ||
+                         (dir === 'bearish' && stopLoss > entryPrice);
+    if (!slCorrectDir) {
+      if (ictLog) logger.info(`[ICT] ❌ SL ${stopLoss.toFixed(5)} wrong side of entry ${entryPrice.toFixed(5)} for ${dir} — structure broken`);
+      reasons.push(`SL wrong direction: structure invalidated`);
+      return this.invalidEntry(dir, reasons);
     }
 
-    // 5. TP = M15 swing point (the HH for bullish, LL for bearish)
-    let takeProfit: number;
+    // 5. TP = M15 swing target (where ICT says price should reach)
+    // Fallback: use R:R multiple of risk distance
     const risk = Math.abs(entryPrice - stopLoss);
-
-    // Minimum R:R filter — don't enter if risk/reward is too poor
-    const minRR = 1.5;
+    let takeProfit: number;
 
     if (setupZone.tpTarget && setupZone.tpTarget > 0) {
       takeProfit = setupZone.tpTarget;
+      // Validate TP direction
+      const tpCorrectDir = (dir === 'bullish' && takeProfit > entryPrice) ||
+                           (dir === 'bearish' && takeProfit < entryPrice);
+      if (!tpCorrectDir) {
+        if (ictLog) logger.info(`[ICT] TP ${takeProfit.toFixed(5)} wrong direction, using R:R fallback`);
+        takeProfit = dir === 'bullish' ? entryPrice + risk * this.riskRewardRatio : entryPrice - risk * this.riskRewardRatio;
+      }
     } else {
       takeProfit = dir === 'bullish' ? entryPrice + risk * this.riskRewardRatio : entryPrice - risk * this.riskRewardRatio;
     }
 
-    // CRITICAL: Validate TP is in the right direction
-    // Bullish: TP must be ABOVE entry
-    // Bearish: TP must be BELOW entry
-    const tpValid = (dir === 'bullish' && takeProfit > entryPrice) ||
-                    (dir === 'bearish' && takeProfit < entryPrice);
-    if (!tpValid) {
-      // TP target is wrong direction — use R:R fallback
-      if (ictLog) logger.info(`[ICT] TP ${takeProfit.toFixed(5)} wrong direction for ${dir} entry ${entryPrice.toFixed(5)}, using R:R fallback`);
-      takeProfit = dir === 'bullish' ? entryPrice + risk * this.riskRewardRatio : entryPrice - risk * this.riskRewardRatio;
-    }
+    // R:R check — reject if the structural SL gives poor R:R
+    const reward = Math.abs(takeProfit - entryPrice);
+    const rr = risk > 0 ? reward / risk : 0;
+    const minRR = 1.5;
 
-    // Validate SL is in the right direction
-    const slValid = (dir === 'bullish' && stopLoss < entryPrice) ||
-                    (dir === 'bearish' && stopLoss > entryPrice);
-    if (!slValid) {
-      if (ictLog) logger.info(`[ICT] SL ${stopLoss.toFixed(5)} wrong direction for ${dir} entry ${entryPrice.toFixed(5)}, using fixed SL`);
-      stopLoss = dir === 'bullish' ? entryPrice - risk : entryPrice + risk;
-    }
-
-    // Validate entry/SL/TP
-    const slRisk = Math.abs(entryPrice - stopLoss);
-    const rr = takeProfit !== 0 && slRisk !== 0 ? Math.abs(takeProfit - entryPrice) / slRisk : this.riskRewardRatio;
-
-    // Reject if R:R is too poor — ICT says minimum 2:1 but we use 1.5:1
     if (rr < minRR) {
-      if (ictLog) logger.info(`[ICT] ❌ R:R too low: ${rr.toFixed(2)} (need ≥${minRR}) — entry=${entryPrice.toFixed(5)}, SL=${stopLoss.toFixed(5)}, TP=${takeProfit.toFixed(5)}`);
+      if (ictLog) logger.info(`[ICT] ❌ R:R too low: ${rr.toFixed(2)} (need ≥${minRR}) — entry=${entryPrice.toFixed(5)}, SL=${stopLoss.toFixed(5)}, TP=${takeProfit.toFixed(5)}, risk=${risk.toFixed(5)}, reward=${reward.toFixed(5)}`);
       reasons.push(`R:R ${rr.toFixed(2)} below minimum ${minRR}`);
       return this.invalidEntry(dir, reasons);
     }
