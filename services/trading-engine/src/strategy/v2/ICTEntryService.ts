@@ -971,7 +971,8 @@ export class ICTEntryService {
         const bodySize = Math.abs(c.close - c.open);
         const prevBody = prev ? Math.abs(prev.close - prev.open) : 0;
         const isEngulfing = prev && isBullish && bodySize > prevBody && c.close > (prev?.high || 0);
-        const isStrongBullish = isBullish && bodySize > (c.high - c.low) * 0.6; // Tightened: body > 60% of range
+        const minBodyRatio = parseFloat(process.env.M1_CONFIRM_BODY_RATIO || '0.4');
+        const isStrongBullish = isBullish && bodySize > (c.high - c.low) * minBodyRatio;
 
         // CHoCH check: candle must close above the most recent M1 swing high (structure shift)
         const recentSwingHigh = swingHighsBeforeTouch[0];
@@ -990,7 +991,8 @@ export class ICTEntryService {
         const bodySize = Math.abs(c.close - c.open);
         const prevBody = prev ? Math.abs(prev.close - prev.open) : 0;
         const isEngulfing = prev && isBearish && bodySize > prevBody && c.close < (prev?.low || Infinity);
-        const isStrongBearish = isBearish && bodySize > (c.high - c.low) * 0.6; // Tightened from 50% to 60%
+        const minBodyRatioSell = parseFloat(process.env.M1_CONFIRM_BODY_RATIO || '0.4');
+        const isStrongBearish = isBearish && bodySize > (c.high - c.low) * minBodyRatioSell;
 
         const recentSwingLow = swingLowsBeforeTouch[0];
         const hasChoCH = recentSwingLow ? c.close < recentSwingLow.price : false;
