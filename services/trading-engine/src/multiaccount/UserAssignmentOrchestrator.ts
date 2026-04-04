@@ -284,8 +284,12 @@ export class UserAssignmentOrchestrator {
       },
       killSwitch: {
         enabled: true,
-        dailyDDLimit: 0,
-        weeklyDDLimit: 0,
+        dailyDDLimit: ctx.profileRiskConfig.maxDailyDrawdownPercent > 0
+          ? (ctx.profileRiskConfig.maxDailyDrawdownPercent / 100) * 500
+          : 100, // Default $100 daily drawdown limit
+        weeklyDDLimit: ctx.profileRiskConfig.maxDailyDrawdownPercent > 0
+          ? (ctx.profileRiskConfig.maxDailyDrawdownPercent / 100) * 500 * 3
+          : 300, // Default $300 weekly drawdown limit
       },
       executionFilter: {},
       enabled: true,
