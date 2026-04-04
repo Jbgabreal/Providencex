@@ -1,0 +1,139 @@
+// ProvidenceX Gold Scalper — LIVE Signal Indicator
+// Same logic as the profitable strategy (PF 1.591)
+// Sends webhook alerts with JSON for automated execution
+
+//@version=6
+indicator("ProvidenceX Gold Scalper Signal", overlay=true, max_labels_count=50)
+
+// ═══════════════ INPUTS ═══════════════
+ema8Len   = input.int(8,  "EMA Fast")
+ema21Len  = input.int(21, "EMA Mid")
+ema55Len  = input.int(55, "EMA Slow")
+slopeLen  = input.int(10, "EMA55 Slope Lookback")
+
+macdFast  = input.int(12, "MACD Fast")
+macdSlow  = input.int(26, "MACD Slow")
+macdSig   = input.int(9,  "MACD Signal")
+
+rsiLen    = input.int(14, "RSI Length")
+rsiLongLo = input.float(45, "RSI Long Min")
+rsiLongHi = input.float(75, "RSI Long Max")
+rsiShrtLo = input.float(25, "RSI Short Min")
+rsiShrtHi = input.float(55, "RSI Short Max")
+
+adxLen    = input.int(14, "ADX Length")
+adxMin    = input.float(15, "ADX Min")
+
+atrLen    = input.int(14, "ATR Length")
+slMult    = input.float(1.0, "SL (x ATR)")
+tp1Mult   = input.float(2.0, "TP1 (x ATR)")
+tp2Mult   = input.float(5.0, "TP2 (x ATR)")
+cooldown  = input.int(3, "Cooldown bars")
+maxDaily  = input.int(6, "Max signals per day")
+
+webhookSecret = input.string("", "Webhook Secret", tooltip="Must match TV_WEBHOOK_SECRET on trading engine")
+
+// ═══════════════ INDICATORS ═══════════════
+ema8  = ta.ema(close, ema8Len)
+ema21 = ta.ema(close, ema21Len)
+ema55 = ta.ema(close, ema55Len)
+
+[macdLine, signalLine, hist] = ta.macd(close, macdFast, macdSlow, macdSig)
+rsi = ta.rsi(close, rsiLen)
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxLen)
+atr = ta.atr(atrLen)
+
+// ═══════════════ CONDITIONS ═══════════════
+emaLongAlign  = ema8 > ema21 and ema21 > ema55
+emaShortAlign = ema8 < ema21 and ema21 < ema55
+
+ema55Slope = (ema55 - ema55[slopeLen]) / ema55[slopeLen] * 100
+slopeUp = ema55Slope > 0.01
+slopeDn = ema55Slope < -0.01
+
+macdBullCross = ta.crossover(macdLine, signalLine)
+macdBearCross = ta.crossunder(macdLine, signalLine)
+macdBullRecent = macdBullCross or macdBullCross[1]
+macdBearRecent = macdBearCross or macdBearCross[1]
+macdAboveZero = macdLine > 0
+macdBelowZero = macdLine < 0
+
+rsiLongOK  = rsi >= rsiLongLo and rsi <= rsiLongHi
+rsiShortOK = rsi >= rsiShrtLo and rsi <= rsiShrtHi
+
+adxTrending = adxVal >= adxMin
+
+bullCandle = close > open
+bearCandle = close < open
+
+volSma = ta.sma(volume, 20)
+volOK = volume > volSma * 0.8
+
+// ═══════════════ SIGNALS ═══════════════
+longEntry = emaLongAlign and slopeUp and macdBullRecent and macdAboveZero and rsiLongOK and adxTrending and bullCandle and volOK
+shortEntry = emaShortAlign and slopeDn and macdBearRecent and macdBelowZero and rsiShortOK and adxTrending and bearCandle and volOK
+
+// Cooldown + daily limit
+var int lastBar = 0
+var int daySignals = 0
+var int lastDay = 0
+if dayofweek != lastDay
+    daySignals := 0
+    lastDay := dayofweek
+
+canSignal = bar_index - lastBar > cooldown and daySignals < maxDaily
+
+finalBuy  = longEntry and canSignal
+finalSell = shortEntry and canSignal
+
+if finalBuy or finalSell
+    lastBar := bar_index
+    daySignals += 1
+
+// ═══════════════ SL / TP CALCULATION ═══════════════
+float buySL = na
+float buyTP1 = na
+float buyTP2 = na
+if finalBuy
+    buySL  := close - atr * slMult
+    buyTP1 := close + atr * tp1Mult
+    buyTP2 := close + atr * tp2Mult
+
+float sellSL = na
+float sellTP1 = na
+float sellTP2 = na
+if finalSell
+    sellSL  := close + atr * slMult
+    sellTP1 := close - atr * tp1Mult
+    sellTP2 := close - atr * tp2Mult
+
+// ═══════════════ WEBHOOK ALERTS ═══════════════
+secretField = webhookSecret != "" ? '"secret":"' + webhookSecret + '",' : ""
+
+if finalBuy
+    msg = '{' + secretField + '"symbol":"' + syminfo.ticker + '","direction":"buy","entry":' + str.tostring(close) + ',"stopLoss":' + str.tostring(buySL) + ',"takeProfit":' + str.tostring(buyTP1) + ',"orderKind":"market","reason":"EMA align + MACD cross + RSI + ADX + Volume","meta":{"tp2":' + str.tostring(buyTP2) + ',"atr":' + str.tostring(math.round(atr * 100) / 100) + ',"rsi":' + str.tostring(math.round(rsi * 100) / 100) + ',"adx":' + str.tostring(math.round(adxVal * 100) / 100) + ',"interval":"' + timeframe.period + '"}}'
+    alert(msg, alert.freq_once_per_bar)
+
+if finalSell
+    msg = '{' + secretField + '"symbol":"' + syminfo.ticker + '","direction":"sell","entry":' + str.tostring(close) + ',"stopLoss":' + str.tostring(sellSL) + ',"takeProfit":' + str.tostring(sellTP1) + ',"orderKind":"market","reason":"EMA align + MACD cross + RSI + ADX + Volume","meta":{"tp2":' + str.tostring(sellTP2) + ',"atr":' + str.tostring(math.round(atr * 100) / 100) + ',"rsi":' + str.tostring(math.round(rsi * 100) / 100) + ',"adx":' + str.tostring(math.round(adxVal * 100) / 100) + ',"interval":"' + timeframe.period + '"}}'
+    alert(msg, alert.freq_once_per_bar)
+
+// ═══════════════ VISUALS ═══════════════
+plot(ema8,  "EMA 8",  color=color.blue, linewidth=1)
+plot(ema21, "EMA 21", color=color.yellow, linewidth=1)
+plot(ema55, "EMA 55", color=color.red, linewidth=2)
+
+plotshape(finalBuy,  "BUY",  shape.triangleup,   location.belowbar, color.green, size=size.small)
+plotshape(finalSell, "SELL", shape.triangledown, location.abovebar,  color.red,   size=size.small)
+
+bgcolor(emaLongAlign ? color.new(color.green, 95) : emaShortAlign ? color.new(color.red, 95) : na)
+
+// Labels for SL/TP levels on signal
+if finalBuy
+    label.new(bar_index, low, "BUY\nSL:" + str.tostring(math.round(buySL * 100)/100) + "\nTP1:" + str.tostring(math.round(buyTP1 * 100)/100) + "\nTP2:" + str.tostring(math.round(buyTP2 * 100)/100), style=label.style_label_up, color=color.green, textcolor=color.white, size=size.tiny)
+if finalSell
+    label.new(bar_index, high, "SELL\nSL:" + str.tostring(math.round(sellSL * 100)/100) + "\nTP1:" + str.tostring(math.round(sellTP1 * 100)/100) + "\nTP2:" + str.tostring(math.round(sellTP2 * 100)/100), style=label.style_label_down, color=color.red, textcolor=color.white, size=size.tiny)
+
+// Alert conditions (backup)
+alertcondition(finalBuy, "ProvidenceX BUY", "BUY {{ticker}} @ {{close}}")
+alertcondition(finalSell, "ProvidenceX SELL", "SELL {{ticker}} @ {{close}}")

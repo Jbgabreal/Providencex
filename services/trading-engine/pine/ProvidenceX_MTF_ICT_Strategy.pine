@@ -1,0 +1,169 @@
+// ProvidenceX Gold Scalper — Based on proven GoldScalper methodology
+// EMA alignment + MACD + RSI + ADX confluence
+// PF target: 1.5+ | WR target: 40%+ | Trades: 30-85/month on M5
+// Works on M5, M15, H1
+
+//@version=6
+strategy("ProvidenceX Gold Scalper", overlay=true, initial_capital=500, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.cash_per_order, commission_value=0.07, slippage=1, pyramiding=0)
+
+// ═══════════════ INPUTS ═══════════════
+// EMA
+ema8Len   = input.int(8,  "EMA Fast", minval=3)
+ema21Len  = input.int(21, "EMA Mid", minval=5)
+ema55Len  = input.int(55, "EMA Slow", minval=10)
+slopeLen  = input.int(10, "EMA55 Slope Lookback", minval=3)
+
+// MACD
+macdFast  = input.int(12, "MACD Fast")
+macdSlow  = input.int(26, "MACD Slow")
+macdSig   = input.int(9,  "MACD Signal")
+
+// RSI
+rsiLen    = input.int(14, "RSI Length")
+rsiLongLo = input.float(45, "RSI Long Min", minval=30)
+rsiLongHi = input.float(75, "RSI Long Max", minval=50)
+rsiShrtLo = input.float(25, "RSI Short Min", minval=10)
+rsiShrtHi = input.float(55, "RSI Short Max", minval=30)
+
+// ADX
+adxLen    = input.int(14, "ADX Length")
+adxMin    = input.float(15, "ADX Min (trending)", minval=10)
+
+// Risk
+atrLen    = input.int(14, "ATR Length")
+slMult    = input.float(1.0, "SL (x ATR)", minval=0.5, step=0.1)
+tp1Mult   = input.float(2.0, "TP1 (x ATR)", minval=1.0, step=0.5)
+tp2Mult   = input.float(5.0, "TP2 (x ATR)", minval=2.0, step=0.5)
+useBE     = input.bool(true, "Move SL to BE after TP1")
+cooldown  = input.int(3, "Cooldown bars", minval=1)
+maxDaily  = input.int(6, "Max trades per day", minval=1)
+
+// ═══════════════ INDICATORS ═══════════════
+ema8  = ta.ema(close, ema8Len)
+ema21 = ta.ema(close, ema21Len)
+ema55 = ta.ema(close, ema55Len)
+
+[macdLine, signalLine, hist] = ta.macd(close, macdFast, macdSlow, macdSig)
+
+rsi = ta.rsi(close, rsiLen)
+
+// ADX calculation
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxLen)
+
+atr = ta.atr(atrLen)
+
+// ═══════════════ CONDITIONS ═══════════════
+// 1. EMA Alignment
+emaLongAlign  = ema8 > ema21 and ema21 > ema55
+emaShortAlign = ema8 < ema21 and ema21 < ema55
+
+// 2. EMA55 Slope (trending, not flat)
+ema55Slope = (ema55 - ema55[slopeLen]) / ema55[slopeLen] * 100
+slopeUp   = ema55Slope > 0.01
+slopeDn   = ema55Slope < -0.01
+
+// 3. MACD Crossover
+macdBullCross = ta.crossover(macdLine, signalLine)
+macdBearCross = ta.crossunder(macdLine, signalLine)
+// Accept MACD cross on this bar or previous bar only
+macdBullRecent = macdBullCross or macdBullCross[1]
+macdBearRecent = macdBearCross or macdBearCross[1]
+
+// 4. MACD position relative to zero
+macdAboveZero = macdLine > 0
+macdBelowZero = macdLine < 0
+
+// 5. RSI in range
+rsiLongOK  = rsi >= rsiLongLo and rsi <= rsiLongHi
+rsiShortOK = rsi >= rsiShrtLo and rsi <= rsiShrtHi
+
+// 6. ADX trending
+adxTrending = adxVal >= adxMin
+
+// 7. Candle direction + volume
+bullCandle = close > open
+bearCandle = close < open
+
+// 8. Volume above average (momentum confirmation)
+volSma = ta.sma(volume, 20)
+volOK = volume > volSma * 0.8
+
+// ═══════════════ ENTRY SIGNALS (ALL 7 required) ═══════════════
+longEntry = emaLongAlign and slopeUp and macdBullRecent and macdAboveZero and rsiLongOK and adxTrending and bullCandle and volOK
+shortEntry = emaShortAlign and slopeDn and macdBearRecent and macdBelowZero and rsiShortOK and adxTrending and bearCandle and volOK
+
+// ═══════════════ TRADE MANAGEMENT ═══════════════
+var int lastBar = 0
+var int dayT = 0
+var int lDay = 0
+if dayofweek != lDay
+    dayT := 0
+    lDay := dayofweek
+
+canTrade = bar_index - lastBar > cooldown and strategy.position_size == 0 and dayT < maxDaily
+
+var float entryPrice = na
+var float slPrice = na
+var bool tp1Hit = false
+
+// LONG ENTRY
+if longEntry and canTrade
+    entryPrice := close
+    slPrice := close - atr * slMult
+    float tp1 = close + atr * tp1Mult
+    float tp2 = close + atr * tp2Mult
+
+    strategy.entry("LONG", strategy.long)
+    // TP1: close 50% at 2x ATR
+    strategy.exit("TP1", "LONG", qty_percent=50, limit=tp1, stop=slPrice)
+    // TP2: close remaining 50% at 5x ATR
+    strategy.exit("TP2", "LONG", limit=tp2, stop=slPrice)
+
+    lastBar := bar_index
+    dayT += 1
+    tp1Hit := false
+
+// SHORT ENTRY
+if shortEntry and canTrade
+    entryPrice := close
+    slPrice := close + atr * slMult
+    float tp1 = close - atr * tp1Mult
+    float tp2 = close - atr * tp2Mult
+
+    strategy.entry("SHORT", strategy.short)
+    strategy.exit("TP1", "SHORT", qty_percent=50, limit=tp1, stop=slPrice)
+    strategy.exit("TP2", "SHORT", limit=tp2, stop=slPrice)
+
+    lastBar := bar_index
+    dayT += 1
+    tp1Hit := false
+
+// BREAKEVEN after TP1 hit
+if useBE and strategy.position_size > 0 and not na(entryPrice)
+    if not tp1Hit and close >= entryPrice + atr * tp1Mult
+        tp1Hit := true
+    if tp1Hit
+        strategy.exit("TP2", "LONG", limit=entryPrice + atr * tp2Mult, stop=entryPrice + atr * 0.1)
+
+if useBE and strategy.position_size < 0 and not na(entryPrice)
+    if not tp1Hit and close <= entryPrice - atr * tp1Mult
+        tp1Hit := true
+    if tp1Hit
+        strategy.exit("TP2", "SHORT", limit=entryPrice - atr * tp2Mult, stop=entryPrice - atr * 0.1)
+
+// EMA cross exit (emergency — trend reversal)
+if strategy.position_size > 0 and ta.crossunder(ema8, ema21)
+    strategy.close("LONG", comment="EMA Exit")
+if strategy.position_size < 0 and ta.crossover(ema8, ema21)
+    strategy.close("SHORT", comment="EMA Exit")
+
+// ═══════════════ VISUALS ═══════════════
+plot(ema8,  "EMA 8",  color=color.new(color.blue, 0), linewidth=1)
+plot(ema21, "EMA 21", color=color.new(color.yellow, 0), linewidth=1)
+plot(ema55, "EMA 55", color=color.new(color.red, 0), linewidth=2)
+
+plotshape(longEntry and canTrade,  "BUY",  shape.triangleup,   location.belowbar, color.green, size=size.small)
+plotshape(shortEntry and canTrade, "SELL", shape.triangledown, location.abovebar,  color.red,   size=size.small)
+
+// Background: green tint when all EMAs aligned up, red when down
+bgcolor(emaLongAlign ? color.new(color.green, 95) : emaShortAlign ? color.new(color.red, 95) : na)
