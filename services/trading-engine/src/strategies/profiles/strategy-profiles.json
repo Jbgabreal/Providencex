@@ -205,6 +205,27 @@
       "lossPauseMinutes": 120,
       "slippageTicks": 2
     }
+  },
+  {
+    "id": "tradingview_signal_v1",
+    "key": "tradingview_signal_v1",
+    "displayName": "TradingView Signal (Pine Indicators)",
+    "description": "Reads ICT/SMC Pine indicator drawings (OB boxes, bias labels, entry signals) from TradingView Desktop via CDP. Requires TradingView Desktop running with --remote-debugging-port=9222 and Pine indicators loaded on charts.",
+    "implementationKey": "TV_SIGNAL_V1",
+    "version": 1,
+    "createdAt": "2026-04-03T00:00:00.000Z",
+    "updatedAt": "2026-04-03T00:00:00.000Z",
+    "isDefault": false,
+    "isArchived": false,
+    "config": {
+      "obIndicatorFilter": "",
+      "biasIndicatorFilter": "",
+      "entryIndicatorFilter": "",
+      "minRR": 1.5,
+      "slBuffer": 0,
+      "defaultSlPips": 30,
+      "note": "Set TV_OB_INDICATOR, TV_BIAS_INDICATOR, TV_ENTRY_INDICATOR env vars to filter specific Pine indicators. Leave empty to scan all indicators."
+    }
   }
 ]
 

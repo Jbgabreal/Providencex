@@ -44,6 +44,8 @@ import { IStrategy, StrategyContext, StrategyResult } from './strategies/types';
 import { StrategyAdapter } from './strategies/StrategyAdapter';
 import { getStrategyByProfileKey } from './strategies/StrategyRegistry';
 import { getProfileByKey } from './strategies/profiles/StrategyProfileStore';
+import { TradingViewStrategy } from './tradingview/TradingViewStrategy';
+import { createTVWebhookRouter } from './tradingview/webhookRoute';
 import { TradeJournalService, TradeJournalRepository, SignalOutcomeTracker } from './journal';
 import orderEventsRoutes, { initializeOrderEventService } from './routes/orderEvents';
 import strategyConfigRoutes from './routes/strategyConfig';
@@ -107,6 +109,56 @@ app.use((req, res, next) => {
 });
 
 app.use('/health', healthRoutes);
+
+// TradingView CDP health check endpoint
+app.get('/api/v1/admin/tv-health', async (_req, res) => {
+  try {
+    // Find active TV strategy from pipelines
+    let tvStrategy: TradingViewStrategy | null = null;
+    for (const { config: pConfig } of activeStrategyPipelines) {
+      if (pConfig.strategyKey === 'TV_SIGNAL_V1') {
+        // The signalSource is a StrategyAdapter wrapping TradingViewStrategy
+        // Access the underlying bridge via a stored reference
+        tvStrategy = (pConfig as any)._tvStrategy || null;
+        break;
+      }
+    }
+    if (!tvStrategy) {
+      return res.json({ ok: false, error: 'TradingView strategy not active. Add tradingview_signal_v1 to ACTIVE_STRATEGIES.' });
+    }
+    const health = await tvStrategy.getBridge().healthCheck();
+    res.json(health);
+  } catch (err) {
+    res.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// TradingView Webhook — direct signal execution from TV alerts
+const tvWebhookRouter = createTVWebhookRouter(async (signal, strategy) => {
+  // Feed the webhook signal through the same pipeline as the tick loop
+  // by creating a one-shot signalSource that returns this signal
+  const oneShot = {
+    generateSignal: async () => signal,
+    getLastSmcReason: () => null,
+  };
+  const pipelineConfig: StrategyPipelineConfig = {
+    displayName: 'TradingView Webhook',
+    strategyKey: 'TV_WEBHOOK',
+    profileKey: null,
+    strategyVersion: 'TV_WEBHOOK_V1',
+    skipV3Filter: true, // TV indicator already did the analysis
+    signalSource: oneShot,
+  };
+  const result = await processTradingDecision(signal.symbol, strategy as any, pipelineConfig);
+  return {
+    decision: result.decision,
+    reason: result.risk_reason || result.signal_reason,
+    ticket: result.execution_result?.ticket,
+    error: result.execution_result?.error,
+  };
+});
+app.use('/api/tv', tvWebhookRouter);
+
 app.use('/simulate-signal', simulateSignalRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/admin/strategy-profiles', createAdminStrategyProfilesRouter(config));
@@ -299,17 +351,22 @@ if (activeStrategyKeys.length > 0) {
         // Read allowedSymbols from the raw profile (not on IStrategy interface)
         const rawProfile = await getProfileByKey(key);
         const allowedSymbols = (rawProfile as any)?.allowedSymbols || (rawProfile as any)?.symbols || undefined;
-        activeStrategyPipelines.push({
-          strategy: 'low', // Share same risk/guardrail bucket
-          config: {
+        const pipelineConfig: StrategyPipelineConfig & { _tvStrategy?: TradingViewStrategy } = {
             displayName: strategy.displayName,
             strategyKey: strategy.key,
             profileKey: key,
             strategyVersion: strategy.key,
-            skipV3Filter: strategy.key === 'GOD_SMC_V1' || strategy.key === 'FVG_SCALP_V1' || strategy.key === 'FVG_SCALP_AGG_V1' || strategy.key === 'MOMENTUM_SCALP_V1' || strategy.key === 'SILVER_BULLET_V1',
+            skipV3Filter: strategy.key === 'GOD_SMC_V1' || strategy.key === 'FVG_SCALP_V1' || strategy.key === 'FVG_SCALP_AGG_V1' || strategy.key === 'MOMENTUM_SCALP_V1' || strategy.key === 'SILVER_BULLET_V1' || strategy.key === 'TV_SIGNAL_V1',
             allowedSymbols,
             signalSource: adapter,
-          },
+        };
+        // Store reference to TradingViewStrategy for health check endpoint
+        if (strategy instanceof TradingViewStrategy) {
+          pipelineConfig._tvStrategy = strategy;
+        }
+        activeStrategyPipelines.push({
+          strategy: 'low', // Share same risk/guardrail bucket
+          config: pipelineConfig,
         });
         logger.info(`[Server] Loaded IStrategy: ${strategy.key} (${strategy.displayName}), skipV3Filter=${strategy.key === 'GOD_SMC_V1' || strategy.key === 'FVG_SCALP_V1'}`);
       } catch (err) {

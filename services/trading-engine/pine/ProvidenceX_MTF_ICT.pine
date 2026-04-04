@@ -1,0 +1,248 @@
+// This Pine Script(TM) is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+// ProvidenceX MTF ICT Signal Generator
+// Sends webhook alerts with full JSON payload for automated execution
+
+//@version=6
+indicator("ProvidenceX MTF ICT Signal", overlay=true, max_boxes_count=50, max_labels_count=50, max_lines_count=50)
+
+// ========================
+// INPUTS
+// ========================
+// Timeframe configuration
+htfTF       = input.timeframe("240", "HTF Bias Timeframe", tooltip="H4 recommended for swing bias")
+itfTF       = input.timeframe("15",  "ITF Setup Timeframe", tooltip="M15 for BOS + Order Block setup")
+// LTF (entry) = chart timeframe (run this on M1)
+
+// Swing detection
+swingLen    = input.int(5, "Swing Length", minval=2, maxval=20, tooltip="Bars left/right to confirm swing high/low")
+
+// Order Block
+obLookback  = input.int(20, "OB Lookback Bars", minval=5, maxval=50)
+
+// Risk
+minRR       = input.float(1.5, "Minimum R:R", minval=1.0, step=0.1)
+slBufferPct = input.float(0.001, "SL Buffer (%)", minval=0.0, step=0.0001, tooltip="Buffer beyond OB edge as % of price")
+
+// Session filter (ICT Kill Zones)
+useKillZone  = input.bool(true, "Kill Zone Filter")
+londonStart  = input.int(2, "London Open (UTC hour)", minval=0, maxval=23)
+londonEnd    = input.int(5, "London Close (UTC hour)", minval=0, maxval=23)
+nyStart      = input.int(7, "NY Open (UTC hour)", minval=0, maxval=23)
+nyEnd        = input.int(10, "NY Close (UTC hour)", minval=0, maxval=23)
+
+// Webhook secret (must match TV_WEBHOOK_SECRET env var)
+webhookSecret = input.string("", "Webhook Secret", tooltip="Must match TV_WEBHOOK_SECRET on your trading engine")
+
+// ========================
+// HTF BIAS (H4 Swing Structure)
+// ========================
+// Get H4 swing highs/lows to determine market bias
+[htfHigh, htfLow, htfClose] = request.security(syminfo.tickerid, htfTF, [high, low, close], lookahead=barmerge.lookahead_off)
+
+// Simple swing detection on HTF
+htfSwingHigh = ta.pivothigh(htfHigh, swingLen, swingLen)
+htfSwingLow  = ta.pivotlow(htfLow, swingLen, swingLen)
+
+var float lastHTFSwingHigh = na
+var float lastHTFSwingLow  = na
+var float prevHTFSwingHigh = na
+var float prevHTFSwingLow  = na
+
+if not na(htfSwingHigh)
+    prevHTFSwingHigh := lastHTFSwingHigh
+    lastHTFSwingHigh := htfSwingHigh
+if not na(htfSwingLow)
+    prevHTFSwingLow := lastHTFSwingLow
+    lastHTFSwingLow := htfSwingLow
+
+// HTF Bias: Higher highs + higher lows = bullish, Lower lows + lower highs = bearish
+htfBullish = not na(lastHTFSwingHigh) and not na(prevHTFSwingHigh) and not na(lastHTFSwingLow) and not na(prevHTFSwingLow) and lastHTFSwingHigh > prevHTFSwingHigh and lastHTFSwingLow > prevHTFSwingLow
+htfBearish = not na(lastHTFSwingHigh) and not na(prevHTFSwingHigh) and not na(lastHTFSwingLow) and not na(prevHTFSwingLow) and lastHTFSwingHigh < prevHTFSwingHigh and lastHTFSwingLow < prevHTFSwingLow
+
+htfBias = htfBullish ? 1 : htfBearish ? -1 : 0 // 1=bullish, -1=bearish, 0=sideways
+
+// ========================
+// ITF SETUP (M15 BOS + Order Block)
+// ========================
+[itfOpen, itfHigh, itfLow, itfClose] = request.security(syminfo.tickerid, itfTF, [open, high, low, close], lookahead=barmerge.lookahead_off)
+
+// M15 Swing detection
+itfSwingHigh = ta.pivothigh(itfHigh, swingLen, swingLen)
+itfSwingLow  = ta.pivotlow(itfLow, swingLen, swingLen)
+
+var float lastITFSwingHigh = na
+var float lastITFSwingLow  = na
+var float prevITFSwingHigh = na
+var float prevITFSwingLow  = na
+
+if not na(itfSwingHigh)
+    prevITFSwingHigh := lastITFSwingHigh
+    lastITFSwingHigh := itfSwingHigh
+if not na(itfSwingLow)
+    prevITFSwingLow := lastITFSwingLow
+    lastITFSwingLow := itfSwingLow
+
+// M15 BOS Detection
+// Bullish BOS: close breaks above last M15 swing high
+// Bearish BOS: close breaks below last M15 swing low
+itfBullishBOS = not na(lastITFSwingHigh) and itfClose > lastITFSwingHigh and itfClose[1] <= lastITFSwingHigh
+itfBearishBOS = not na(lastITFSwingLow) and itfClose < lastITFSwingLow and itfClose[1] >= lastITFSwingLow
+
+// Track last BOS direction
+var int lastITFBOS = 0 // 1=bullish, -1=bearish
+if itfBullishBOS
+    lastITFBOS := 1
+if itfBearishBOS
+    lastITFBOS := -1
+
+// M15 Order Block Detection
+// Bullish OB: last bearish candle before a bullish BOS (demand zone)
+// Bearish OB: last bullish candle before a bearish BOS (supply zone)
+var float bullOB_high = na
+var float bullOB_low  = na
+var float bearOB_high = na
+var float bearOB_low  = na
+
+if itfBullishBOS
+    // Find last bearish candle in lookback
+    for i = 1 to obLookback
+        if itfClose[i] < itfOpen[i]
+            bullOB_high := itfHigh[i]
+            bullOB_low  := itfLow[i]
+            break
+
+if itfBearishBOS
+    // Find last bullish candle in lookback
+    for i = 1 to obLookback
+        if itfClose[i] > itfOpen[i]
+            bearOB_high := itfHigh[i]
+            bearOB_low  := itfLow[i]
+            break
+
+// ========================
+// LTF ENTRY (M1 Confirmation)
+// ========================
+// Displacement candle: strong body (>60% of range) in bias direction
+bodyPct = math.abs(close - open) / (high - low)
+isBullishDisplacement = close > open and bodyPct > 0.6 and (close - open) > ta.atr(14) * 0.5
+isBearishDisplacement = close < open and bodyPct > 0.6 and (open - close) > ta.atr(14) * 0.5
+
+// Price in OB zone check
+priceInBullOB = not na(bullOB_low) and not na(bullOB_high) and low <= bullOB_high and close >= bullOB_low
+priceInBearOB = not na(bearOB_low) and not na(bearOB_high) and high >= bearOB_low and close <= bearOB_high
+
+// ========================
+// KILL ZONE FILTER
+// ========================
+utcHour = hour(time, "UTC")
+inLondonKZ = utcHour >= londonStart and utcHour < londonEnd
+inNYKZ     = utcHour >= nyStart and utcHour < nyEnd
+inKillZone = not useKillZone or inLondonKZ or inNYKZ
+
+// ========================
+// SIGNAL LOGIC
+// ========================
+// BUY: HTF bullish + M15 bullish BOS + price retraces to bullish OB + M1 displacement + kill zone
+buySignal = htfBias == 1 and lastITFBOS == 1 and priceInBullOB and isBullishDisplacement and inKillZone
+
+// SELL: HTF bearish + M15 bearish BOS + price retraces to bearish OB + M1 displacement + kill zone
+sellSignal = htfBias == -1 and lastITFBOS == -1 and priceInBearOB and isBearishDisplacement and inKillZone
+
+// ========================
+// SL / TP CALCULATION
+// ========================
+slBuffer = close * slBufferPct
+
+float buySL = na
+float buyTP = na
+float buyRR = na
+if buySignal and not na(bullOB_low)
+    buySL := bullOB_low - slBuffer
+    slDist = close - buySL
+    buyTP := close + slDist * minRR
+    buyRR := slDist > 0 ? (buyTP - close) / slDist : 0
+
+float sellSL = na
+float sellTP = na
+float sellRR = na
+if sellSignal and not na(bearOB_high)
+    sellSL := bearOB_high + slBuffer
+    slDist = sellSL - close
+    sellTP := close - slDist * minRR
+    sellRR := slDist > 0 ? (close - sellTP) / slDist : 0
+
+// Final validation
+validBuy  = buySignal and not na(buySL) and not na(buyTP) and buyRR >= minRR
+validSell = sellSignal and not na(sellSL) and not na(sellTP) and sellRR >= minRR
+
+// Cooldown: don't fire multiple signals on consecutive bars
+var int lastSignalBar = 0
+signalCooldown = bar_index - lastSignalBar > 5
+
+finalBuy  = validBuy and signalCooldown
+finalSell = validSell and signalCooldown
+
+if finalBuy or finalSell
+    lastSignalBar := bar_index
+
+// ========================
+// DRAWINGS
+// ========================
+// Draw OB zones
+var box bullOBBox = na
+var box bearOBBox = na
+
+if itfBullishBOS and not na(bullOB_high) and not na(bullOB_low)
+    if not na(bullOBBox)
+        box.delete(bullOBBox)
+    bullOBBox := box.new(bar_index - obLookback, bullOB_high, bar_index + 20, bullOB_low, border_color=color.new(color.green, 50), bgcolor=color.new(color.green, 85))
+
+if itfBearishBOS and not na(bearOB_high) and not na(bearOB_low)
+    if not na(bearOBBox)
+        box.delete(bearOBBox)
+    bearOBBox := box.new(bar_index - obLookback, bearOB_high, bar_index + 20, bearOB_low, border_color=color.new(color.red, 50), bgcolor=color.new(color.red, 85))
+
+// Draw signal labels
+if finalBuy
+    label.new(bar_index, low, "BUY", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+
+if finalSell
+    label.new(bar_index, high, "SELL", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+// HTF bias label (top-right)
+biasText = htfBias == 1 ? "H4: BULLISH" : htfBias == -1 ? "H4: BEARISH" : "H4: SIDEWAYS"
+biasColor = htfBias == 1 ? color.green : htfBias == -1 ? color.red : color.gray
+
+var label biasLabel = na
+if not na(biasLabel)
+    label.delete(biasLabel)
+biasLabel := label.new(bar_index + 5, high, biasText, style=label.style_label_left, color=biasColor, textcolor=color.white, size=size.normal)
+
+// ========================
+// WEBHOOK ALERTS
+// ========================
+// Build JSON payload for the trading engine webhook
+secretField = webhookSecret != "" ? '"secret":"' + webhookSecret + '",' : ""
+
+if finalBuy
+    alertMsg = '{' + secretField + '"symbol":"' + syminfo.ticker + '","direction":"buy","entry":' + str.tostring(close) + ',"stopLoss":' + str.tostring(buySL) + ',"takeProfit":' + str.tostring(buyTP) + ',"orderKind":"market","reason":"H4 bullish + M15 bullish BOS + OB retest + M1 displacement","meta":{"htfBias":"bullish","itfBOS":"bullish","obZone":"' + str.tostring(bullOB_low) + '-' + str.tostring(bullOB_high) + '","rr":' + str.tostring(math.round(buyRR * 100) / 100) + ',"killZone":"' + (inLondonKZ ? "London" : inNYKZ ? "NewYork" : "none") + '","interval":"' + timeframe.period + '"}}'
+    alert(alertMsg, alert.freq_once_per_bar)
+
+if finalSell
+    alertMsg = '{' + secretField + '"symbol":"' + syminfo.ticker + '","direction":"sell","entry":' + str.tostring(close) + ',"stopLoss":' + str.tostring(sellSL) + ',"takeProfit":' + str.tostring(sellTP) + ',"orderKind":"market","reason":"H4 bearish + M15 bearish BOS + OB retest + M1 displacement","meta":{"htfBias":"bearish","itfBOS":"bearish","obZone":"' + str.tostring(bearOB_low) + '-' + str.tostring(bearOB_high) + '","rr":' + str.tostring(math.round(sellRR * 100) / 100) + ',"killZone":"' + (inLondonKZ ? "London" : inNYKZ ? "NewYork" : "none") + '","interval":"' + timeframe.period + '"}}'
+    alert(alertMsg, alert.freq_once_per_bar)
+
+// ========================
+// PLOTS (for data window & alertcondition fallback)
+// ========================
+plot(htfBias, "HTF Bias", display=display.data_window)
+plot(lastITFBOS, "ITF BOS Dir", display=display.data_window)
+plot(bullOB_low, "Bull OB Low", display=display.data_window)
+plot(bullOB_high, "Bull OB High", display=display.data_window)
+plot(bearOB_low, "Bear OB Low", display=display.data_window)
+plot(bearOB_high, "Bear OB High", display=display.data_window)
+
+// Alert conditions (backup — for users who prefer alertcondition over alert())
+alertcondition(finalBuy, "ProvidenceX BUY", "BUY {{ticker}} @ {{close}}")
+alertcondition(finalSell, "ProvidenceX SELL", "SELL {{ticker}} @ {{close}}")

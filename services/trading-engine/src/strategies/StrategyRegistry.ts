@@ -17,6 +17,7 @@ import { MomentumScalpStrategy } from './fvg-scalp/MomentumScalpStrategy';
 import { V25InducementStrategy } from './v25/V25InducementStrategy';
 import { V25MeanReversionStrategy } from './v25/V25MeanReversionStrategy';
 import { V25H1MomentumStrategy } from './v25/V25H1MomentumStrategy';
+import { TradingViewStrategy } from '../tradingview/TradingViewStrategy';
 
 const logger = new Logger('StrategyRegistry');
 
@@ -51,6 +52,9 @@ const implementationMap: Record<string, new (profile: StrategyProfile) => IStrat
 
   // V25 H1 Momentum — autocorrelation-gated H1 regime with M15 pullback entry
   V25_H1_MOMENTUM_V1: V25H1MomentumStrategy,
+
+  // TradingView Signal — reads Pine indicator data via CDP from TradingView Desktop
+  TV_SIGNAL_V1: TradingViewStrategy,
 };
 
 /**
