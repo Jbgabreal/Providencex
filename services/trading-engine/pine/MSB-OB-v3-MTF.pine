@@ -3,33 +3,33 @@
 // Detects BOS/CHoCH, marks OB & BB zones, shows HTF OB levels as lines
 
 //@version=6
-indicator("MSB-OB v3 + MTF Alerts", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("MSB-OB v3 + MTF Alerts", "MSB-OB v3", overlay=true, max_lines_count=500, max_bars_back=4900, max_boxes_count=500, max_labels_count=500)
 
 // ─────────────────────────────────────────────────────────────
-// INPUTS
+// INPUTS (order must match original to preserve saved settings)
 // ─────────────────────────────────────────────────────────────
 gen_grp = "General Settings"
-zigzag_len   = input.int(9,     "Zigzag Length",      minval=2,  group=gen_grp)
-fib_factor   = input.float(0.33, "Fib Factor",        minval=0,  step=0.01, group=gen_grp)
-ob_search    = input.int(20,    "OB Search Depth",    minval=1,  group=gen_grp, tooltip="Bars to search for the OB candle near a swing")
-text_size    = input.string(size.tiny, "Text Size",    options=[size.tiny, size.small, size.normal, size.large], group=gen_grp)
-show_zigzag  = input.bool(false, "Show Zigzag",        group=gen_grp)
-keep_broken  = input.bool(true,  "Keep Mitigated OBs", group=gen_grp, tooltip="Show broken OBs as dashed gray boxes")
-mitigated_opacity = input.int(90, "Mitigated Opacity",  minval=50, maxval=100, group=gen_grp)
+zigzag_len        = input.int(9,      "Zigzag Length",      minval=2,  group=gen_grp)
+show_zigzag       = input.bool(true,   "Show Zigzag",       group=gen_grp)
+fib_factor        = input.float(0.33,  "Fib Factor",        minval=0,  step=0.01, group=gen_grp)
+ob_search         = input.int(20,      "OB Search Depth",   minval=1,  group=gen_grp, tooltip="Bars to search for the OB candle near a swing")
+text_size         = input.string(size.tiny, "Text Size",     options=[size.tiny, size.small, size.normal, size.large], group=gen_grp)
+keep_broken       = input.bool(true,   "Keep Mitigated OBs", group=gen_grp, tooltip="Show broken OBs as dashed gray boxes")
+mitigated_opacity = input.int(90,      "Mitigated Opacity",  minval=50, maxval=100, group=gen_grp)
 
 mtf_grp = "Multi-Timeframe Settings"
-enable_mtf    = input.bool(true,  "Enable MTF OB Levels",  group=mtf_grp)
-show_htf      = input.bool(true,  "Show HTF Lines",        group=mtf_grp)
-proximity_pct = input.float(0.15, "Proximity % for Alert", minval=0.01, step=0.01, group=mtf_grp, tooltip="Alert when price is within this % of an HTF OB zone")
+enable_mtf    = input.bool(true,   "Enable MTF OB Levels",  group=mtf_grp)
+show_htf      = input.bool(true,   "Show HTF Lines",        group=mtf_grp)
+proximity_pct = input.float(0.15,  "Proximity % for Alert", minval=0.01, step=0.01, group=mtf_grp, tooltip="Alert when price is within this % of an HTF OB zone")
 
-tf1_en = input.bool(true,  "TF1 Enabled", group=mtf_grp, inline="tf1")
-tf1    = input.timeframe("15",  "TF1",    group=mtf_grp, inline="tf1")
-tf2_en = input.bool(true,  "TF2 Enabled", group=mtf_grp, inline="tf2")
-tf2    = input.timeframe("60",  "TF2",    group=mtf_grp, inline="tf2")
-tf3_en = input.bool(true,  "TF3 Enabled", group=mtf_grp, inline="tf3")
-tf3    = input.timeframe("240", "TF3",    group=mtf_grp, inline="tf3")
-tf4_en = input.bool(true,  "TF4 Enabled", group=mtf_grp, inline="tf4")
-tf4    = input.timeframe("D",   "TF4",    group=mtf_grp, inline="tf4")
+tf1_en = input.bool(true,   "TF1 Enabled", group=mtf_grp, inline="tf1")
+tf1    = input.timeframe("15",  "TF1",     group=mtf_grp, inline="tf1")
+tf2_en = input.bool(true,   "TF2 Enabled", group=mtf_grp, inline="tf2")
+tf2    = input.timeframe("60",  "TF2",     group=mtf_grp, inline="tf2")
+tf3_en = input.bool(false,  "TF3 Enabled", group=mtf_grp, inline="tf3")
+tf3    = input.timeframe("240", "TF3",     group=mtf_grp, inline="tf3")
+tf4_en = input.bool(false,  "TF4 Enabled", group=mtf_grp, inline="tf4")
+tf4    = input.timeframe("D",   "TF4",     group=mtf_grp, inline="tf4")
 
 // ─────────────────────────────────────────────────────────────
 // OB COLOR SETTINGS
@@ -53,6 +53,14 @@ be_bb_grp = "Be-BB & Be-MB Display Settings"
 be_bb_color        = input.color(color.new(color.red, 70), "Color",   group=be_bb_grp, inline="beb")
 be_bb_border_color = input.color(color.red,                "Border",   group=be_bb_grp, inline="beb")
 be_bb_text_color   = input.color(color.red,                "Text",     group=be_bb_grp, inline="beb")
+
+// Webhook Settings
+wh_grp = "Webhook Settings"
+webhookSecret = input.string("", "Webhook Secret", group=wh_grp, tooltip="Must match TV_WEBHOOK_SECRET on trading engine")
+rrTarget      = input.float(2.0, "R:R Target for TP", group=wh_grp, minval=1.0, step=0.5)
+atrLen        = input.int(14, "ATR Length (for SL/TP)", group=wh_grp)
+
+atr_val = ta.atr(atrLen)
 
 // ─────────────────────────────────────────────────────────────
 // MTF OB CALCULATION FUNCTION
@@ -300,8 +308,12 @@ if array.size(bu_ob_boxes) > 0
         top    = box.get_top(b)
         if close < bottom
             f_mitigate_box(bu_ob_boxes, i, "Bu-OB")
-        else if close < top
-            alert("Price in the BU-OB zone")
+        else if close < top and close > open
+            // Price entered bullish OB zone + bullish candle = BUY signal
+            secretField = webhookSecret != "" ? '"secret":"' + webhookSecret + '",' : ""
+            sl_price = bottom - atr_val * 0.3
+            tp_price = close + (close - sl_price) * rrTarget
+            alert('{' + secretField + '"symbol":"' + syminfo.ticker + '","direction":"buy","entry":' + str.tostring(close) + ',"stopLoss":' + str.tostring(sl_price) + ',"takeProfit":' + str.tostring(tp_price) + ',"orderKind":"market","reason":"Price in Bu-OB zone + bullish candle"}', alert.freq_once_per_bar)
         else
             box.set_right(b, bar_index + 10)
 
@@ -312,8 +324,12 @@ if array.size(be_ob_boxes) > 0
         bottom = box.get_bottom(b)
         if close > top
             f_mitigate_box(be_ob_boxes, i, "Be-OB")
-        else if close > bottom
-            alert("Price in the BE-OB zone")
+        else if close > bottom and close < open
+            // Price entered bearish OB zone + bearish candle = SELL signal
+            secretField2 = webhookSecret != "" ? '"secret":"' + webhookSecret + '",' : ""
+            sl_price2 = top + atr_val * 0.3
+            tp_price2 = close - (sl_price2 - close) * rrTarget
+            alert('{' + secretField2 + '"symbol":"' + syminfo.ticker + '","direction":"sell","entry":' + str.tostring(close) + ',"stopLoss":' + str.tostring(sl_price2) + ',"takeProfit":' + str.tostring(tp_price2) + ',"orderKind":"market","reason":"Price in Be-OB zone + bearish candle"}', alert.freq_once_per_bar)
         else
             box.set_right(b, bar_index + 10)
 
@@ -325,7 +341,10 @@ if array.size(bu_bb_boxes) > 0
         if close < bottom
             f_mitigate_box(bu_bb_boxes, i, "Bu-BB")
         else if close < top
-            alert("Price in the BU-BB zone")
+            secretField3 = webhookSecret != "" ? '"secret":"' + webhookSecret + '",' : ""
+            sl_price3 = bottom - atr_val * 0.3
+            tp_price3 = close + (close - sl_price3) * rrTarget
+            alert('{' + secretField3 + '"symbol":"' + syminfo.ticker + '","direction":"buy","entry":' + str.tostring(close) + ',"stopLoss":' + str.tostring(sl_price3) + ',"takeProfit":' + str.tostring(tp_price3) + ',"orderKind":"market","reason":"Price in Bu-BB zone + bullish candle"}', alert.freq_once_per_bar)
         else
             box.set_right(b, bar_index + 10)
 
@@ -337,7 +356,10 @@ if array.size(be_bb_boxes) > 0
         if close > top
             f_mitigate_box(be_bb_boxes, i, "Be-BB")
         else if close > bottom
-            alert("Price in the BE-BB zone")
+            secretField4 = webhookSecret != "" ? '"secret":"' + webhookSecret + '",' : ""
+            sl_price4 = top + atr_val * 0.3
+            tp_price4 = close - (sl_price4 - close) * rrTarget
+            alert('{' + secretField4 + '"symbol":"' + syminfo.ticker + '","direction":"sell","entry":' + str.tostring(close) + ',"stopLoss":' + str.tostring(sl_price4) + ',"takeProfit":' + str.tostring(tp_price4) + ',"orderKind":"market","reason":"Price in Be-BB zone + bearish candle"}', alert.freq_once_per_bar)
         else
             box.set_right(b, bar_index + 10)
 
