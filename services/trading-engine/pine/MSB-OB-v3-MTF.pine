@@ -1,0 +1,559 @@
+// MSB-OB v3 + MTF Alerts
+// Market Structure Break + Order Block Scanner with Multi-Timeframe OB Levels
+// Detects BOS/CHoCH, marks OB & BB zones, shows HTF OB levels as lines
+
+//@version=6
+indicator("MSB-OB v3 + MTF Alerts", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ─────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────
+gen_grp = "General Settings"
+zigzag_len   = input.int(9,     "Zigzag Length",      minval=2,  group=gen_grp)
+fib_factor   = input.float(0.33, "Fib Factor",        minval=0,  step=0.01, group=gen_grp)
+ob_search    = input.int(20,    "OB Search Depth",    minval=1,  group=gen_grp, tooltip="Bars to search for the OB candle near a swing")
+text_size    = input.string(size.tiny, "Text Size",    options=[size.tiny, size.small, size.normal, size.large], group=gen_grp)
+show_zigzag  = input.bool(false, "Show Zigzag",        group=gen_grp)
+keep_broken  = input.bool(true,  "Keep Mitigated OBs", group=gen_grp, tooltip="Show broken OBs as dashed gray boxes")
+mitigated_opacity = input.int(90, "Mitigated Opacity",  minval=50, maxval=100, group=gen_grp)
+
+mtf_grp = "Multi-Timeframe Settings"
+enable_mtf    = input.bool(true,  "Enable MTF OB Levels",  group=mtf_grp)
+show_htf      = input.bool(true,  "Show HTF Lines",        group=mtf_grp)
+proximity_pct = input.float(0.15, "Proximity % for Alert", minval=0.01, step=0.01, group=mtf_grp, tooltip="Alert when price is within this % of an HTF OB zone")
+
+tf1_en = input.bool(true,  "TF1 Enabled", group=mtf_grp, inline="tf1")
+tf1    = input.timeframe("15",  "TF1",    group=mtf_grp, inline="tf1")
+tf2_en = input.bool(true,  "TF2 Enabled", group=mtf_grp, inline="tf2")
+tf2    = input.timeframe("60",  "TF2",    group=mtf_grp, inline="tf2")
+tf3_en = input.bool(true,  "TF3 Enabled", group=mtf_grp, inline="tf3")
+tf3    = input.timeframe("240", "TF3",    group=mtf_grp, inline="tf3")
+tf4_en = input.bool(true,  "TF4 Enabled", group=mtf_grp, inline="tf4")
+tf4    = input.timeframe("D",   "TF4",    group=mtf_grp, inline="tf4")
+
+// ─────────────────────────────────────────────────────────────
+// OB COLOR SETTINGS
+// ─────────────────────────────────────────────────────────────
+bu_ob_grp = "Bu-OB Display Settings"
+bu_ob_color        = input.color(color.new(color.green, 70), "Color",  group=bu_ob_grp, inline="buo")
+bu_ob_border_color = input.color(color.green,               "Border",  group=bu_ob_grp, inline="buo")
+bu_ob_text_color   = input.color(color.green,               "Text",    group=bu_ob_grp, inline="buo")
+
+be_ob_grp = "Be-OB Display Settings"
+be_ob_color        = input.color(color.new(color.red, 70), "Color",   group=be_ob_grp, inline="beo")
+be_ob_border_color = input.color(color.red,                "Border",   group=be_ob_grp, inline="beo")
+be_ob_text_color   = input.color(color.red,                "Text",     group=be_ob_grp, inline="beo")
+
+bu_bb_grp = "Bu-BB & Bu-MB Display Settings"
+bu_bb_color        = input.color(color.new(color.green, 70), "Color",  group=bu_bb_grp, inline="bub")
+bu_bb_border_color = input.color(color.green,                "Border",  group=bu_bb_grp, inline="bub")
+bu_bb_text_color   = input.color(color.green,                "Text",    group=bu_bb_grp, inline="bub")
+
+be_bb_grp = "Be-BB & Be-MB Display Settings"
+be_bb_color        = input.color(color.new(color.red, 70), "Color",   group=be_bb_grp, inline="beb")
+be_bb_border_color = input.color(color.red,                "Border",   group=be_bb_grp, inline="beb")
+be_bb_text_color   = input.color(color.red,                "Text",     group=be_bb_grp, inline="beb")
+
+// ─────────────────────────────────────────────────────────────
+// MTF OB CALCULATION FUNCTION
+// Called via request.security() — computes OB levels only, no drawing.
+// Returns [bull_ob_top, bull_ob_bot, bear_ob_top, bear_ob_bot]
+// ─────────────────────────────────────────────────────────────
+f_calc_ob(zlen, fib, depth) =>
+    max_bars_back(open,  500)
+    max_bars_back(high,  500)
+    max_bars_back(low,   500)
+    max_bars_back(close, 500)
+
+    var float[] _hp = array.new_float(0)
+    var int[]   _hi = array.new_int(0)
+    var float[] _lp = array.new_float(0)
+    var int[]   _li = array.new_int(0)
+
+    var float _bu_top = na
+    var float _bu_bot = na
+    var float _be_top = na
+    var float _be_bot = na
+
+    _to_up   = high >= ta.highest(zlen)
+    _to_down = low  <= ta.lowest(zlen)
+
+    var int _trend = 1
+    _trend := _trend == 1 and _to_down ? -1 : _trend == -1 and _to_up ? 1 : _trend
+
+    _ltu = ta.barssince(_to_up[1])
+    _lv  = ta.lowest(nz(_ltu > 0 ? _ltu : 1, 1))
+    _li2 = bar_index - ta.barssince(_lv == low)
+
+    _ltd = ta.barssince(_to_down[1])
+    _hv  = ta.highest(nz(_ltd > 0 ? _ltd : 1, 1))
+    _hi2 = bar_index - ta.barssince(_hv == high)
+
+    if ta.change(_trend) != 0
+        if _trend == 1
+            array.push(_lp, _lv)
+            array.push(_li, _li2)
+        if _trend == -1
+            array.push(_hp, _hv)
+            array.push(_hi, _hi2)
+
+    _szp  = array.size(_hp)
+    _szi  = array.size(_hi)
+    _szlp = array.size(_lp)
+    _szli = array.size(_li)
+
+    _h0  = _szp  > 0 ? array.get(_hp, _szp  - 1) : float(na)
+    _h0i = _szi  > 0 ? array.get(_hi, _szi  - 1) : int(na)
+    _h1  = _szp  > 1 ? array.get(_hp, _szp  - 2) : float(na)
+    _l0  = _szlp > 0 ? array.get(_lp, _szlp - 1) : float(na)
+    _l0i = _szli > 0 ? array.get(_li, _szli - 1) : int(na)
+    _l1  = _szlp > 1 ? array.get(_lp, _szlp - 2) : float(na)
+
+    var int _market = 1
+    _ll0 = ta.valuewhen(ta.change(_market) != 0, _l0, 0)
+    _lh0 = ta.valuewhen(ta.change(_market) != 0, _h0, 0)
+    _market := _ll0 == _l0 or _lh0 == _h0 ? _market :
+               _market == 1  and not na(_l0) and not na(_l1) and _l0 < _l1 and _l0 < _l1 - math.abs(nz(_h0) - _l1) * fib ? -1 :
+               _market == -1 and not na(_h0) and not na(_h1) and _h0 > _h1 and _h0 > _h1 + math.abs(_h1 - nz(_l0)) * fib ? 1 : _market
+
+    if ta.change(_market) != 0
+        if _market == 1 and not na(_l0i)
+            for j = 0 to depth
+                _lb = (bar_index - _l0i) + j
+                if _lb >= 0 and _lb < 500
+                    if open[_lb] > close[_lb]
+                        _bu_top := high[_lb]
+                        _bu_bot := low[_lb]
+                        break
+        if _market == -1 and not na(_h0i)
+            for j = 0 to depth
+                _lb = (bar_index - _h0i) + j
+                if _lb >= 0 and _lb < 500
+                    if open[_lb] < close[_lb]
+                        _be_top := high[_lb]
+                        _be_bot := low[_lb]
+                        break
+
+    // Mitigation
+    if not na(_bu_top) and close < _bu_bot
+        _bu_top := na
+        _bu_bot := na
+    if not na(_be_bot) and close > _be_top
+        _be_top := na
+        _be_bot := na
+
+    [_bu_top, _bu_bot, _be_top, _be_bot]
+
+// ─────────────────────────────────────────────────────────────
+// CURRENT-CHART STATE ARRAYS
+// ─────────────────────────────────────────────────────────────
+var float[] high_points_arr = array.new_float(0)
+var int[]   high_index_arr  = array.new_int(0)
+var float[] low_points_arr  = array.new_float(0)
+var int[]   low_index_arr   = array.new_int(0)
+
+var box[] bu_ob_boxes = array.new_box(0)
+var box[] be_ob_boxes = array.new_box(0)
+var box[] bu_bb_boxes = array.new_box(0)
+var box[] be_bb_boxes = array.new_box(0)
+
+// ─────────────────────────────────────────────────────────────
+// ZIGZAG DETECTION
+// ─────────────────────────────────────────────────────────────
+to_up   = high >= ta.highest(zigzag_len)
+to_down = low  <= ta.lowest(zigzag_len)
+
+trend  = 1
+trend := nz(trend[1], 1)
+trend := trend == 1 and to_down ? -1 : trend == -1 and to_up ? 1 : trend
+
+last_trend_up_since   = ta.barssince(to_up[1])
+low_val   = ta.lowest(nz(last_trend_up_since > 0 ? last_trend_up_since : 1, 1))
+low_index = bar_index - ta.barssince(low_val == low)
+
+last_trend_down_since = ta.barssince(to_down[1])
+high_val   = ta.highest(nz(last_trend_down_since > 0 ? last_trend_down_since : 1, 1))
+high_index = bar_index - ta.barssince(high_val == high)
+
+if ta.change(trend) != 0
+    if trend == 1
+        array.push(low_points_arr, low_val)
+        array.push(low_index_arr,  low_index)
+    if trend == -1
+        array.push(high_points_arr, high_val)
+        array.push(high_index_arr,  high_index)
+
+// ─────────────────────────────────────────────────────────────
+// HELPER FUNCTIONS
+// ─────────────────────────────────────────────────────────────
+
+// Bounds-checked array access — returns na if array is too small
+f_get_high(ind) =>
+    _sz  = array.size(high_points_arr)
+    _idx = _sz - 1 - ind
+    _val = _idx >= 0 ? array.get(high_points_arr, _idx) : float(na)
+    _bar = _idx >= 0 ? array.get(high_index_arr,  _idx) : int(na)
+    [_val, _bar]
+
+f_get_low(ind) =>
+    _sz  = array.size(low_points_arr)
+    _idx = _sz - 1 - ind
+    _val = _idx >= 0 ? array.get(low_points_arr, _idx) : float(na)
+    _bar = _idx >= 0 ? array.get(low_index_arr,  _idx) : int(na)
+    [_val, _bar]
+
+f_mitigate_box(box_arr, idx, label_text) =>
+    b = array.get(box_arr, idx)
+    if keep_broken
+        box.set_right(b, bar_index)
+        box.set_bgcolor(b, color.new(color.gray, mitigated_opacity))
+        box.set_border_color(b, color.new(color.gray, mitigated_opacity - 20))
+        box.set_border_style(b, line.style_dashed)
+        box.set_text(b, label_text + " [MIT]")
+        box.set_text_color(b, color.gray)
+    else
+        box.delete(b)
+    array.remove(box_arr, idx)
+
+// ─────────────────────────────────────────────────────────────
+// SWING POINTS
+// ─────────────────────────────────────────────────────────────
+[h0, h0i] = f_get_high(0)
+[h1, h1i] = f_get_high(1)
+[l0, l0i] = f_get_low(0)
+[l1, l1i] = f_get_low(1)
+
+if ta.change(trend) != 0 and show_zigzag
+    if trend == 1
+        line.new(h0i, h0, l0i, l0)
+    if trend == -1
+        line.new(l0i, l0, h0i, h0)
+
+// ─────────────────────────────────────────────────────────────
+// MARKET STRUCTURE
+// ─────────────────────────────────────────────────────────────
+market  = 1
+market := nz(market[1], 1)
+last_l0 = ta.valuewhen(ta.change(market) != 0, l0, 0)
+last_h0 = ta.valuewhen(ta.change(market) != 0, h0, 0)
+market := last_l0 == l0 or last_h0 == h0 ? market :
+          market == 1  and l0 < l1 and l0 < l1 - math.abs(h0 - l1) * fib_factor ? -1 :
+          market == -1 and h0 > h1 and h0 > h1 + math.abs(h1 - l0) * fib_factor ? 1 : market
+
+// ─────────────────────────────────────────────────────────────
+// ON-CHART OB / BB DETECTION (current timeframe with boxes)
+// ─────────────────────────────────────────────────────────────
+if ta.change(market) != 0
+    if market == 1
+        line.new(h1i, h1, h0i, h1, color=color.green, width=2)
+        label.new(int(math.avg(h1i, h0i)), h1, "MSB", color=color.new(color.black, 100), style=label.style_label_down, textcolor=color.green, size=size.small)
+        // Bullish OB: last bearish candle at/before swing low l0
+        for j = 0 to ob_search
+            lb = (bar_index - l0i) + j
+            if lb >= 0 and lb < 4900
+                if open[lb] > close[lb]
+                    ob_bar = l0i - j
+                    bu_ob = box.new(ob_bar, high[lb], bar_index + 10, low[lb], bgcolor=bu_ob_color, border_color=bu_ob_border_color, text="Bu-OB", text_color=bu_ob_text_color, text_halign=text.align_right, text_size=text_size)
+                    array.push(bu_ob_boxes, bu_ob)
+                    break
+        // Bullish BB: former supply near h1 broken upward
+        for j = 0 to ob_search
+            lb = (bar_index - h1i) + j
+            if lb >= 0 and lb < 4900
+                if open[lb] < close[lb]
+                    bb_bar = h1i - j
+                    lbl    = l0 < l1 ? "Bu-BB" : "Bu-MB"
+                    bu_bb  = box.new(bb_bar, high[lb], bar_index + 10, low[lb], bgcolor=bu_bb_color, border_color=bu_bb_border_color, text=lbl, text_color=bu_bb_text_color, text_halign=text.align_right, text_size=text_size)
+                    array.push(bu_bb_boxes, bu_bb)
+                    break
+
+    if market == -1
+        line.new(l1i, l1, l0i, l1, color=color.red, width=2)
+        label.new(int(math.avg(l1i, l0i)), l1, "MSB", color=color.new(color.black, 100), style=label.style_label_up, textcolor=color.red, size=size.small)
+        // Bearish OB: last bullish candle at/before swing high h0
+        for j = 0 to ob_search
+            lb = (bar_index - h0i) + j
+            if lb >= 0 and lb < 4900
+                if open[lb] < close[lb]
+                    ob_bar = h0i - j
+                    be_ob  = box.new(ob_bar, high[lb], bar_index + 10, low[lb], bgcolor=be_ob_color, border_color=be_ob_border_color, text="Be-OB", text_color=be_ob_text_color, text_halign=text.align_right, text_size=text_size)
+                    array.push(be_ob_boxes, be_ob)
+                    break
+        // Bearish BB: former demand near l1 broken downward
+        for j = 0 to ob_search
+            lb = (bar_index - l1i) + j
+            if lb >= 0 and lb < 4900
+                if open[lb] > close[lb]
+                    bb_bar = l1i - j
+                    lbl    = h0 > h1 ? "Be-BB" : "Be-MB"
+                    be_bb  = box.new(bb_bar, high[lb], bar_index + 10, low[lb], bgcolor=be_bb_color, border_color=be_bb_border_color, text=lbl, text_color=be_bb_text_color, text_halign=text.align_right, text_size=text_size)
+                    array.push(be_bb_boxes, be_bb)
+                    break
+
+// ─────────────────────────────────────────────────────────────
+// BOX MANAGEMENT — extend active, mitigate broken
+// ─────────────────────────────────────────────────────────────
+if array.size(bu_ob_boxes) > 0
+    for i = array.size(bu_ob_boxes) - 1 to 0
+        b      = array.get(bu_ob_boxes, i)
+        bottom = box.get_bottom(b)
+        top    = box.get_top(b)
+        if close < bottom
+            f_mitigate_box(bu_ob_boxes, i, "Bu-OB")
+        else if close < top
+            alert("Price in the BU-OB zone")
+        else
+            box.set_right(b, bar_index + 10)
+
+if array.size(be_ob_boxes) > 0
+    for i = array.size(be_ob_boxes) - 1 to 0
+        b      = array.get(be_ob_boxes, i)
+        top    = box.get_top(b)
+        bottom = box.get_bottom(b)
+        if close > top
+            f_mitigate_box(be_ob_boxes, i, "Be-OB")
+        else if close > bottom
+            alert("Price in the BE-OB zone")
+        else
+            box.set_right(b, bar_index + 10)
+
+if array.size(bu_bb_boxes) > 0
+    for i = array.size(bu_bb_boxes) - 1 to 0
+        b      = array.get(bu_bb_boxes, i)
+        bottom = box.get_bottom(b)
+        top    = box.get_top(b)
+        if close < bottom
+            f_mitigate_box(bu_bb_boxes, i, "Bu-BB")
+        else if close < top
+            alert("Price in the BU-BB zone")
+        else
+            box.set_right(b, bar_index + 10)
+
+if array.size(be_bb_boxes) > 0
+    for i = array.size(be_bb_boxes) - 1 to 0
+        b      = array.get(be_bb_boxes, i)
+        top    = box.get_top(b)
+        bottom = box.get_bottom(b)
+        if close > top
+            f_mitigate_box(be_bb_boxes, i, "Be-BB")
+        else if close > bottom
+            alert("Price in the BE-BB zone")
+        else
+            box.set_right(b, bar_index + 10)
+
+// ─────────────────────────────────────────────────────────────
+// MULTI-TIMEFRAME OB LEVELS via request.security()
+// ─────────────────────────────────────────────────────────────
+[tf1_bu_top, tf1_bu_bot, tf1_be_top, tf1_be_bot] = request.security(syminfo.tickerid, tf1, f_calc_ob(zigzag_len, fib_factor, ob_search), lookahead=barmerge.lookahead_off)
+[tf2_bu_top, tf2_bu_bot, tf2_be_top, tf2_be_bot] = request.security(syminfo.tickerid, tf2, f_calc_ob(zigzag_len, fib_factor, ob_search), lookahead=barmerge.lookahead_off)
+[tf3_bu_top, tf3_bu_bot, tf3_be_top, tf3_be_bot] = request.security(syminfo.tickerid, tf3, f_calc_ob(zigzag_len, fib_factor, ob_search), lookahead=barmerge.lookahead_off)
+[tf4_bu_top, tf4_bu_bot, tf4_be_top, tf4_be_bot] = request.security(syminfo.tickerid, tf4, f_calc_ob(zigzag_len, fib_factor, ob_search), lookahead=barmerge.lookahead_off)
+
+// ─────────────────────────────────────────────────────────────
+// HTF OB ZONE DISPLAY
+// Lines are initialised once as var, then updated every bar.
+// This avoids ta.change() / or operator issues in Pine v6.
+// Invisible (opacity 100) when no active OB; coloured when active.
+// ─────────────────────────────────────────────────────────────
+var line _tf1_bu_hi  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.green, 100), style=line.style_dashed, width=1)
+var line _tf1_bu_lo  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.green, 100), style=line.style_dashed, width=1)
+var label _tf1_bu_lb = label.new(bar_index, close, "", color=color.new(color.black, 100), textcolor=color.new(color.green, 100), size=size.tiny, style=label.style_label_left)
+
+var line _tf1_be_hi  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.red, 100), style=line.style_dashed, width=1)
+var line _tf1_be_lo  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.red, 100), style=line.style_dashed, width=1)
+var label _tf1_be_lb = label.new(bar_index, close, "", color=color.new(color.black, 100), textcolor=color.new(color.red, 100), size=size.tiny, style=label.style_label_left)
+
+var line _tf2_bu_hi  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.green, 100), style=line.style_dotted, width=2)
+var line _tf2_bu_lo  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.green, 100), style=line.style_dotted, width=2)
+var label _tf2_bu_lb = label.new(bar_index, close, "", color=color.new(color.black, 100), textcolor=color.new(color.green, 100), size=size.tiny, style=label.style_label_left)
+
+var line _tf2_be_hi  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.red, 100), style=line.style_dotted, width=2)
+var line _tf2_be_lo  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.red, 100), style=line.style_dotted, width=2)
+var label _tf2_be_lb = label.new(bar_index, close, "", color=color.new(color.black, 100), textcolor=color.new(color.red, 100), size=size.tiny, style=label.style_label_left)
+
+var line _tf3_bu_hi  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.green, 100), style=line.style_dashed, width=2)
+var line _tf3_bu_lo  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.green, 100), style=line.style_dashed, width=2)
+var label _tf3_bu_lb = label.new(bar_index, close, "", color=color.new(color.black, 100), textcolor=color.new(color.green, 100), size=size.tiny, style=label.style_label_left)
+
+var line _tf3_be_hi  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.red, 100), style=line.style_dashed, width=2)
+var line _tf3_be_lo  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.red, 100), style=line.style_dashed, width=2)
+var label _tf3_be_lb = label.new(bar_index, close, "", color=color.new(color.black, 100), textcolor=color.new(color.red, 100), size=size.tiny, style=label.style_label_left)
+
+var line _tf4_bu_hi  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.green, 100), style=line.style_solid, width=2)
+var line _tf4_bu_lo  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.green, 100), style=line.style_solid, width=2)
+var label _tf4_bu_lb = label.new(bar_index, close, "", color=color.new(color.black, 100), textcolor=color.new(color.green, 100), size=size.tiny, style=label.style_label_left)
+
+var line _tf4_be_hi  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.red, 100), style=line.style_solid, width=2)
+var line _tf4_be_lo  = line.new(bar_index, close, bar_index + 1, close, extend=extend.both, color=color.new(color.red, 100), style=line.style_solid, width=2)
+var label _tf4_be_lb = label.new(bar_index, close, "", color=color.new(color.black, 100), textcolor=color.new(color.red, 100), size=size.tiny, style=label.style_label_left)
+
+// TF1 update
+if enable_mtf and tf1_en and show_htf
+    if not na(tf1_bu_top)
+        line.set_y1(_tf1_bu_hi, tf1_bu_top)
+        line.set_y2(_tf1_bu_hi, tf1_bu_top)
+        line.set_color(_tf1_bu_hi, color.new(color.green, 30))
+        line.set_y1(_tf1_bu_lo, tf1_bu_bot)
+        line.set_y2(_tf1_bu_lo, tf1_bu_bot)
+        line.set_color(_tf1_bu_lo, color.new(color.green, 30))
+        label.set_xy(_tf1_bu_lb, bar_index + 3, math.avg(tf1_bu_top, tf1_bu_bot))
+        label.set_text(_tf1_bu_lb, tf1 + " Bu-OB")
+        label.set_textcolor(_tf1_bu_lb, color.green)
+    else
+        line.set_color(_tf1_bu_hi, color.new(color.green, 100))
+        line.set_color(_tf1_bu_lo, color.new(color.green, 100))
+        label.set_textcolor(_tf1_bu_lb, color.new(color.green, 100))
+    if not na(tf1_be_top)
+        line.set_y1(_tf1_be_hi, tf1_be_top)
+        line.set_y2(_tf1_be_hi, tf1_be_top)
+        line.set_color(_tf1_be_hi, color.new(color.red, 30))
+        line.set_y1(_tf1_be_lo, tf1_be_bot)
+        line.set_y2(_tf1_be_lo, tf1_be_bot)
+        line.set_color(_tf1_be_lo, color.new(color.red, 30))
+        label.set_xy(_tf1_be_lb, bar_index + 3, math.avg(tf1_be_top, tf1_be_bot))
+        label.set_text(_tf1_be_lb, tf1 + " Be-OB")
+        label.set_textcolor(_tf1_be_lb, color.red)
+    else
+        line.set_color(_tf1_be_hi, color.new(color.red, 100))
+        line.set_color(_tf1_be_lo, color.new(color.red, 100))
+        label.set_textcolor(_tf1_be_lb, color.new(color.red, 100))
+
+// TF2 update
+if enable_mtf and tf2_en and show_htf
+    if not na(tf2_bu_top)
+        line.set_y1(_tf2_bu_hi, tf2_bu_top)
+        line.set_y2(_tf2_bu_hi, tf2_bu_top)
+        line.set_color(_tf2_bu_hi, color.new(color.green, 30))
+        line.set_y1(_tf2_bu_lo, tf2_bu_bot)
+        line.set_y2(_tf2_bu_lo, tf2_bu_bot)
+        line.set_color(_tf2_bu_lo, color.new(color.green, 30))
+        label.set_xy(_tf2_bu_lb, bar_index + 3, math.avg(tf2_bu_top, tf2_bu_bot))
+        label.set_text(_tf2_bu_lb, tf2 + " Bu-OB")
+        label.set_textcolor(_tf2_bu_lb, color.green)
+    else
+        line.set_color(_tf2_bu_hi, color.new(color.green, 100))
+        line.set_color(_tf2_bu_lo, color.new(color.green, 100))
+        label.set_textcolor(_tf2_bu_lb, color.new(color.green, 100))
+    if not na(tf2_be_top)
+        line.set_y1(_tf2_be_hi, tf2_be_top)
+        line.set_y2(_tf2_be_hi, tf2_be_top)
+        line.set_color(_tf2_be_hi, color.new(color.red, 30))
+        line.set_y1(_tf2_be_lo, tf2_be_bot)
+        line.set_y2(_tf2_be_lo, tf2_be_bot)
+        line.set_color(_tf2_be_lo, color.new(color.red, 30))
+        label.set_xy(_tf2_be_lb, bar_index + 3, math.avg(tf2_be_top, tf2_be_bot))
+        label.set_text(_tf2_be_lb, tf2 + " Be-OB")
+        label.set_textcolor(_tf2_be_lb, color.red)
+    else
+        line.set_color(_tf2_be_hi, color.new(color.red, 100))
+        line.set_color(_tf2_be_lo, color.new(color.red, 100))
+        label.set_textcolor(_tf2_be_lb, color.new(color.red, 100))
+
+// TF3 update
+if enable_mtf and tf3_en and show_htf
+    if not na(tf3_bu_top)
+        line.set_y1(_tf3_bu_hi, tf3_bu_top)
+        line.set_y2(_tf3_bu_hi, tf3_bu_top)
+        line.set_color(_tf3_bu_hi, color.new(color.green, 10))
+        line.set_y1(_tf3_bu_lo, tf3_bu_bot)
+        line.set_y2(_tf3_bu_lo, tf3_bu_bot)
+        line.set_color(_tf3_bu_lo, color.new(color.green, 10))
+        label.set_xy(_tf3_bu_lb, bar_index + 3, math.avg(tf3_bu_top, tf3_bu_bot))
+        label.set_text(_tf3_bu_lb, tf3 + " Bu-OB")
+        label.set_textcolor(_tf3_bu_lb, color.green)
+    else
+        line.set_color(_tf3_bu_hi, color.new(color.green, 100))
+        line.set_color(_tf3_bu_lo, color.new(color.green, 100))
+        label.set_textcolor(_tf3_bu_lb, color.new(color.green, 100))
+    if not na(tf3_be_top)
+        line.set_y1(_tf3_be_hi, tf3_be_top)
+        line.set_y2(_tf3_be_hi, tf3_be_top)
+        line.set_color(_tf3_be_hi, color.new(color.red, 10))
+        line.set_y1(_tf3_be_lo, tf3_be_bot)
+        line.set_y2(_tf3_be_lo, tf3_be_bot)
+        line.set_color(_tf3_be_lo, color.new(color.red, 10))
+        label.set_xy(_tf3_be_lb, bar_index + 3, math.avg(tf3_be_top, tf3_be_bot))
+        label.set_text(_tf3_be_lb, tf3 + " Be-OB")
+        label.set_textcolor(_tf3_be_lb, color.red)
+    else
+        line.set_color(_tf3_be_hi, color.new(color.red, 100))
+        line.set_color(_tf3_be_lo, color.new(color.red, 100))
+        label.set_textcolor(_tf3_be_lb, color.new(color.red, 100))
+
+// TF4 update
+if enable_mtf and tf4_en and show_htf
+    if not na(tf4_bu_top)
+        line.set_y1(_tf4_bu_hi, tf4_bu_top)
+        line.set_y2(_tf4_bu_hi, tf4_bu_top)
+        line.set_color(_tf4_bu_hi, color.new(color.green, 10))
+        line.set_y1(_tf4_bu_lo, tf4_bu_bot)
+        line.set_y2(_tf4_bu_lo, tf4_bu_bot)
+        line.set_color(_tf4_bu_lo, color.new(color.green, 10))
+        label.set_xy(_tf4_bu_lb, bar_index + 3, math.avg(tf4_bu_top, tf4_bu_bot))
+        label.set_text(_tf4_bu_lb, tf4 + " Bu-OB")
+        label.set_textcolor(_tf4_bu_lb, color.green)
+    else
+        line.set_color(_tf4_bu_hi, color.new(color.green, 100))
+        line.set_color(_tf4_bu_lo, color.new(color.green, 100))
+        label.set_textcolor(_tf4_bu_lb, color.new(color.green, 100))
+    if not na(tf4_be_top)
+        line.set_y1(_tf4_be_hi, tf4_be_top)
+        line.set_y2(_tf4_be_hi, tf4_be_top)
+        line.set_color(_tf4_be_hi, color.new(color.red, 10))
+        line.set_y1(_tf4_be_lo, tf4_be_bot)
+        line.set_y2(_tf4_be_lo, tf4_be_bot)
+        line.set_color(_tf4_be_lo, color.new(color.red, 10))
+        label.set_xy(_tf4_be_lb, bar_index + 3, math.avg(tf4_be_top, tf4_be_bot))
+        label.set_text(_tf4_be_lb, tf4 + " Be-OB")
+        label.set_textcolor(_tf4_be_lb, color.red)
+    else
+        line.set_color(_tf4_be_hi, color.new(color.red, 100))
+        line.set_color(_tf4_be_lo, color.new(color.red, 100))
+        label.set_textcolor(_tf4_be_lb, color.new(color.red, 100))
+
+// ─────────────────────────────────────────────────────────────
+// PROXIMITY DETECTION
+// true when price is inside or within proximity% of an HTF OB
+// ─────────────────────────────────────────────────────────────
+_prox = proximity_pct / 100
+
+tf1_bu_near = enable_mtf and tf1_en and not na(tf1_bu_top) and close >= tf1_bu_bot and close <= tf1_bu_top * (1 + _prox)
+tf1_be_near = enable_mtf and tf1_en and not na(tf1_be_bot) and close <= tf1_be_top and close >= tf1_be_bot * (1 - _prox)
+tf2_bu_near = enable_mtf and tf2_en and not na(tf2_bu_top) and close >= tf2_bu_bot and close <= tf2_bu_top * (1 + _prox)
+tf2_be_near = enable_mtf and tf2_en and not na(tf2_be_bot) and close <= tf2_be_top and close >= tf2_be_bot * (1 - _prox)
+tf3_bu_near = enable_mtf and tf3_en and not na(tf3_bu_top) and close >= tf3_bu_bot and close <= tf3_bu_top * (1 + _prox)
+tf3_be_near = enable_mtf and tf3_en and not na(tf3_be_bot) and close <= tf3_be_top and close >= tf3_be_bot * (1 - _prox)
+tf4_bu_near = enable_mtf and tf4_en and not na(tf4_bu_top) and close >= tf4_bu_bot and close <= tf4_bu_top * (1 + _prox)
+tf4_be_near = enable_mtf and tf4_en and not na(tf4_be_bot) and close <= tf4_be_top and close >= tf4_be_bot * (1 - _prox)
+
+// Fire alert on transition false → true (bar price first enters proximity zone)
+if tf1_bu_near and not tf1_bu_near[1]
+    alert("🟢 Approaching " + tf1 + " Bullish OB  [" + str.tostring(tf1_bu_bot, format.mintick) + " - " + str.tostring(tf1_bu_top, format.mintick) + "]", alert.freq_once_per_bar)
+if tf1_be_near and not tf1_be_near[1]
+    alert("🔴 Approaching " + tf1 + " Bearish OB  [" + str.tostring(tf1_be_bot, format.mintick) + " - " + str.tostring(tf1_be_top, format.mintick) + "]", alert.freq_once_per_bar)
+if tf2_bu_near and not tf2_bu_near[1]
+    alert("🟢 Approaching " + tf2 + " Bullish OB  [" + str.tostring(tf2_bu_bot, format.mintick) + " - " + str.tostring(tf2_bu_top, format.mintick) + "]", alert.freq_once_per_bar)
+if tf2_be_near and not tf2_be_near[1]
+    alert("🔴 Approaching " + tf2 + " Bearish OB  [" + str.tostring(tf2_be_bot, format.mintick) + " - " + str.tostring(tf2_be_top, format.mintick) + "]", alert.freq_once_per_bar)
+if tf3_bu_near and not tf3_bu_near[1]
+    alert("🟢 Approaching " + tf3 + " Bullish OB  [" + str.tostring(tf3_bu_bot, format.mintick) + " - " + str.tostring(tf3_bu_top, format.mintick) + "]", alert.freq_once_per_bar)
+if tf3_be_near and not tf3_be_near[1]
+    alert("🔴 Approaching " + tf3 + " Bearish OB  [" + str.tostring(tf3_be_bot, format.mintick) + " - " + str.tostring(tf3_be_top, format.mintick) + "]", alert.freq_once_per_bar)
+if tf4_bu_near and not tf4_bu_near[1]
+    alert("🟢 Approaching " + tf4 + " Bullish OB  [" + str.tostring(tf4_bu_bot, format.mintick) + " - " + str.tostring(tf4_bu_top, format.mintick) + "]", alert.freq_once_per_bar)
+if tf4_be_near and not tf4_be_near[1]
+    alert("🔴 Approaching " + tf4 + " Bearish OB  [" + str.tostring(tf4_be_bot, format.mintick) + " - " + str.tostring(tf4_be_top, format.mintick) + "]", alert.freq_once_per_bar)
+
+// ─────────────────────────────────────────────────────────────
+// ALERT CONDITIONS (configure via TradingView alert dialog)
+// ─────────────────────────────────────────────────────────────
+any_htf_bull_near = tf1_bu_near or tf2_bu_near or tf3_bu_near or tf4_bu_near
+any_htf_bear_near = tf1_be_near or tf2_be_near or tf3_be_near or tf4_be_near
+
+alertcondition(any_htf_bull_near and not any_htf_bull_near[1], "HTF Bullish OB - Approaching", "Price approaching a Bullish OB on a higher timeframe")
+alertcondition(any_htf_bear_near and not any_htf_bear_near[1], "HTF Bearish OB - Approaching", "Price approaching a Bearish OB on a higher timeframe")
+alertcondition(tf1_bu_near and not tf1_bu_near[1], "TF1 Bullish OB Approach", "Price approaching TF1 Bullish OB")
+alertcondition(tf1_be_near and not tf1_be_near[1], "TF1 Bearish OB Approach", "Price approaching TF1 Bearish OB")
+alertcondition(tf2_bu_near and not tf2_bu_near[1], "TF2 Bullish OB Approach", "Price approaching TF2 Bullish OB")
+alertcondition(tf2_be_near and not tf2_be_near[1], "TF2 Bearish OB Approach", "Price approaching TF2 Bearish OB")
+alertcondition(ta.change(market) != 0, "MSB", "Market Structure Break")
