@@ -47,6 +47,10 @@ const PIP_VALUES: Record<string, number> = {
   US30: 1.0,
   US100: 1.0,
   XAGUSD: 0.01,
+  BTCUSD: 1.0,
+  BTCUSDT: 1.0,
+  ETHUSD: 0.1,
+  ETHUSDT: 0.1,
 };
 
 /**
