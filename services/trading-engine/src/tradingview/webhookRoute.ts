@@ -27,6 +27,7 @@
 import { Router, Request, Response } from 'express';
 import { Logger } from '@providencex/shared-utils';
 import { TradeSignal } from '../types';
+import { OBConfluenceFilter } from './OBConfluenceFilter';
 
 const logger = new Logger('TVWebhook');
 const router: Router = Router();
@@ -140,7 +141,8 @@ export function createTVWebhookRouter(
     reason?: string;
     ticket?: string | number;
     error?: string;
-  }>
+  }>,
+  obFilter?: OBConfluenceFilter,
 ): Router {
 
   /**
@@ -170,6 +172,33 @@ export function createTVWebhookRouter(
     );
 
     try {
+      // OB Confluence check (if bridge is connected)
+      if (obFilter) {
+        const obCheck = await obFilter.checkConfluence(signal.entry, signal.direction, signal.symbol);
+        if (!obCheck.hasConfluence) {
+          const elapsed = Date.now() - startTime;
+          logger.info(`[TVWebhook] Skipped — no OB confluence: ${obCheck.reason}`);
+          return res.json({
+            success: false,
+            decision: 'skip',
+            symbol: signal.symbol,
+            direction: signal.direction,
+            entry: signal.entry,
+            reason: `No OB confluence: ${obCheck.reason}`,
+            obCheck: { obCount: obCheck.obCount },
+            latencyMs: elapsed,
+          });
+        }
+        // Add OB info to signal metadata
+        signal.meta = {
+          ...signal.meta,
+          obConfluence: true,
+          nearestOB: obCheck.nearestOB,
+          obReason: obCheck.reason,
+        };
+        logger.info(`[TVWebhook] OB confluence confirmed: ${obCheck.reason}`);
+      }
+
       // Execute through the full pipeline
       const result = await executeTrade(signal, strategy);
 

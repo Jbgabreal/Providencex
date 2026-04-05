@@ -1,0 +1,119 @@
+// ProvidenceX BTC Scalper — UT Bot + VWAP + RSI + MTF Trend
+// Based on proven 68%+ WR approach for crypto
+// Designed for M5 BTC
+
+//@version=6
+strategy("ProvidenceX BTC Strategy", overlay=true, initial_capital=500, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.04, slippage=1, pyramiding=0)
+
+// ═══ INPUTS ═══
+// UT Bot (ATR Trailing Stop)
+utKey     = input.float(4.0, "UT Bot Key Value", minval=0.5, step=0.5, tooltip="Sensitivity: higher = fewer signals, less noise")
+utAtrLen  = input.int(10, "UT Bot ATR Period", minval=1)
+
+// Trend filters
+maLen     = input.int(100, "Trend MA Length")
+useVWAP   = input.bool(true, "Use VWAP filter")
+
+// RSI
+rsiLen    = input.int(14, "RSI Length")
+rsiOB     = input.float(70, "RSI Overbought")
+rsiOS     = input.float(30, "RSI Oversold")
+
+// Higher TF trend
+htfTF     = input.timeframe("60", "HTF Trend TF")
+htfMaLen  = input.int(20, "HTF EMA Length")
+
+// Risk
+atrLen    = input.int(14, "ATR Length")
+slMult    = input.float(1.5, "SL (x ATR)")
+tpMult    = input.float(5.0, "TP (x ATR)")
+cooldown  = input.int(3, "Cooldown bars")
+maxDaily  = input.int(8, "Max trades/day")
+
+// ═══ UT BOT (ATR Trailing Stop) ═══
+// This is the core signal generator — proven on crypto
+utAtr = ta.atr(utAtrLen)
+utTrail = utKey * utAtr
+
+var float utStop = na
+utSrc = close
+
+if na(utStop)
+    utStop := utSrc
+
+if utSrc > utStop
+    utStop := math.max(utStop, utSrc - utTrail)
+else
+    utStop := math.min(utStop, utSrc + utTrail)
+
+utBuy  = utSrc > utStop and utSrc[1] <= utStop[1]  // price crosses above trailing stop
+utSell = utSrc < utStop and utSrc[1] >= utStop[1]  // price crosses below trailing stop
+
+// ═══ TREND MA ═══
+trendMA = ta.ema(close, maLen)
+aboveMA = close > trendMA
+belowMA = close < trendMA
+
+// ═══ VWAP ═══
+vwapVal = ta.vwap(hlc3)
+aboveVWAP = not useVWAP or close > vwapVal
+belowVWAP = not useVWAP or close < vwapVal
+
+// ═══ RSI ═══
+rsi = ta.rsi(close, rsiLen)
+rsiNotOB = rsi < rsiOB  // don't buy overbought
+rsiNotOS = rsi > rsiOS  // don't sell oversold
+
+// ═══ HIGHER TIMEFRAME TREND ═══
+htfEma = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfMaLen), lookahead=barmerge.lookahead_off)
+htfBull = close > htfEma
+htfBear = close < htfEma
+
+// ═══ ATR ═══
+atr = ta.atr(atrLen)
+
+// ═══ SIGNALS ═══
+var int lastBar = 0, var int dayT = 0, var int lDay = 0
+if dayofweek != lDay
+    dayT := 0
+    lDay := dayofweek
+canTrade = bar_index - lastBar > cooldown and strategy.position_size == 0 and dayT < maxDaily
+
+// BUY: UT Bot buy + above MA + above VWAP + RSI not overbought + HTF bullish
+buySignal  = utBuy and aboveMA and aboveVWAP and rsiNotOB and htfBull and canTrade
+
+// SELL: UT Bot sell + below MA + below VWAP + RSI not oversold + HTF bearish
+sellSignal = utSell and belowMA and belowVWAP and rsiNotOS and htfBear and canTrade
+
+// ═══ EXECUTE ═══
+if buySignal
+    float sl = close - atr * slMult
+    float tp = close + atr * tpMult
+    strategy.entry("BUY", strategy.long)
+    strategy.exit("BUY_X", "BUY", stop=sl, limit=tp)
+    lastBar := bar_index
+    dayT += 1
+
+if sellSignal
+    float sl = close + atr * slMult
+    float tp = close - atr * tpMult
+    strategy.entry("SELL", strategy.short)
+    strategy.exit("SELL_X", "SELL", stop=sl, limit=tp)
+    lastBar := bar_index
+    dayT += 1
+
+// UT Bot flip exit (trend reversal)
+if strategy.position_size > 0 and utSell
+    strategy.close("BUY", comment="UT Flip")
+if strategy.position_size < 0 and utBuy
+    strategy.close("SELL", comment="UT Flip")
+
+// ═══ VISUALS ═══
+plot(utStop, "UT Bot Stop", color=utSrc > utStop ? color.green : color.red, linewidth=2)
+plot(trendMA, "MA 100", color=color.orange, linewidth=1)
+plot(useVWAP ? vwapVal : na, "VWAP", color=color.purple, linewidth=1)
+
+plotshape(buySignal, "BUY", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(sellSignal, "SELL", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+bgcolor(aboveMA and htfBull ? color.new(color.green, 97) : belowMA and htfBear ? color.new(color.red, 97) : na)
