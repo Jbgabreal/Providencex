@@ -390,7 +390,7 @@ router.post('/strategy-assignments/:id/resume', (req, res) =>
     }
 
     // Symbols (trading pairs)
-    const AVAILABLE_SYMBOLS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'US30', 'US100', 'EURJPY', 'GBPJPY'];
+    const AVAILABLE_SYMBOLS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'US30', 'US100', 'EURJPY', 'GBPJPY', 'BTCUSD', 'ETHUSD', 'V25', 'V50', 'V75', 'V100'];
     if (Array.isArray(body.symbols)) {
       const validSymbols = body.symbols
         .map((s: string) => s.toUpperCase())

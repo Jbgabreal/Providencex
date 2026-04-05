@@ -272,7 +272,7 @@ export class UserAssignmentOrchestrator {
       },
       symbols: ctx.assignment.user_config?.symbols
         || (ctx.strategyProfile.config as any)?.symbols
-        || ['XAUUSD', 'EURUSD', 'GBPUSD', 'US30'], // user config → profile config → defaults
+        || ['XAUUSD', 'EURUSD', 'GBPUSD', 'BTCUSD', 'US30'], // user config → profile config → defaults
       risk: {
         // These values are overridden by StrategyProfileRiskConfig inside PerAccountRiskService.
         riskPercent: ctx.profileRiskConfig.riskPerTradePercent,
