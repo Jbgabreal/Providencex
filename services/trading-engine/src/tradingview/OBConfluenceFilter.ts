@@ -34,7 +34,7 @@ export interface OBFilterConfig {
 }
 
 const DEFAULT_CONFIG: OBFilterConfig = {
-  maxDistancePct: parseFloat(process.env.OB_MAX_DISTANCE_PCT || '0.5'),
+  maxDistancePct: parseFloat(process.env.OB_MAX_DISTANCE_PCT || '0.2'),
   indicatorFilter: process.env.OB_INDICATOR_FILTER || '',
   skipSessions: true,
   enabled: process.env.OB_CONFLUENCE_ENABLED !== 'false',
@@ -124,7 +124,7 @@ export class OBConfluenceFilter {
     }
   }
 
-  /** Fetch OB zones from TradingView (cached) */
+  /** Fetch OB zones from TradingView (cached). Only keeps zones near current price. */
   private async getOBZones(): Promise<PineBox[]> {
     const now = Date.now();
     if (now - this.lastFetchTime < this.cacheTTL && this.lastOBs.length > 0) {
@@ -134,16 +134,30 @@ export class OBConfluenceFilter {
     await this.bridge.ensureConnected();
     const studies = await this.bridge.getPineBoxes(this.config.indicatorFilter);
 
+    // Get current price for relevance filtering
+    let currentPrice = 0;
+    try {
+      const quote = await this.bridge.getQuote();
+      currentPrice = quote.close;
+    } catch {}
+
     const allBoxes: PineBox[] = [];
     for (const study of studies) {
       if (this.config.skipSessions && /session/i.test(study.name)) continue;
-      allBoxes.push(...study.boxes);
+      for (const box of study.boxes) {
+        // Only keep OBs within 5% of current price (filter out distant historical zones)
+        if (currentPrice > 0) {
+          const mid = (box.high + box.low) / 2;
+          if (Math.abs(mid - currentPrice) / currentPrice > 0.05) continue;
+        }
+        allBoxes.push(box);
+      }
     }
 
     this.lastOBs = allBoxes;
     this.lastFetchTime = now;
 
-    logger.debug(`[OBFilter] Fetched ${allBoxes.length} OB zones from ${studies.length} indicators`);
+    logger.debug(`[OBFilter] Fetched ${allBoxes.length} nearby OB zones (filtered from ${studies.reduce((a, s) => a + s.boxes.length, 0)} total)`);
     return allBoxes;
   }
 
