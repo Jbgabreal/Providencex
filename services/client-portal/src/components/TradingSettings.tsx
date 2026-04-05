@@ -29,6 +29,8 @@ const SYMBOL_OPTIONS = [
   { value: 'V50', label: 'Volatility 50 (24/7)' },
   { value: 'V75', label: 'Volatility 75 (24/7)' },
   { value: 'V100', label: 'Volatility 100 (24/7)' },
+  { value: 'BTCUSD', label: 'Bitcoin (BTCUSD) 24/7' },
+  { value: 'ETHUSD', label: 'Ethereum (ETHUSD) 24/7' },
 ];
 
 interface Props {
@@ -38,6 +40,7 @@ interface Props {
 // Strategy profiles that are locked to specific symbols
 const STRATEGY_SYMBOL_DEFAULTS: Record<string, string[]> = {
   'v25_inducement_v1': ['V25'],
+  'tradingview_signal_v1': ['XAUUSD', 'BTCUSD'],
 };
 
 export function TradingSettings({ assignment }: Props) {

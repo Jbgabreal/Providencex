@@ -209,8 +209,9 @@
   {
     "id": "tradingview_signal_v1",
     "key": "tradingview_signal_v1",
-    "displayName": "TradingView Signal (Pine Indicators)",
-    "description": "Reads ICT/SMC Pine indicator drawings (OB boxes, bias labels, entry signals) from TradingView Desktop via CDP. Requires TradingView Desktop running with --remote-debugging-port=9222 and Pine indicators loaded on charts.",
+    "displayName": "TradingView OB Signal",
+    "description": "Trades OB zone entries from TradingView indicators. Signals fire via webhook when price enters a bullish/bearish Order Block zone. Works on XAUUSD (Gold Scalper) and BTCUSD (MSB-OB v3 zones). Supports all sessions including Asian.",
+    "allowedSymbols": ["XAUUSD", "BTCUSD", "EURUSD", "GBPUSD"],
     "implementationKey": "TV_SIGNAL_V1",
     "version": 1,
     "createdAt": "2026-04-03T00:00:00.000Z",
