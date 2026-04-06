@@ -200,7 +200,8 @@ export function createTVWebhookRouter(
    */
   async function modifyTrade(ticket: number, stopLoss?: number, takeProfit?: number): Promise<{ success: boolean; error?: string }> {
     try {
-      const payload: Record<string, any> = { ticket };
+      const ticketNum = typeof ticket === 'string' ? parseInt(ticket, 10) : ticket;
+      const payload: Record<string, any> = { ticket: ticketNum };
       if (stopLoss != null) payload.stop_loss = stopLoss;
       if (takeProfit != null) payload.take_profit = takeProfit;
       const resp = await axios.post(`${mt5BaseUrl}/api/v1/trades/modify`, payload, { timeout: 10000 });
@@ -216,8 +217,9 @@ export function createTVWebhookRouter(
    */
   async function partialCloseTrade(ticket: number, volumePercent: number): Promise<{ success: boolean; error?: string }> {
     try {
+      const ticketNum = typeof ticket === 'string' ? parseInt(ticket, 10) : ticket;
       const resp = await axios.post(`${mt5BaseUrl}/api/v1/trades/partial-close`, {
-        ticket,
+        ticket: ticketNum,
         volume_percent: volumePercent,
       }, { timeout: 10000 });
       return { success: resp.data?.success === true, error: resp.data?.error };
@@ -232,7 +234,8 @@ export function createTVWebhookRouter(
    */
   async function closeTrade(ticket: number): Promise<{ success: boolean; error?: string }> {
     try {
-      const resp = await axios.post(`${mt5BaseUrl}/api/v1/trades/close`, { ticket }, { timeout: 10000 });
+      const ticketNum = typeof ticket === 'string' ? parseInt(ticket, 10) : ticket;
+      const resp = await axios.post(`${mt5BaseUrl}/api/v1/trades/close`, { ticket: ticketNum }, { timeout: 10000 });
       return { success: resp.data?.success === true, error: resp.data?.error };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -278,31 +281,32 @@ export function createTVWebhookRouter(
         const results: Array<{ ticket: number; user_id: string; success: boolean; error?: string }> = [];
 
         for (const trade of openTrades) {
+          const ticketNum = typeof trade.mt5_ticket === 'string' ? parseInt(trade.mt5_ticket as any, 10) : trade.mt5_ticket;
           let result: { success: boolean; error?: string };
 
           if (body.event === 'partial_close') {
             const closePct = parseFloat(body.closePct || '50');
-            result = await partialCloseTrade(trade.mt5_ticket, closePct);
+            result = await partialCloseTrade(ticketNum, closePct);
             // After partial close, update SL to breakeven if provided
             if (result.success && body.newStopLoss != null) {
-              const modResult = await modifyTrade(trade.mt5_ticket, parseFloat(body.newStopLoss));
+              const modResult = await modifyTrade(ticketNum, parseFloat(body.newStopLoss));
               if (!modResult.success) {
-                logger.warn(`[TVWebhook] partial_close: closed ${closePct}% but failed to move SL for ticket ${trade.mt5_ticket}: ${modResult.error}`);
+                logger.warn(`[TVWebhook] partial_close: closed ${closePct}% but failed to move SL for ticket ${ticketNum}: ${modResult.error}`);
               }
             }
-            logger.info(`[TVWebhook] partial_close ticket=${trade.mt5_ticket} user=${trade.user_id}: ${result.success ? 'OK' : result.error}`);
+            logger.info(`[TVWebhook] partial_close ticket=${ticketNum} user=${trade.user_id}: ${result.success ? 'OK' : result.error}`);
 
           } else if (body.event === 'modify_sl') {
             const newSL = parseFloat(body.newStopLoss);
             if (isNaN(newSL)) {
               result = { success: false, error: 'Invalid newStopLoss' };
             } else {
-              result = await modifyTrade(trade.mt5_ticket, newSL);
+              result = await modifyTrade(ticketNum, newSL);
             }
-            logger.info(`[TVWebhook] modify_sl ticket=${trade.mt5_ticket} user=${trade.user_id} SL=${body.newStopLoss}: ${result.success ? 'OK' : result.error}`);
+            logger.info(`[TVWebhook] modify_sl ticket=${ticketNum} user=${trade.user_id} SL=${body.newStopLoss}: ${result.success ? 'OK' : result.error}`);
 
           } else if (body.event === 'close') {
-            result = await closeTrade(trade.mt5_ticket);
+            result = await closeTrade(ticketNum);
             // Mark trade as closed in DB
             if (result.success && deps?.tradeHistoryRepo) {
               try {
@@ -310,18 +314,18 @@ export function createTVWebhookRouter(
                 if (pool) {
                   await pool.query(
                     `UPDATE executed_trades SET closed_at = NOW(), exit_reason = $1 WHERE mt5_ticket = $2 AND closed_at IS NULL`,
-                    [body.reason || 'TV indicator close signal', trade.mt5_ticket]
+                    [body.reason || 'TV indicator close signal', ticketNum]
                   );
                 }
               } catch {}
             }
-            logger.info(`[TVWebhook] close ticket=${trade.mt5_ticket} user=${trade.user_id}: ${result.success ? 'OK' : result.error}`);
+            logger.info(`[TVWebhook] close ticket=${ticketNum} user=${trade.user_id}: ${result.success ? 'OK' : result.error}`);
 
           } else {
             result = { success: false, error: `Unknown event: ${body.event}` };
           }
 
-          results.push({ ticket: trade.mt5_ticket, user_id: trade.user_id, ...result });
+          results.push({ ticket: ticketNum, user_id: trade.user_id, ...result });
         }
 
         const succeeded = results.filter(r => r.success).length;
