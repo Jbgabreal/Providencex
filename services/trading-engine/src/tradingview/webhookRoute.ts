@@ -184,7 +184,11 @@ export function createTVWebhookRouter(
        FROM executed_trades
        WHERE symbol = $1
          AND closed_at IS NULL
-         AND (strategy_profile_id = 'tradingview_signal_v1' OR metadata->>'strategy' = 'TV_WEBHOOK' OR entry_reason LIKE '%TradingView%')
+         AND (
+           strategy_profile_id IN (SELECT id FROM strategy_profiles WHERE key = 'tradingview_signal_v1' OR implementation_key = 'TV_SIGNAL_V1')
+           OR metadata->>'strategy' = 'TV_WEBHOOK'
+           OR entry_reason LIKE '%TradingView%'
+         )
        ORDER BY opened_at DESC`,
       [symbol]
     );
