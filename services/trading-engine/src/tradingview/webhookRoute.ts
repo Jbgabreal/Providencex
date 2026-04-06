@@ -25,9 +25,11 @@
  */
 
 import { Router, Request, Response } from 'express';
+import axios from 'axios';
 import { Logger } from '@providencex/shared-utils';
 import { TradeSignal } from '../types';
 import { OBConfluenceFilter } from './OBConfluenceFilter';
+import { TradeHistoryRepository } from '../db/TradeHistoryRepository';
 
 const logger = new Logger('TVWebhook');
 const router: Router = Router();
@@ -160,7 +162,79 @@ export function createTVWebhookRouter(
     error?: string;
   }>,
   obFilter?: OBConfluenceFilter,
+  deps?: { tradeHistoryRepo?: TradeHistoryRepository },
 ): Router {
+
+  const mt5BaseUrl = process.env.MT5_CONNECTOR_URL || 'http://localhost:3030';
+
+  /**
+   * Find all open trades for the TradingView strategy on a given symbol.
+   * Returns tickets across ALL users subscribed to the strategy.
+   */
+  async function findOpenTVTrades(symbol: string): Promise<Array<{ mt5_ticket: number; user_id: string; mt5_account_id: string; direction: string }>> {
+    if (!deps?.tradeHistoryRepo) {
+      logger.warn('[TVWebhook] No TradeHistoryRepository — cannot find open trades');
+      return [];
+    }
+    const pool = (deps.tradeHistoryRepo as any).pool;
+    if (!pool) return [];
+
+    const result = await pool.query(
+      `SELECT mt5_ticket, user_id, mt5_account_id, direction
+       FROM executed_trades
+       WHERE symbol = $1
+         AND closed_at IS NULL
+         AND (strategy_profile_id = 'tradingview_signal_v1' OR metadata->>'strategy' = 'TV_WEBHOOK' OR entry_reason LIKE '%TradingView%')
+       ORDER BY opened_at DESC`,
+      [symbol]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Call MT5 connector to modify a trade's SL/TP.
+   */
+  async function modifyTrade(ticket: number, stopLoss?: number, takeProfit?: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      const payload: Record<string, any> = { ticket };
+      if (stopLoss != null) payload.stop_loss = stopLoss;
+      if (takeProfit != null) payload.take_profit = takeProfit;
+      const resp = await axios.post(`${mt5BaseUrl}/api/v1/trades/modify`, payload, { timeout: 10000 });
+      return { success: resp.data?.success === true, error: resp.data?.error };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Call MT5 connector to partially close a trade.
+   */
+  async function partialCloseTrade(ticket: number, volumePercent: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      const resp = await axios.post(`${mt5BaseUrl}/api/v1/trades/partial-close`, {
+        ticket,
+        volume_percent: volumePercent,
+      }, { timeout: 10000 });
+      return { success: resp.data?.success === true, error: resp.data?.error };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Call MT5 connector to fully close a trade.
+   */
+  async function closeTrade(ticket: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      const resp = await axios.post(`${mt5BaseUrl}/api/v1/trades/close`, { ticket }, { timeout: 10000 });
+      return { success: resp.data?.success === true, error: resp.data?.error };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
+    }
+  }
 
   /**
    * POST /api/tv/webhook
@@ -173,6 +247,103 @@ export function createTVWebhookRouter(
 
     logger.info('[TVWebhook] Received alert:', JSON.stringify(body).slice(0, 500));
 
+    // ── Lifecycle events: partial_close, modify_sl, close ──
+    // These come from the PB v3 indicator after an entry has been made.
+    // They operate on ALL open TV strategy trades for the symbol.
+    if (body.event && ['partial_close', 'modify_sl', 'close'].includes(body.event)) {
+      // Validate secret
+      const secret = process.env.TV_WEBHOOK_SECRET;
+      if (secret && body.secret !== secret) {
+        return res.status(400).json({ success: false, error: 'Invalid webhook secret' });
+      }
+
+      const symbol = (body.symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!symbol) {
+        return res.status(400).json({ success: false, error: 'Missing symbol for lifecycle event' });
+      }
+
+      try {
+        const openTrades = await findOpenTVTrades(symbol);
+        if (openTrades.length === 0) {
+          logger.warn(`[TVWebhook] ${body.event}: No open TV trades found for ${symbol}`);
+          return res.json({ success: true, event: body.event, symbol, tradesFound: 0, message: 'No open trades to modify' });
+        }
+
+        logger.info(`[TVWebhook] ${body.event} ${symbol}: Found ${openTrades.length} open trade(s) across users`);
+
+        const results: Array<{ ticket: number; user_id: string; success: boolean; error?: string }> = [];
+
+        for (const trade of openTrades) {
+          let result: { success: boolean; error?: string };
+
+          if (body.event === 'partial_close') {
+            const closePct = parseFloat(body.closePct || '50');
+            result = await partialCloseTrade(trade.mt5_ticket, closePct);
+            // After partial close, update SL to breakeven if provided
+            if (result.success && body.newStopLoss != null) {
+              const modResult = await modifyTrade(trade.mt5_ticket, parseFloat(body.newStopLoss));
+              if (!modResult.success) {
+                logger.warn(`[TVWebhook] partial_close: closed ${closePct}% but failed to move SL for ticket ${trade.mt5_ticket}: ${modResult.error}`);
+              }
+            }
+            logger.info(`[TVWebhook] partial_close ticket=${trade.mt5_ticket} user=${trade.user_id}: ${result.success ? 'OK' : result.error}`);
+
+          } else if (body.event === 'modify_sl') {
+            const newSL = parseFloat(body.newStopLoss);
+            if (isNaN(newSL)) {
+              result = { success: false, error: 'Invalid newStopLoss' };
+            } else {
+              result = await modifyTrade(trade.mt5_ticket, newSL);
+            }
+            logger.info(`[TVWebhook] modify_sl ticket=${trade.mt5_ticket} user=${trade.user_id} SL=${body.newStopLoss}: ${result.success ? 'OK' : result.error}`);
+
+          } else if (body.event === 'close') {
+            result = await closeTrade(trade.mt5_ticket);
+            // Mark trade as closed in DB
+            if (result.success && deps?.tradeHistoryRepo) {
+              try {
+                const pool = (deps.tradeHistoryRepo as any).pool;
+                if (pool) {
+                  await pool.query(
+                    `UPDATE executed_trades SET closed_at = NOW(), exit_reason = $1 WHERE mt5_ticket = $2 AND closed_at IS NULL`,
+                    [body.reason || 'TV indicator close signal', trade.mt5_ticket]
+                  );
+                }
+              } catch {}
+            }
+            logger.info(`[TVWebhook] close ticket=${trade.mt5_ticket} user=${trade.user_id}: ${result.success ? 'OK' : result.error}`);
+
+          } else {
+            result = { success: false, error: `Unknown event: ${body.event}` };
+          }
+
+          results.push({ ticket: trade.mt5_ticket, user_id: trade.user_id, ...result });
+        }
+
+        const succeeded = results.filter(r => r.success).length;
+        const failed = results.filter(r => !r.success).length;
+        const elapsed = Date.now() - startTime;
+
+        logger.info(`[TVWebhook] ${body.event} ${symbol}: ${succeeded} succeeded, ${failed} failed (${elapsed}ms)`);
+
+        return res.json({
+          success: succeeded > 0,
+          event: body.event,
+          symbol,
+          tradesFound: openTrades.length,
+          succeeded,
+          failed,
+          results,
+          latencyMs: elapsed,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[TVWebhook] Lifecycle event error: ${msg}`);
+        return res.status(500).json({ success: false, error: msg });
+      }
+    }
+
+    // ── Entry signal (original flow) ──
     // Validate
     const validation = validatePayload(body);
     if (!validation.valid || !validation.signal) {
@@ -246,6 +417,19 @@ export function createTVWebhookRouter(
       res.status(500).json({ success: false, error: msg });
     }
   });
+
+  /**
+   * POST /api/tv/webhook — lifecycle events (partial_close, modify_sl, close)
+   *
+   * These fire AFTER entry, from the PB v3 indicator tracking position state.
+   * The main /webhook handler above processes entry signals.
+   * Lifecycle events are detected by the presence of body.event.
+   * They are injected at the top of the existing handler via early return.
+   */
+
+  // Lifecycle events are handled inside the main /webhook handler above.
+  // We detect them by checking body.event before entry validation.
+  // This is done by wrapping the handler — see the updated POST /webhook below.
 
   /**
    * GET /api/tv/webhook

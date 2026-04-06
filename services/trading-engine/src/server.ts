@@ -150,6 +150,9 @@ if (process.env.OB_CONFLUENCE_ENABLED !== 'false') {
   }
 }
 
+// Lazy reference — populated after TradeHistoryRepository is created (line ~512)
+const tvDeps: { tradeHistoryRepo?: TradeHistoryRepository } = {};
+
 // TradingView Webhook — direct signal execution from TV alerts
 const tvWebhookRouter = createTVWebhookRouter(async (signal, strategy) => {
   // Feed the webhook signal through the same pipeline as the tick loop
@@ -176,7 +179,7 @@ const tvWebhookRouter = createTVWebhookRouter(async (signal, strategy) => {
     ticket: result.execution_result?.ticket,
     error: result.execution_result?.error,
   };
-}, obConfluenceFilter);
+}, obConfluenceFilter, tvDeps);
 app.use('/api/tv', tvWebhookRouter);
 
 app.use('/simulate-signal', simulateSignalRoutes);
@@ -510,6 +513,7 @@ const multiTenantEnabled =
   (process.env.MULTI_TENANT_MODE || '').toLowerCase() === 'true';
 const tenantRepository = new TenantRepository(config.databaseUrl);
 const tradeHistoryRepository = new TradeHistoryRepository(config.databaseUrl);
+tvDeps.tradeHistoryRepo = tradeHistoryRepository; // Wire up lazy reference for TV webhook lifecycle events
 const tradeHistoryService = new TradeHistoryService(tradeHistoryRepository);
 
 // Wire OrderEventService → TradeHistoryService callback
