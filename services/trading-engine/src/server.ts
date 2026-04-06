@@ -46,6 +46,8 @@ import { getStrategyByProfileKey } from './strategies/StrategyRegistry';
 import { getProfileByKey } from './strategies/profiles/StrategyProfileStore';
 import { TradingViewStrategy } from './tradingview/TradingViewStrategy';
 import { createTVWebhookRouter } from './tradingview/webhookRoute';
+import { TradingViewBridge } from './tradingview/TradingViewBridge';
+import { OBConfluenceFilter } from './tradingview/OBConfluenceFilter';
 import { TradeJournalService, TradeJournalRepository, SignalOutcomeTracker } from './journal';
 import orderEventsRoutes, { initializeOrderEventService } from './routes/orderEvents';
 import strategyConfigRoutes from './routes/strategyConfig';
@@ -133,6 +135,21 @@ app.get('/api/v1/admin/tv-health', async (_req, res) => {
   }
 });
 
+// TradingView CDP Bridge + OB Confluence Filter (optional — only when TV Desktop is running)
+let obConfluenceFilter: OBConfluenceFilter | undefined;
+if (process.env.OB_CONFLUENCE_ENABLED !== 'false') {
+  try {
+    const tvBridge = new TradingViewBridge({
+      cdpHost: process.env.TV_CDP_HOST || 'localhost',
+      cdpPort: parseInt(process.env.TV_CDP_PORT || '9222', 10),
+    });
+    obConfluenceFilter = new OBConfluenceFilter(tvBridge);
+    logger.info('[Server] OB Confluence Filter initialized (will connect to TradingView when needed)');
+  } catch (err) {
+    logger.warn('[Server] OB Confluence Filter disabled — TradingView Desktop not available');
+  }
+}
+
 // TradingView Webhook — direct signal execution from TV alerts
 const tvWebhookRouter = createTVWebhookRouter(async (signal, strategy) => {
   // Feed the webhook signal through the same pipeline as the tick loop
@@ -149,14 +166,17 @@ const tvWebhookRouter = createTVWebhookRouter(async (signal, strategy) => {
     skipV3Filter: true, // TV indicator already did the analysis
     signalSource: oneShot,
   };
-  const result = await processTradingDecision(signal.symbol, strategy as any, pipelineConfig);
+  // Pass 'TV_SIGNAL_V1' so the multi-tenant orchestrator matches only the
+  // TradingView OB Signal assignment (implementation_key = TV_SIGNAL_V1).
+  // body.strategy from Pine (e.g. "PB_v2") is not a valid strategy key for matching.
+  const result = await processTradingDecision(signal.symbol, 'TV_SIGNAL_V1' as any, pipelineConfig);
   return {
     decision: result.decision,
     reason: result.risk_reason || result.signal_reason,
     ticket: result.execution_result?.ticket,
     error: result.execution_result?.error,
   };
-});
+}, obConfluenceFilter);
 app.use('/api/tv', tvWebhookRouter);
 
 app.use('/simulate-signal', simulateSignalRoutes);
@@ -942,8 +962,10 @@ async function processTradingDecision(
   const tpDistance = Math.abs(signal.takeProfit - signal.entry);
   const slPips = convertPriceDistanceToPips(symbol, slDistance);
   const estimatedLotSize = riskService.getPositionSize(riskContext, slPips, signal.entry);
-  const riskUsd = estimatedLotSize > 0 ? slDistance * estimatedLotSize * (symbol.includes('JPY') ? 1000 : symbol === 'XAUUSD' ? 100 : 100000) : 0;
-  const potentialWin = estimatedLotSize > 0 ? tpDistance * estimatedLotSize * (symbol.includes('JPY') ? 1000 : symbol === 'XAUUSD' ? 100 : 100000) : 0;
+  const isCrypto = symbol === 'BTCUSD' || symbol === 'BTCUSDT' || symbol === 'ETHUSD' || symbol === 'ETHUSDT';
+  const contractMultiplier = isCrypto ? 1 : symbol.includes('JPY') ? 1000 : symbol === 'XAUUSD' ? 100 : 100000;
+  const riskUsd = estimatedLotSize > 0 ? slDistance * estimatedLotSize * contractMultiplier : 0;
+  const potentialWin = estimatedLotSize > 0 ? tpDistance * estimatedLotSize * contractMultiplier : 0;
   const potentialLoss = -riskUsd;
   const rrActual = slDistance > 0 ? tpDistance / slDistance : 0;
 
@@ -958,8 +980,8 @@ async function processTradingDecision(
     lastSignalKey.set(legacyDedupeKey, legacyDedupeValue);
     try {
       legacyJournalId = await journalService.onSignalGenerated({
-        strategyKey: strategyDisplayName,
-        strategyVersion: 'SMCStrategyV2',
+        strategyKey: pipelineConfig?.strategyKey || strategyDisplayName,
+        strategyVersion: pipelineConfig?.strategyVersion || 'SMCStrategyV2',
         symbol: signal.symbol,
         direction: signal.direction,
         entryPrice: signal.entry,
@@ -969,7 +991,7 @@ async function processTradingDecision(
         lotSize: estimatedLotSize > 0 ? estimatedLotSize : undefined,
         riskPercent: riskContext.strategy === 'low' ? 0.5 : 1.5,
         setupContext: {
-          source: 'legacy_tick_loop',
+          source: pipelineConfig?.strategyKey || 'legacy_tick_loop',
           strategy: strategyDisplayName,
           lotSize: estimatedLotSize,
           riskUsd: Math.round(riskUsd * 100) / 100,
@@ -1098,13 +1120,6 @@ async function processTradingDecision(
       decisionLog.execution_filter_reasons = [];
       logger.debug(`[${symbol}] v3 Execution Filter PASSED`);
 
-      // Update journal entry to 'open' status
-      if (legacyJournalId) {
-        try {
-          await journalService.onTradeOpened(legacyJournalId, { entryPrice: signal.entry });
-        } catch {}
-      }
-
       // Step 5.5: Multi-Account / Multi-Tenant Execution
       if (accountRegistry.isMultiAccountMode() || multiTenantEnabled) {
         const executionContext: ExecutionFilterContext = {
@@ -1140,6 +1155,15 @@ async function processTradingDecision(
               stopLoss: rawSignal.sl,
               takeProfit: rawSignal.tp,
             };
+            // Update journal with live trade status
+            if (legacyJournalId) {
+              try {
+                await journalService.onTradeOpened(legacyJournalId, {
+                  entryPrice: rawSignal.entryPrice,
+                  executedTradeId: 'multi-tenant',
+                });
+              } catch {}
+            }
           } else {
             decisionLog.decision = 'skip';
             decisionLog.risk_reason = `Multi-tenant: 0 accounts traded (${tenantResult.skipped} skipped, ${tenantResult.errors} errors)`;
@@ -1164,12 +1188,22 @@ async function processTradingDecision(
 
           if (aggregatedResult.tradedAccounts.length > 0) {
             decisionLog.decision = 'trade';
+            const firstTicket = aggregatedResult.results?.find((r: any) => r.success && r.ticket)?.ticket;
             decisionLog.execution_result = {
               success: true,
-              ticket:
-                aggregatedResult.tradedAccounts.length > 0 ? undefined : undefined,
+              ticket: firstTicket,
             };
             (decisionLog as any).multiAccountResult = aggregatedResult;
+
+            // Update journal with live trade status
+            if (legacyJournalId) {
+              try {
+                await journalService.onTradeOpened(legacyJournalId, {
+                  entryPrice: rawSignal.entryPrice,
+                  executedTradeId: firstTicket?.toString() || 'multi-account',
+                });
+              } catch {}
+            }
 
             // Update stats
             updateDailyStats(strategy, aggregatedResult.tradedAccounts.length, 0);
@@ -1286,12 +1320,18 @@ async function processTradingDecision(
   // Step 7: Execute trade
   logger.info(`[${symbol}] Executing trade: ${signal.direction} @ ${signal.entry}, lot: ${lotSize}`);
 
-  // Update journal to 'open' if not already done by v3 filter pass
-  if (legacyJournalId) {
-    try { await journalService.onTradeOpened(legacyJournalId, { entryPrice: signal.entry, lotSize }); } catch {}
-  }
-
   const executionResult = await executionService.openTrade(signal, lotSize, strategy);
+
+  // Update journal to 'open' with executedTradeId after successful execution
+  if (legacyJournalId) {
+    try {
+      await journalService.onTradeOpened(legacyJournalId, {
+        entryPrice: signal.entry,
+        lotSize,
+        executedTradeId: executionResult.success ? executionResult.ticket?.toString() : undefined,
+      });
+    } catch {}
+  }
 
   // Step 8: Update stats and log decision
   if (executionResult.success) {
@@ -1541,6 +1581,7 @@ async function __processIStrategyDecision_removed(..._: any[]) { const strategy:
         await journalService.onTradeOpened(journalId, {
           lotSize,
           entryPrice: signal.entry,
+          executedTradeId: executionResult.ticket?.toString(),
         });
       }
     }

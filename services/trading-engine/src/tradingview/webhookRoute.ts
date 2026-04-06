@@ -98,9 +98,18 @@ function validatePayload(body: any): { valid: boolean; signal?: TradeSignal; err
   const slDist = Math.abs(entry - stopLoss);
   const tpDist = Math.abs(takeProfit - entry);
   const rr = slDist > 0 ? tpDist / slDist : 0;
-  const minRR = parseFloat(process.env.TV_MIN_RR || '1.0');
+  const minRR = parseFloat(process.env.TV_MIN_RR || '1.5');
   if (rr < minRR) {
     return { valid: false, error: `R:R ${rr.toFixed(2)} below minimum ${minRR}` };
+  }
+
+  // Displacement candle check (from Pine meta)
+  const requireDisplacement = process.env.TV_REQUIRE_DISPLACEMENT !== 'false';
+  if (requireDisplacement && body.meta?.bodyRatio != null) {
+    const minBodyRatio = parseFloat(process.env.TV_MIN_BODY_RATIO || '0.4');
+    if (parseFloat(body.meta.bodyRatio) < minBodyRatio) {
+      return { valid: false, error: `Displacement too weak: body ratio ${body.meta.bodyRatio} < ${minBodyRatio}` };
+    }
   }
 
   // SL distance sanity (not too wide — protect against bad data)
@@ -122,10 +131,14 @@ function validatePayload(body: any): { valid: boolean; signal?: TradeSignal; err
     meta: {
       source: 'tradingview_webhook',
       riskReward: Math.round(rr * 100) / 100,
-      htfTrend: direction === 'buy' ? 'bullish' : 'bearish',
+      htfTrend: body.meta?.htfTrend || (direction === 'buy' ? 'bullish' : 'bearish'),
       alertTime: body.time || new Date().toISOString(),
       timenow: body.timenow,
       interval: body.interval,
+      obTop: body.meta?.obTop,
+      obBot: body.meta?.obBot,
+      bodyRatio: body.meta?.bodyRatio,
+      emaTF: body.meta?.emaTF,
       ...(body.meta || {}),
     },
   };

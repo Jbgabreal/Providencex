@@ -11,7 +11,7 @@
 
 import { Logger } from '@providencex/shared-utils';
 import { TradingViewBridge } from './TradingViewBridge';
-import { PineBox } from './types';
+import { PineBox, PineLine } from './types';
 
 const logger = new Logger('OBConfluenceFilter');
 
@@ -44,6 +44,7 @@ export class OBConfluenceFilter {
   private bridge: TradingViewBridge;
   private config: OBFilterConfig;
   private lastOBs: PineBox[] = [];
+  private lastHTFLevels: number[] = [];
   private lastFetchTime = 0;
   private cacheTTL = 30000; // cache OBs for 30 seconds
 
@@ -63,50 +64,70 @@ export class OBConfluenceFilter {
     }
 
     try {
-      // Fetch OBs (cached)
-      const obs = await this.getOBZones();
+      // Fetch HTF levels and OB zones (cached)
+      await this.fetchData();
 
+      // PRIMARY: Check HTF OB levels (lines from MSB-OB v3 MTF)
+      // These are the high-quality H1/H4/Daily OB zones — few and significant
+      if (this.lastHTFLevels.length > 0) {
+        const maxDist = price * (this.config.maxDistancePct / 100);
+        let nearestLevel: { price: number; distance: number } | null = null;
+
+        for (const level of this.lastHTFLevels) {
+          const dist = Math.abs(level - price);
+          if (dist <= maxDist) {
+            if (!nearestLevel || dist < nearestLevel.distance) {
+              nearestLevel = { price: level, distance: dist };
+            }
+          }
+        }
+
+        if (nearestLevel) {
+          const type = nearestLevel.price < price ? 'demand' : 'supply';
+          const reason = `HTF OB level: ${type} @ ${nearestLevel.price.toFixed(0)} (dist: ${(nearestLevel.distance / price * 100).toFixed(3)}%)`;
+          logger.info(`[OBFilter] ${symbol}: ${reason}`);
+          return {
+            hasConfluence: true,
+            nearestOB: { high: nearestLevel.price, low: nearestLevel.price, distance: nearestLevel.distance, type },
+            obCount: this.lastHTFLevels.length,
+            reason,
+          };
+        }
+
+        // No HTF level nearby
+        const reason = `No HTF OB level within ${this.config.maxDistancePct}% of ${price.toFixed(2)} (checked ${this.lastHTFLevels.length} levels)`;
+        logger.info(`[OBFilter] ${symbol}: ${reason}`);
+        return { hasConfluence: false, nearestOB: null, obCount: this.lastHTFLevels.length, reason };
+      }
+
+      // FALLBACK: If no HTF levels available, check box zones
+      const obs = this.lastOBs;
       if (obs.length === 0) {
-        logger.warn(`[OBFilter] No OB zones found on chart for ${symbol}`);
-        // If no OBs visible, let the trade through (don't block because of missing data)
+        logger.warn(`[OBFilter] No OB data found on chart for ${symbol}`);
         return { hasConfluence: true, nearestOB: null, obCount: 0, reason: 'No OBs on chart — passing through' };
       }
 
-      // Find OBs near the price
       const maxDist = price * (this.config.maxDistancePct / 100);
       const nearbyOBs: { high: number; low: number; distance: number; type: 'demand' | 'supply' }[] = [];
 
       for (const ob of obs) {
         const mid = (ob.high + ob.low) / 2;
-
-        // For BUY: look for demand zones (below or at price)
-        // For SELL: look for supply zones (above or at price)
-        if (direction === 'buy') {
-          // Price should be at or near a demand zone (OB below price)
-          if (ob.high >= price - maxDist && ob.low <= price + maxDist) {
-            const dist = Math.abs(mid - price);
-            nearbyOBs.push({ high: ob.high, low: ob.low, distance: dist, type: 'demand' });
-          }
-        } else {
-          // Price should be at or near a supply zone (OB above price)
-          if (ob.low <= price + maxDist && ob.high >= price - maxDist) {
-            const dist = Math.abs(mid - price);
-            nearbyOBs.push({ high: ob.high, low: ob.low, distance: dist, type: 'supply' });
-          }
+        if (ob.high >= price - maxDist && ob.low <= price + maxDist) {
+          const dist = Math.abs(mid - price);
+          const type = mid < price ? 'demand' : 'supply';
+          nearbyOBs.push({ high: ob.high, low: ob.low, distance: dist, type });
         }
       }
 
       if (nearbyOBs.length === 0) {
-        const reason = `No OB within ${this.config.maxDistancePct}% of ${price.toFixed(2)} for ${direction} (checked ${obs.length} zones)`;
+        const reason = `No OB within ${this.config.maxDistancePct}% of ${price.toFixed(2)} (checked ${obs.length} zones)`;
         logger.info(`[OBFilter] ${symbol}: ${reason}`);
         return { hasConfluence: false, nearestOB: null, obCount: obs.length, reason };
       }
 
-      // Sort by distance, take closest
       nearbyOBs.sort((a, b) => a.distance - b.distance);
       const nearest = nearbyOBs[0];
-
-      const reason = `OB confluence: ${nearest.type} zone ${nearest.low.toFixed(0)}-${nearest.high.toFixed(0)} (dist: ${(nearest.distance / price * 100).toFixed(3)}%)`;
+      const reason = `OB zone: ${nearest.type} ${nearest.low.toFixed(0)}-${nearest.high.toFixed(0)} (dist: ${(nearest.distance / price * 100).toFixed(3)}%)`;
       logger.info(`[OBFilter] ${symbol}: ${reason}`);
 
       return {
@@ -124,11 +145,11 @@ export class OBConfluenceFilter {
     }
   }
 
-  /** Fetch OB zones from TradingView (cached). Only keeps zones near current price. */
-  private async getOBZones(): Promise<PineBox[]> {
+  /** Fetch all OB data from TradingView (cached) */
+  private async fetchData(): Promise<void> {
     const now = Date.now();
-    if (now - this.lastFetchTime < this.cacheTTL && this.lastOBs.length > 0) {
-      return this.lastOBs;
+    if (now - this.lastFetchTime < this.cacheTTL && (this.lastOBs.length > 0 || this.lastHTFLevels.length > 0)) {
+      return;
     }
 
     await this.bridge.ensureConnected();
@@ -155,10 +176,32 @@ export class OBConfluenceFilter {
     }
 
     this.lastOBs = allBoxes;
+
+    // Also fetch HTF lines (high quality OB levels from MSB-OB v3 MTF)
+    try {
+      const lineStudies = await this.bridge.getPineLines('MSB-OB');
+      const htfLevels: number[] = [];
+      const seen = new Set<number>();
+      for (const study of lineStudies) {
+        for (const line of study.lines) {
+          if (!line.horizontal) continue;
+          const rounded = Math.round(line.y1);
+          if (seen.has(rounded)) continue;
+          // Only keep levels within 3% of current price
+          if (currentPrice > 0 && Math.abs(rounded - currentPrice) / currentPrice > 0.03) continue;
+          htfLevels.push(line.y1);
+          seen.add(rounded);
+        }
+      }
+      this.lastHTFLevels = htfLevels;
+      logger.debug(`[OBFilter] Fetched ${htfLevels.length} HTF OB levels from lines`);
+    } catch {
+      this.lastHTFLevels = [];
+    }
+
     this.lastFetchTime = now;
 
-    logger.debug(`[OBFilter] Fetched ${allBoxes.length} nearby OB zones (filtered from ${studies.reduce((a, s) => a + s.boxes.length, 0)} total)`);
-    return allBoxes;
+    logger.debug(`[OBFilter] Fetched ${allBoxes.length} nearby OB zones + ${this.lastHTFLevels.length} HTF levels`);
   }
 
   /** Clear cache (call when symbol changes) */

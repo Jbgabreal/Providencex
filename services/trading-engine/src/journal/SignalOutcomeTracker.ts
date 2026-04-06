@@ -199,6 +199,8 @@ export class SignalOutcomeTracker {
     if (s === 'XAUUSD' || s === 'GOLD') return 100;
     if (s === 'XAGUSD' || s === 'SILVER') return 5000;
     if (s === 'US30' || s === 'US100' || s === 'US500') return 1;
+    if (s === 'BTCUSD' || s === 'BTCUSDT') return 1; // Crypto: 1 lot = 1 BTC
+    if (s === 'ETHUSD' || s === 'ETHUSDT') return 1; // Crypto: 1 lot = 1 ETH
     if (s.startsWith('V') && /^V\d+$/.test(s)) return 1; // Volatility indices
     return 100000; // Standard forex lot
   }
