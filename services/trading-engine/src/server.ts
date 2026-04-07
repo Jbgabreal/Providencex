@@ -135,9 +135,10 @@ app.get('/api/v1/admin/tv-health', async (_req, res) => {
   }
 });
 
-// TradingView CDP Bridge + OB Confluence Filter (optional — only when TV Desktop is running)
+// TradingView CDP Bridge + OB Confluence Filter (opt-in — only when TV Desktop is running locally)
+// Set OB_CONFLUENCE_ENABLED=true to enable. Off by default to avoid 60s CDP timeout on Railway.
 let obConfluenceFilter: OBConfluenceFilter | undefined;
-if (process.env.OB_CONFLUENCE_ENABLED !== 'false') {
+if (process.env.OB_CONFLUENCE_ENABLED === 'true') {
   try {
     const tvBridge = new TradingViewBridge({
       cdpHost: process.env.TV_CDP_HOST || 'localhost',
