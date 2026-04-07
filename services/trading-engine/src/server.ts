@@ -155,24 +155,34 @@ const tvDeps: { tradeHistoryRepo?: TradeHistoryRepository } = {};
 
 // TradingView Webhook — direct signal execution from TV alerts
 const tvWebhookRouter = createTVWebhookRouter(async (signal, strategy) => {
-  // Feed the webhook signal through the same pipeline as the tick loop
-  // by creating a one-shot signalSource that returns this signal
+  // Map Pine alert strategy names to engine implementation keys.
+  // Each Pine indicator sends its own strategy name (e.g. "PB_v3", "PB_v2").
+  // This maps to the correct strategy profile so only subscribed users get the trade.
+  const STRATEGY_MAP: Record<string, string> = {
+    'PB_v2': 'TV_SIGNAL_V1',          // MSB-OB v3 / PB v2 indicator
+    'PB_v3': 'PULLBACK_CONT_V1',      // PB v3 Pullback Continuation
+    'MSB_OB_v3': 'TV_SIGNAL_V1',      // MSB-OB v3 indicator
+    'TV_SIGNAL_V1': 'TV_SIGNAL_V1',   // Direct key
+    'PULLBACK_CONT_V1': 'PULLBACK_CONT_V1', // Direct key
+  };
+  const implKey = STRATEGY_MAP[strategy] || 'TV_SIGNAL_V1';
+  const strategyDisplayName = strategy || 'TradingView Webhook';
+
   const oneShot = {
     generateSignal: async () => signal,
     getLastSmcReason: () => null,
   };
   const pipelineConfig: StrategyPipelineConfig = {
-    displayName: 'TradingView Webhook',
-    strategyKey: 'TV_WEBHOOK',
+    displayName: `TradingView: ${strategyDisplayName}`,
+    strategyKey: implKey,
     profileKey: null,
-    strategyVersion: 'TV_WEBHOOK_V1',
+    strategyVersion: implKey,
     skipV3Filter: true, // TV indicator already did the analysis
     signalSource: oneShot,
   };
-  // Pass 'TV_SIGNAL_V1' so the multi-tenant orchestrator matches only the
-  // TradingView OB Signal assignment (implementation_key = TV_SIGNAL_V1).
-  // body.strategy from Pine (e.g. "PB_v2") is not a valid strategy key for matching.
-  const result = await processTradingDecision(signal.symbol, 'TV_SIGNAL_V1' as any, pipelineConfig);
+  // Pass the mapped implementation key so the multi-tenant orchestrator
+  // routes ONLY to users subscribed to this specific strategy.
+  const result = await processTradingDecision(signal.symbol, implKey as any, pipelineConfig);
   return {
     decision: result.decision,
     reason: result.risk_reason || result.signal_reason,

@@ -227,6 +227,34 @@
       "defaultSlPips": 30,
       "note": "Set TV_OB_INDICATOR, TV_BIAS_INDICATOR, TV_ENTRY_INDICATOR env vars to filter specific Pine indicators. Leave empty to scan all indicators."
     }
+  },
+  {
+    "id": "pullback_continuation_v1",
+    "key": "pullback_continuation_v1",
+    "displayName": "PB v3 Pullback Continuation",
+    "description": "EMA pullback + reclaim continuation strategy on M3. Uses EMA 9/21 for trend, M15 EMA 20 for HTF bias, RSI for pullback depth, ATR for stops. Mirrors TradingView PB v3 Pine script.",
+    "allowedSymbols": ["XAUUSD", "BTCUSD", "EURUSD", "GBPUSD"],
+    "implementationKey": "PULLBACK_CONT_V1",
+    "version": 1,
+    "createdAt": "2026-04-06T00:00:00.000Z",
+    "updatedAt": "2026-04-06T00:00:00.000Z",
+    "isDefault": false,
+    "isArchived": false,
+    "config": {
+      "emaFastLen": 9,
+      "emaSlowLen": 21,
+      "htfEmaLen": 20,
+      "rsiLen": 14,
+      "rsiPullbackLong": 50,
+      "rsiPullbackShort": 50,
+      "atrLen": 14,
+      "atrStopMult": 1.0,
+      "riskReward": 2.0,
+      "pullbackLookback": 2,
+      "useHTFBias": true,
+      "htfMinutes": 15,
+      "cooldownBars": 3
+    }
   }
 ]
 

@@ -508,6 +508,7 @@ export class HistoricalDataLoader {
       XAUUSD: 'frxXAUUSD', EURUSD: 'frxEURUSD', GBPUSD: 'frxGBPUSD',
       USDJPY: 'frxUSDJPY', AUDUSD: 'frxAUDUSD', US30: 'OTC_DJI',
       US100: 'OTC_NDX', XAGUSD: 'frxXAGUSD',
+      BTCUSD: 'cryBTCUSD', ETHUSD: 'cryETHUSD',
       V25: '1HZ25V', V50: '1HZ50V', V75: '1HZ75V', V100: '1HZ100V', V10: '1HZ10V',
     };
     const TF_MAP: Record<string, number> = {

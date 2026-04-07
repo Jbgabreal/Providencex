@@ -168,10 +168,22 @@ export function createTVWebhookRouter(
   const mt5BaseUrl = process.env.MT5_CONNECTOR_URL || 'http://localhost:3030';
 
   /**
-   * Find all open trades for the TradingView strategy on a given symbol.
-   * Returns tickets across ALL users subscribed to the strategy.
+   * Map Pine alert strategy names to engine implementation keys (same as server.ts).
    */
-  async function findOpenTVTrades(symbol: string): Promise<Array<{ mt5_ticket: number; user_id: string; mt5_account_id: string; direction: string }>> {
+  const STRATEGY_MAP: Record<string, string> = {
+    'PB_v2': 'TV_SIGNAL_V1',
+    'PB_v3': 'PULLBACK_CONT_V1',
+    'MSB_OB_v3': 'TV_SIGNAL_V1',
+    'TV_SIGNAL_V1': 'TV_SIGNAL_V1',
+    'PULLBACK_CONT_V1': 'PULLBACK_CONT_V1',
+  };
+
+  /**
+   * Find all open trades for a specific TradingView strategy on a given symbol.
+   * Returns tickets across ALL users subscribed to that strategy.
+   * If no strategy specified, finds all TV strategy trades (backward compatible).
+   */
+  async function findOpenTVTrades(symbol: string, strategy?: string): Promise<Array<{ mt5_ticket: number; user_id: string; mt5_account_id: string; direction: string }>> {
     if (!deps?.tradeHistoryRepo) {
       logger.warn('[TVWebhook] No TradeHistoryRepository — cannot find open trades');
       return [];
@@ -179,19 +191,41 @@ export function createTVWebhookRouter(
     const pool = (deps.tradeHistoryRepo as any).pool;
     if (!pool) return [];
 
-    const result = await pool.query(
-      `SELECT mt5_ticket, user_id, mt5_account_id, direction
+    // If a specific strategy is provided, only find trades from that strategy
+    const implKey = strategy ? (STRATEGY_MAP[strategy] || strategy) : null;
+
+    let query: string;
+    let params: any[];
+
+    if (implKey) {
+      // Find trades for this specific strategy
+      query = `SELECT mt5_ticket, user_id, mt5_account_id, direction
        FROM executed_trades
        WHERE symbol = $1
          AND closed_at IS NULL
          AND (
-           strategy_profile_id IN (SELECT id FROM strategy_profiles WHERE key = 'tradingview_signal_v1' OR implementation_key = 'TV_SIGNAL_V1')
-           OR metadata->>'strategy' = 'TV_WEBHOOK'
+           strategy_profile_id IN (SELECT id FROM strategy_profiles WHERE implementation_key = $2)
+           OR metadata->>'strategy' = $2
+           OR entry_reason LIKE '%' || $2 || '%'
+         )
+       ORDER BY opened_at DESC`;
+      params = [symbol, implKey];
+    } else {
+      // Backward compatible: find all TV strategy trades
+      query = `SELECT mt5_ticket, user_id, mt5_account_id, direction
+       FROM executed_trades
+       WHERE symbol = $1
+         AND closed_at IS NULL
+         AND (
+           strategy_profile_id IN (SELECT id FROM strategy_profiles WHERE implementation_key IN ('TV_SIGNAL_V1', 'PULLBACK_CONT_V1'))
+           OR metadata->>'strategy' IN ('TV_SIGNAL_V1', 'PULLBACK_CONT_V1', 'TV_WEBHOOK')
            OR entry_reason LIKE '%TradingView%'
          )
-       ORDER BY opened_at DESC`,
-      [symbol]
-    );
+       ORDER BY opened_at DESC`;
+      params = [symbol];
+    }
+
+    const result = await pool.query(query, params);
     return result.rows;
   }
 
@@ -270,7 +304,7 @@ export function createTVWebhookRouter(
       }
 
       try {
-        const openTrades = await findOpenTVTrades(symbol);
+        const openTrades = await findOpenTVTrades(symbol, body.strategy);
         if (openTrades.length === 0) {
           logger.warn(`[TVWebhook] ${body.event}: No open TV trades found for ${symbol}`);
           return res.json({ success: true, event: body.event, symbol, tradesFound: 0, message: 'No open trades to modify' });

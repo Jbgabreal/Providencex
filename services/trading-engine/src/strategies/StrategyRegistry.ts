@@ -18,6 +18,7 @@ import { V25InducementStrategy } from './v25/V25InducementStrategy';
 import { V25MeanReversionStrategy } from './v25/V25MeanReversionStrategy';
 import { V25H1MomentumStrategy } from './v25/V25H1MomentumStrategy';
 import { TradingViewStrategy } from '../tradingview/TradingViewStrategy';
+import { PullbackContinuationStrategy } from './pullback/PullbackContinuationStrategy';
 
 const logger = new Logger('StrategyRegistry');
 
@@ -55,6 +56,9 @@ const implementationMap: Record<string, new (profile: StrategyProfile) => IStrat
 
   // TradingView Signal — reads Pine indicator data via CDP from TradingView Desktop
   TV_SIGNAL_V1: TradingViewStrategy,
+
+  // PB v3 Pullback Continuation — EMA pullback + reclaim strategy (mirrors Pine PB v3)
+  PULLBACK_CONT_V1: PullbackContinuationStrategy,
 };
 
 /**
